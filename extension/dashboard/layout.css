@@ -1253,3 +1253,47 @@
 }
 .deadletter a { color: var(--md-sys-color-primary); font-variant-numeric: tabular-nums; }
 .deadletter__why { color: var(--md-sys-color-on-surface-variant); }
+
+
+/* -----------------------------------------------------------------------------
+   Sort menu grouping
+
+   Seventeen sorts in one flat column is a wall, not a menu. M3E's Nov-2025
+   menu guidance permits gaps and headers to categorise related actions; the
+   groups here are Time / Reach / Content / Yours / Chance.
+   -------------------------------------------------------------------------- */
+.m3e-menu__header {
+  margin: var(--md-sys-spacing-3) 0 var(--md-sys-spacing-1);
+  padding-inline: var(--md-sys-spacing-3);
+  color: var(--md-sys-color-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.m3e-menu__header:first-child { margin-block-start: var(--md-sys-spacing-1); }
+
+/* Marks the sorts that deal a different order each time, so "random" is a
+   property of the option rather than a surprise after selecting it. */
+.sortchip {
+  display: inline-block;
+  margin-inline-start: var(--md-sys-spacing-2);
+  padding: 1px 8px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+  font: 600 var(--md-sys-typescale-label-small-size) / 1.5 var(--md-ref-typeface-plain);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  vertical-align: 1px;
+}
+
+
+/* The sort menu carries 17 options with descriptions. At the component's
+   default item padding that is over a thousand pixels of content, so the
+   list is compacted here rather than in the shared component — no other
+   menu in either surface is anywhere near this long. */
+.m3e-menu--sort .m3e-menu__item {
+  min-height: 44px;
+  padding-block: var(--md-sys-spacing-1);
+  line-height: 1.25;
+}
+.m3e-menu--sort .m3e-menu__item .m3e-body-small { line-height: 1.2; }

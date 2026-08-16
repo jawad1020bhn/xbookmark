@@ -213,6 +213,14 @@ recording because it is the argument for rendering your work.
 | 17 | Escape did nothing after clicking the image | Keydown bound to the viewer root; clicking a non-focusable `<img>` moves focus to `<body>` | Bound on the document, guarded by `isOpen` |
 | 18 | Zoom was a no-op on most screenshots | Zoomed to natural size, which is smaller than the stage on a desktop monitor | `max(natural, 2.5× displayed)` |
 | 19 | Focus landed on "copy link", not "close" | The focus trap focuses the first tabbable child; the call raced it | Focus moved into a `requestAnimationFrame` after the trap installs |
+| 20 | A scrollable menu closed the moment you scrolled it | Capture-phase scroll listener also saw scrolling *inside* the menu | Ignore scroll events originating within the menu |
+| 21 | A tall menu ran off the bottom of the window | Overflow handling clamped the top edge only | Menu is capped to the space available on the chosen side |
+| 22 | Clicking the sort chip stacked a second menu | `openMenu` treats the trigger as "inside" for outside-clicks | Caller owns the toggle |
+
+Defects 20–22 all predate the work that revealed them and were invisible with
+seven sort options. At seventeen the menu scrolls and overflows, and all three
+became unmissable. Adding content to a component is a legitimate way to test
+it.
 
 Defects 14 and 15 are worth separating from the rest. Every other entry was
 found by *looking* at the UI; these two were found by **exercising** it — one by

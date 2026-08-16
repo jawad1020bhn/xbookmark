@@ -411,3 +411,75 @@ a safe no-op, and the surface behaves exactly as before.
 > pitch is that your data never leaves your machine. `getContexts` only ever
 > reports the extension's own pages. `tests/integration.test.mjs` pins both
 > the permission set and the absence of a URL-filtered query.
+
+---
+
+## 8. Sorting
+
+Seventeen sorts in five groups. The count is deliberate: a bookmark library is
+a pile, and the only way to get value out of a pile is to be able to re-cut it
+along whatever dimension you happen to care about today.
+
+| Group | Sorts |
+| --- | --- |
+| **Time** | Newest · Oldest · Recently captured · Capture order |
+| **Reach** | Most liked · Most reposted · Most replied · Most viewed · Best engagement |
+| **Content** | Author A–Z · Longest · Shortest |
+| **Yours** | Recently tagged · Least touched |
+| **Chance** | Shuffle · Forgotten first |
+
+**Grouped, not flat.** Past roughly eight items an ungrouped menu stops being
+scannable. M3E's November 2025 menu guidance permits gaps and grouping to
+categorise related actions, which is exactly this case. Items are compacted via
+`.m3e-menu--sort` rather than in the shared component — no other menu in either
+surface is anywhere near this long.
+
+**Best engagement**, not raw likes. A post with 400 likes on 5k views did
+something a post with 2k likes on 900k views did not; raw counts mostly re-rank
+by how famous the author is. Replies are weighted double, since replying costs
+more than liking. Posts captured without view data fall back to their like
+count so they still rank somewhere sensible.
+
+**Most viewed** finally uses `view_count_at_capture`, which the scraper has
+always captured and nothing ever read.
+
+### 8.1 Shuffle
+
+A bookmark library sorted by recency forever means the oldest 90% is never seen
+again. Shuffle is the cheapest possible fix for that, and **Forgotten first**
+is the pointed version: a weighted draw favouring posts with no tag and no
+note, biased towards older ones. It is still random — two runs differ — but it
+digs where the value is buried. The weighting is applied *before* the jitter so
+randomness still dominates; otherwise it stops being a shuffle and becomes just
+another deterministic sort.
+
+**The hard requirement is that a shuffle be random between sessions and
+perfectly stable within one.** If the order were redrawn on every render,
+tagging a post or loading the next chunk would reshuffle the list under the
+reader's cursor and the card they were aiming at would move as they clicked.
+
+So the order is a pure function of a seed:
+
+- `hashSeed` (xmur3) + `rng` (mulberry32) — about fifteen lines, no dependency.
+- Each item's score is `rng(hash(tweet_id + ":" + seed))`. Scores derive from
+  the **item**, not from the array, so filtering keeps survivors in the same
+  relative order instead of re-dealing them.
+- Scores are precomputed into a `Map` before sorting. A comparator runs
+  O(n log n) times; hashing inside it would make a large library crawl.
+- The seed travels in the URL, so a copied link reproduces the exact order the
+  sender saw — the same promise every other filter in this app makes.
+
+Re-dealing is available three ways, because it is the most repeated action in
+the feature: the **Shuffle again** chip (only visible while a shuffle is
+active), pressing **`s`** anywhere, or re-picking the shuffle you are already
+on. Re-dealing scrolls back to the top and announces itself — the list has just
+changed underneath the reader, and silence there is disorienting rather than
+delightful.
+
+> **Two menu bugs this exposed.** Both predate the feature and were invisible
+> with seven options. (1) The capture-phase scroll listener that closes a menu
+> when the page moves also fired for scrolling *inside* the menu, so reaching a
+> lower item closed it. (2) Overflow clamping adjusted the top edge but let a
+> tall menu run off the bottom of the window, rendering items outside the
+> viewport where no scroll could reach them. Also fixed: clicking the sort chip
+> while its menu was open stacked a second copy instead of toggling.

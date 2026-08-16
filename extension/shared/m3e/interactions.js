@@ -218,7 +218,25 @@
     let top = rect.bottom + 8;
     if (left + menuRect.width > innerWidth - 8) left = innerWidth - menuRect.width - 8;
     if (left < 8) left = 8;
-    if (top + menuRect.height > innerHeight - 8) top = Math.max(8, rect.top - menuRect.height - 8);
+
+    /* Prefer below the trigger; flip above when it doesn't fit. Whichever
+       side is chosen, the menu is then capped to the space actually
+       available — the previous `Math.max(8, …)` clamped the top edge but let
+       a tall menu run off the bottom of the window, which only became
+       reachable once a menu grew past a screen height. */
+    const below = innerHeight - rect.bottom - 16;
+    const above = rect.top - 16;
+    if (menuRect.height > below && above > below) {
+      // Flip above the trigger: there is more room there.
+      menu.style.maxHeight = above + "px";
+      top = Math.max(8, rect.top - Math.min(menuRect.height, above) - 8);
+    } else {
+      // Stay below, but never taller than the space that exists. Without the
+      // cap a menu can run off the bottom of the window, and the items past
+      // the fold become unreachable — no amount of scrolling brings back
+      // something rendered outside the viewport.
+      menu.style.maxHeight = Math.max(120, below) + "px";
+    }
 
     menu.style.left = left + "px";
     menu.style.top = top + "px";
@@ -239,7 +257,7 @@
       document.removeEventListener("pointerdown", onOutside, true);
       document.removeEventListener("keydown", onKey, true);
       window.removeEventListener("resize", close);
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", onScroll, true);
       menu.remove();
       trigger.setAttribute("aria-expanded", "false");
       if (opts.onClose) opts.onClose();
@@ -261,10 +279,20 @@
       }
     }
 
+    /* A menu is anchored to its trigger, so it must close if the page scrolls
+       out from under it. But the listener is in the CAPTURE phase, which also
+       sees scrolling *inside* the menu itself — and a menu tall enough to
+       scroll then closes the instant a user reaches for a lower item. Ignore
+       scroll events originating within the menu. */
+    function onScroll(event) {
+      if (event.target instanceof Node && menu.contains(event.target)) return;
+      close();
+    }
+
     document.addEventListener("pointerdown", onOutside, true);
     document.addEventListener("keydown", onKey, true);
     window.addEventListener("resize", close);
-    window.addEventListener("scroll", close, true);
+    window.addEventListener("scroll", onScroll, true);
 
     return { close };
   }

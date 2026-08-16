@@ -44,15 +44,45 @@
     { id: "archived", label: "Archive", icon: "archive", describe: "Removed from your active set" },
   ];
 
+  /* Sorts are grouped, because a flat list of fifteen is a wall rather than a
+     menu. M3E's November 2025 menu guidance allows one or two gaps to
+     categorise related actions, which is exactly this case. */
   const SORTS = [
-    { key: "newest", label: "Newest", describe: "Most recently posted first" },
-    { key: "oldest", label: "Oldest", describe: "Earliest posts first" },
-    { key: "captured", label: "Recently captured", describe: "When the exporter first saw it" },
-    { key: "likes", label: "Most liked", describe: "Likes at capture time" },
-    { key: "retweets", label: "Most reposted", describe: "Reposts at capture time" },
-    { key: "replies", label: "Most replied", describe: "Replies at capture time" },
-    { key: "order", label: "Capture order", describe: "Original feed order" },
+    // -- Time -----------------------------------------------------------
+    { key: "newest", group: "Time", label: "Newest", describe: "Most recently posted first" },
+    { key: "oldest", group: "Time", label: "Oldest", describe: "Earliest posts first" },
+    { key: "captured", group: "Time", label: "Recently captured", describe: "When the exporter first saw it" },
+    { key: "order", group: "Time", label: "Capture order", describe: "Original feed order" },
+
+    // -- Reach ----------------------------------------------------------
+    { key: "likes", group: "Reach", label: "Most liked", describe: "Likes at capture time" },
+    { key: "retweets", group: "Reach", label: "Most reposted", describe: "Reposts at capture time" },
+    { key: "replies", group: "Reach", label: "Most replied", describe: "Replies at capture time" },
+    { key: "views", group: "Reach", label: "Most viewed", describe: "Views at capture time" },
+    /* Engagement rate, not raw likes: a post with 400 likes on 5k views did
+       something a post with 2k likes on 900k views did not. Raw counts just
+       re-rank by audience size, which mostly sorts by how famous the author
+       is. Posts without view data fall back to their like count. */
+    { key: "engagement", group: "Reach", label: "Best engagement", describe: "Likes and replies relative to views" },
+
+    // -- Content --------------------------------------------------------
+    { key: "author", group: "Content", label: "Author A–Z", describe: "Grouped by who posted it" },
+    { key: "longest", group: "Content", label: "Longest", describe: "Most text first" },
+    { key: "shortest", group: "Content", label: "Shortest", describe: "Least text first" },
+
+    // -- Yours ----------------------------------------------------------
+    { key: "tagged", group: "Yours", label: "Recently tagged", describe: "What you filed most recently" },
+    { key: "untouched", group: "Yours", label: "Least touched", describe: "No tag, no note, oldest first" },
+
+    /* -- Chance -------------------------------------------------------
+       Shuffle is the reason people rediscover things. A bookmark library is
+       a pile sorted by recency forever, so the oldest 90% is never seen
+       again; randomising is the cheapest possible fix for that. */
+    { key: "random", group: "Chance", label: "Shuffle", describe: "A new order every time", reshuffle: true },
+    { key: "surprise", group: "Chance", label: "Forgotten first", describe: "Random, weighted to what you never revisit", reshuffle: true },
   ];
+
+  const SORT_GROUPS = ["Time", "Reach", "Content", "Yours", "Chance"];
 
   const MONTHS = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
 
@@ -124,6 +154,7 @@
     settings: Object.assign({}, DEFAULT_SETTINGS),
     collection: "all",
     sort: "newest",
+    shuffleSeed: String(Date.now() % 2147483647),
     selectedId: null,
     rendered: 0,
     lastList: [],
@@ -160,7 +191,7 @@
   };
 
   function getMeta(id) {
-    if (!state.meta[id]) state.meta[id] = { tags: [], note: "", active: true, removedAt: null };
+    if (!state.meta[id]) state.meta[id] = { tags: [], note: "", active: true, removedAt: null, taggedAt: null };
     const m = state.meta[id];
     if (!Array.isArray(m.tags)) m.tags = [];
     return m;
@@ -413,20 +444,130 @@
     return true;
   }
 
+  /* ---------------------------------------------------------------------------
+     Shuffling
+
+     A shuffle has to be *stable within a viewing session*. If the order were
+     redrawn on every render, tagging a post or loading the next chunk would
+     reshuffle the list under the reader's cursor — the card they were aiming
+     at moves as they click. So the order is a pure function of a seed, and
+     the seed only changes when the user asks for a new one.
+
+     The seed also travels in the URL, which keeps the promise the URL sync
+     makes: a copied link reproduces the view exactly, shuffle included.
+     --------------------------------------------------------------------------- */
+
+  /** xmur3 — string → well-distributed 32-bit seed. */
+  function hashSeed(str) {
+    let h = 1779033703 ^ str.length;
+    for (let i = 0; i < str.length; i++) {
+      h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+      h = (h << 13) | (h >>> 19);
+    }
+    return (h ^= h >>> 16) >>> 0;
+  }
+
+  /** mulberry32 — tiny, fast, good enough for shuffling a reading list. */
+  function rng(seed) {
+    let a = seed >>> 0;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /**
+   * A per-item score in [0,1), derived from the item id AND the session seed.
+   * Hashing the pair rather than walking a Fisher-Yates over the array means
+   * the order doesn't depend on the array's current contents — filtering the
+   * list keeps the survivors in the same relative order, instead of
+   * re-dealing them.
+   */
+  function shuffleScore(item) {
+    return rng(hashSeed(item.tweet_id + ":" + state.shuffleSeed))();
+  }
+
+  /**
+   * "Forgotten first": a weighted shuffle that favours posts you have never
+   * come back to. Still random — two runs differ — but it biases the draw
+   * towards the untouched and the old, which is where the value in a
+   * bookmark archive is actually buried.
+   */
+  function forgottenScore(item) {
+    const meta = state.meta[item.tweet_id];
+    const touched = meta && (meta.tags.length || meta.note);
+    const age = item._ts ? (Date.now() - item._ts) / 31557600000 : 0; // years
+    // Weight, then jitter: the randomness must still dominate, or this stops
+    // being a shuffle and becomes just another deterministic sort.
+    const weight = (touched ? 0.35 : 1) * (1 + Math.min(age, 5) / 5);
+    return shuffleScore(item) * weight;
+  }
+
   function sortList(list) {
     const byId = (a, b) => (a.tweet_id < b.tweet_id ? 1 : a.tweet_id > b.tweet_id ? -1 : 0);
     const copy = list.slice();
+
+    // Precompute anything costlier than a field read, so the comparator stays
+    // O(1) — a comparator runs O(n log n) times and this list can be large.
+    let score = null;
+    if (state.sort === "random" || state.sort === "surprise") {
+      const fn = state.sort === "random" ? shuffleScore : forgottenScore;
+      score = new Map(copy.map((i) => [i.tweet_id, fn(i)]));
+    }
+
+    const metaTs = (item) => {
+      const m = state.meta[item.tweet_id];
+      if (!m || !m.taggedAt) return 0;
+      return new Date(m.taggedAt).getTime() || 0;
+    };
+    const len = (item) => (item.text || "").trim().length;
+    const rate = (item) => {
+      // Views are only present on some captures; without them, fall back to
+      // the raw like count so the post still ranks somewhere sensible.
+      if (!item.views) return item.likes;
+      return ((item.likes + item.replies * 2) / item.views) * 1000;
+    };
+
     const cmp = {
       oldest: (a, b) => a._ts - b._ts || byId(b, a),
       captured: (a, b) => b._seen - a._seen || byId(a, b),
       likes: (a, b) => b.likes - a.likes || b._ts - a._ts,
       retweets: (a, b) => b.reposts - a.reposts || b._ts - a._ts,
       replies: (a, b) => b.replies - a.replies || b._ts - a._ts,
+      views: (a, b) => b.views - a.views || b.likes - a.likes,
+      engagement: (a, b) => rate(b) - rate(a) || b.likes - a.likes,
       order: (a, b) => a.capture_order - b.capture_order || byId(b, a),
+      author: (a, b) =>
+        (a.author_username || "\uffff").localeCompare(b.author_username || "\uffff", undefined, { sensitivity: "base" }) ||
+        b._ts - a._ts,
+      longest: (a, b) => len(b) - len(a) || b._ts - a._ts,
+      shortest: (a, b) => len(a) - len(b) || b._ts - a._ts,
+      tagged: (a, b) => metaTs(b) - metaTs(a) || b._ts - a._ts,
+      untouched: (a, b) => {
+        const at = state.meta[a.tweet_id], bt = state.meta[b.tweet_id];
+        const aTouched = at && (at.tags.length || at.note) ? 1 : 0;
+        const bTouched = bt && (bt.tags.length || bt.note) ? 1 : 0;
+        return aTouched - bTouched || a._ts - b._ts;
+      },
+      random: (a, b) => score.get(a.tweet_id) - score.get(b.tweet_id),
+      surprise: (a, b) => score.get(a.tweet_id) - score.get(b.tweet_id),
       newest: (a, b) => b._ts - a._ts || b._seen - a._seen || byId(a, b),
     }[state.sort] || ((a, b) => b._ts - a._ts);
+
     copy.sort(cmp);
     return copy;
+  }
+
+  const isShuffle = (key) => {
+    const s = SORTS.find((x) => x.key === (key || state.sort));
+    return !!(s && s.reshuffle);
+  };
+
+  /** Draw a new shuffle seed; the next render deals a different order. */
+  function reshuffle() {
+    state.shuffleSeed = String(Date.now() % 2147483647);
   }
 
   const visible = () => sortList(state.items.filter(matches));
@@ -473,6 +614,8 @@
     const p = new URLSearchParams();
     if (state.collection !== "all") p.set("c", state.collection);
     if (state.sort !== "newest") p.set("sort", state.sort);
+    // The seed only matters for a shuffle; carrying it otherwise is noise.
+    if (isShuffle()) p.set("seed", state.shuffleSeed);
     if (filters.search) p.set("q", filters.search);
     if (filters.author !== "all") p.set("author", filters.author);
     if (filters.hasMedia) p.set("media", "1");
@@ -493,6 +636,8 @@
     if (c && COLLECTIONS.some((x) => x.id === c)) state.collection = c;
     const s = p.get("sort");
     if (s && SORTS.some((x) => x.key === s)) state.sort = s;
+    const seed = p.get("seed");
+    if (seed && /^[0-9]{1,10}$/.test(seed)) state.shuffleSeed = seed;
     if (p.get("q")) filters.search = p.get("q");
     if (p.get("author")) filters.author = p.get("author");
     filters.hasMedia = p.get("media") === "1";
@@ -623,6 +768,7 @@
 
     const sortOption = SORTS.find((s) => s.key === state.sort) || SORTS[0];
     if ($("chipSortLabel")) $("chipSortLabel").textContent = sortOption.label;
+    if ($("chipShuffle")) $("chipShuffle").hidden = !isShuffle();
 
     // "Refine" holds the filters that don't fit as chips; its badge counts them.
     const refineCount =
@@ -1388,6 +1534,8 @@
           const tag = String(raw || "").trim().toLowerCase().replace(/^#/, "").replace(/\s+/g, "-").slice(0, 32);
           if (!tag) return false;
           if (!meta.tags.includes(tag)) meta.tags.push(tag);
+          // Timestamped so "Recently tagged" has something to sort on.
+          meta.taggedAt = new Date().toISOString();
           saveMeta();
           return true;
         };
@@ -1467,23 +1615,57 @@
     });
   }
 
+  let sortMenu = null;
+
   function openSortMenu(trigger) {
+    /* Clicking the trigger while the menu is open must CLOSE it, not stack a
+       second copy on top. `openMenu`'s outside-click handler deliberately
+       treats the trigger as "inside" — otherwise the click that opened the
+       menu would immediately close it — so the toggle has to live here.
+       Harmless-looking with 7 options; with 17 the menu scrolls and the
+       duplicates are unmissable. */
+    if (sortMenu) { sortMenu.close(); return; }
+
     const menu = document.createElement("div");
-    menu.className = "m3e-menu";
+    menu.className = "m3e-menu m3e-menu--sort";
     menu.setAttribute("role", "menu");
     menu.setAttribute("aria-label", "Sort posts");
-    menu.innerHTML = SORTS.map((s) =>
-      '<button class="m3e-menu__item m3e-state" role="menuitemradio" data-sort="' + s.key + '"' +
-      ' aria-selected="' + (state.sort === s.key) + '" aria-checked="' + (state.sort === s.key) + '" tabindex="-1">' +
-      '<span style="width:20px;flex:none;opacity:' + (state.sort === s.key ? "1" : "0") + '">' + svg("check", 20) + "</span>" +
-      "<span><span>" + esc(s.label) + '</span><br><span class="m3e-body-small" style="color:var(--md-sys-color-on-surface-variant)">' +
-      esc(s.describe) + "</span></span></button>"
-    ).join("");
+    /* Grouped with headers rather than a flat list of seventeen. M3E's menu
+       guidance allows gaps to categorise related actions; past about eight
+       items an ungrouped menu stops being scannable. */
+    menu.innerHTML = SORT_GROUPS.map((group) => {
+      const items = SORTS.filter((s) => s.group === group);
+      if (!items.length) return "";
+      return (
+        '<p class="m3e-menu__header m3e-label-small" role="presentation">' + esc(group) + "</p>" +
+        items.map((s) => {
+          const on = state.sort === s.key;
+          return (
+            '<button class="m3e-menu__item m3e-state" role="menuitemradio" data-sort="' + s.key + '"' +
+            ' aria-selected="' + on + '" aria-checked="' + on + '" tabindex="-1">' +
+            '<span style="width:20px;flex:none;opacity:' + (on ? "1" : "0") + '">' + svg("check", 20) + "</span>" +
+            "<span><span>" + esc(s.label) +
+            (s.reshuffle ? ' <span class="sortchip">random</span>' : "") +
+            '</span><br><span class="m3e-body-small" style="color:var(--md-sys-color-on-surface-variant)">' +
+            esc(s.describe) + "</span></span></button>"
+          );
+        }).join("")
+      );
+    }).join("");
 
-    const handle = M3E.openMenu(trigger, menu, { align: "end" });
+    const handle = M3E.openMenu(trigger, menu, {
+      align: "end",
+      onClose: () => { sortMenu = null; },
+    });
+    sortMenu = handle;
     menu.querySelectorAll("[data-sort]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        state.sort = btn.dataset.sort;
+        const key = btn.dataset.sort;
+        /* Re-picking the shuffle you're already on means "shuffle again" —
+           the obvious reading of tapping Shuffle twice. Switching to it fresh
+           also re-deals, so it never opens on a stale order. */
+        if (isShuffle(key)) reshuffle();
+        state.sort = key;
         handle.close();
         render();
       });
@@ -2214,6 +2396,19 @@
         return;
       }
       if (typing || viewing) return;
+
+      // "s" re-deals a shuffle, or starts one. The single most repeated
+      // action in this feature deserves a single key.
+      if (event.key === "s" || event.key === "S") {
+        event.preventDefault();
+        const already = isShuffle();
+        if (!already) state.sort = "random";
+        reshuffle();
+        render();
+        snack.show(already ? "Shuffled." : "Shuffling your library.");
+        return;
+      }
+
       // Number keys jump between collections — power-user affordance.
       const index = parseInt(event.key, 10);
       if (index >= 1 && index <= COLLECTIONS.length) {
@@ -2312,6 +2507,18 @@
     if ($("chipAuthor")) $("chipAuthor").addEventListener("click", openAuthorPicker);
     if ($("chipRefine")) $("chipRefine").addEventListener("click", openRefine);
     if ($("chipSort")) $("chipSort").addEventListener("click", (e) => openSortMenu(e.currentTarget));
+    if ($("chipShuffle")) {
+      $("chipShuffle").addEventListener("click", () => {
+        reshuffle();
+        render();
+        // The list has just been re-dealt beneath the reader; say so, and put
+        // the top of it back in view so the change is legible rather than
+        // just disorienting.
+        const pane = $("pane");
+        if (pane) pane.scrollTo({ top: 0, behavior: M3E.reducedMotion() ? "auto" : "smooth" });
+        snack.show("Shuffled.");
+      });
+    }
     if ($("chipReset")) $("chipReset").addEventListener("click", resetFilters);
 
     document.querySelectorAll("#densitySeg [data-density]").forEach((btn) => {

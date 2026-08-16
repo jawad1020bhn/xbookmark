@@ -100,9 +100,11 @@ more rows per screen without giving up legibility.
 | `/` | Focus search |
 | `Escape` | Close detail → clear search |
 | `1`–`5` | Jump to collection |
+| `s` | Shuffle (or re-deal the current shuffle) |
 | `↑` / `↓` | Rove between cards |
 | `Enter` | Open focused card |
 | `Tab` | Standard order; skip link first |
+| `←` `→` `Home` `End` `z` | Lightbox: navigate, jump, zoom |
 
 Card roving uses a roving tabindex so the list is a single tab stop, not one
 stop per card — with 4 000 bookmarks, per-card tab stops would make the page

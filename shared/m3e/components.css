@@ -1203,7 +1203,11 @@ body {
   position: absolute;
   z-index: var(--md-sys-z-modal);
   min-width: 224px;
-  max-height: min(60vh, 480px);
+  /* Grew from a fixed 480px cap once the sort menu reached 17 grouped
+     options: on a tall window that cap wasted most of the screen and forced
+     scrolling through content that would otherwise have fit. `openMenu` also
+     flips the menu above its trigger when it would overflow the bottom. */
+  max-height: min(78vh, 640px);
   padding: var(--md-sys-spacing-2);
   border-radius: var(--md-sys-shape-corner-medium-increased);
   background: var(--md-sys-color-surface-container);
