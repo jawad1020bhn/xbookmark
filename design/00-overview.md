@@ -106,8 +106,9 @@ no build step, every mirrored text file carries an
 ```bash
 node --test tests/run-tests.mjs           # capture logic (10 tests, unchanged)
 node --test tests/design-system.test.mjs  # design-system invariants (10 tests)
-node --test tests/media.test.mjs          # media playback + grid data (11 tests)
-node tools/sync-shared.mjs         # re-mirror after editing shared/
+node --test tests/media.test.mjs          # media playback + grid data (12 tests)
+node --test tests/integration.test.mjs    # lightbox layering + extension bridge (10 tests)
+node tools/sync-shared.mjs         # re-mirror after editing shared/ or dashboard/
 
 python3 -m http.server 8080        # then open /dashboard/index.html
 # extension: chrome://extensions → Load unpacked → extension/

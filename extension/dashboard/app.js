@@ -1,3 +1,7 @@
+/* AUTO-GENERATED — do not edit.
+   Mirrored from dashboard/app.js by tools/sync-shared.mjs.
+   Edit the original and re-run:  node tools/sync-shared.mjs
+*/
 /* =============================================================================
    Dashboard · Application
    The library surface, rendered with the M3E design system.

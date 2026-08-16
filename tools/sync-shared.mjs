@@ -36,6 +36,14 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PAIRS = [
   { src: join(ROOT, "shared", "m3e"),   dest: join(ROOT, "extension", "shared", "m3e"),   banner: true },
   { src: join(ROOT, "shared", "fonts"), dest: join(ROOT, "extension", "shared", "fonts"), banner: false },
+  /* The dashboard is mirrored into the extension so it can be opened as an
+     extension page, where `chrome.storage` is directly readable and the
+     capture banner works. Served standalone the same files behave normally —
+     `XBridge.available` is false and the banner never appears. Mirroring
+     rather than relocating keeps `python3 -m http.server` working, which is
+     how the dashboard is developed. */
+  { src: join(ROOT, "dashboard"), dest: join(ROOT, "extension", "dashboard"), banner: true,
+    skip: ["bookmarks.json", "sample-media"] },
 ];
 
 const BANNER = (dir, name) =>
@@ -44,6 +52,15 @@ const BANNER = (dir, name) =>
    Edit the original and re-run:  node tools/sync-shared.mjs
 */
 `;
+
+// HTML cannot carry a /* */ comment before its doctype.
+const HTML_BANNER = (dir, name) =>
+  `<!-- AUTO-GENERATED — do not edit.
+     Mirrored from ${dir}/${name} by tools/sync-shared.mjs.
+     Edit the original and re-run:  node tools/sync-shared.mjs -->
+`;
+
+const bannerFor = (dir, name) => (name.endsWith(".html") ? HTML_BANNER : BANNER)(dir, name);
 
 async function listFiles(dir) {
   const out = [];
@@ -58,10 +75,16 @@ const check = process.argv.includes("--check");
 const stale = [];
 let count = 0;
 
-for (const { src, dest, banner } of PAIRS) {
+for (const { src, dest, banner, skip } of PAIRS) {
   if (!existsSync(src)) continue;
   const label = relative(ROOT, src);
-  const files = await listFiles(src);
+  const excluded = new Set(skip || []);
+  // `skip` matches a path's first segment, so naming a directory excludes it
+  // whole. The sample library is skipped: ~1.3 MB of demo media has no place
+  // in a shipped extension package.
+  const files = (await listFiles(src)).filter(
+    (f) => !excluded.has(relative(src, f).split(/[\\/]/)[0])
+  );
   count += files.length;
 
   for (const file of files) {
@@ -70,7 +93,7 @@ for (const { src, dest, banner } of PAIRS) {
     // CSS and JS carry a banner so nobody edits the copy by mistake. Fonts are
     // binary: any prefix would corrupt them.
     const expected = banner
-      ? Buffer.from(BANNER(label, rel) + (await readFile(file, "utf8")))
+      ? Buffer.from(bannerFor(label, rel) + (await readFile(file, "utf8")))
       : await readFile(file);
 
     if (check) {
@@ -85,6 +108,7 @@ for (const { src, dest, banner } of PAIRS) {
   // Remove mirrored files whose source no longer exists.
   if (existsSync(dest)) {
     const names = new Set(files.map((f) => relative(src, f)));
+    // Without this the sweep would delete files we deliberately didn't mirror.
     for (const file of await listFiles(dest)) {
       const rel = relative(dest, file);
       if (names.has(rel)) continue;
@@ -96,11 +120,11 @@ for (const { src, dest, banner } of PAIRS) {
 
 if (check) {
   if (stale.length) {
-    console.error("extension/shared is out of date:\n  " + stale.join("\n  "));
+    console.error("extension mirror is out of date:\n  " + stale.join("\n  "));
     console.error("\nRun: node tools/sync-shared.mjs");
     process.exit(1);
   }
-  console.log("extension/shared is up to date (" + count + " files).");
+  console.log("extension mirror is up to date (" + count + " files).");
 } else {
-  console.log("Mirrored " + count + " file(s) → extension/shared/");
+  console.log("Mirrored " + count + " file(s) → extension/");
 }

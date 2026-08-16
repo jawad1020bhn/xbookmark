@@ -310,3 +310,104 @@ Sensitive media is never autoplayed.
 - Duration badges use tabular numerals so they don't jitter.
 - GIFs are muted and looped, as their source medium implies; nothing else
   autoplays, which keeps `prefers-reduced-motion` users from being ambushed.
+
+---
+
+## 6. Lightbox
+
+A large share of saved X media is screenshots of text — threads, code, charts,
+receipts. At card size these are unreadable, so full-screen viewing with zoom
+is not a flourish; it is the only way the content is legible at all.
+
+**Anatomy.** Top bar (counter, copy link, open on X, close) · stage · previous
+and next · bottom bar (caption, dots). Chrome is white-on-scrim rather than
+themed surfaces: the media is the subject and the frame should recede.
+
+**Backdrop at 97%.** The dialog scrim is 40%; this is not a dialog. At the 92%
+I first tried, the app chrome was still legible behind the photo and competed
+with it. The residual 3% plus a 4px blur keeps it from reading as a flat void.
+
+**Zoom** is native overflow scrolling, not a JS drag-pan: the image is allowed
+to exceed the stage and the stage scrolls. That inherits momentum, trackpad
+gestures, keyboard scrolling and touch panning, all of which a hand-rolled pan
+handler gets subtly wrong. Clicking zooms toward the clicked point, so the
+pixel under the cursor stays under the cursor. Zoom targets `max(natural size,
+2.5× displayed)` — zooming only to natural size does nothing for an image
+smaller than the stage, which is most screenshots on a desktop monitor, i.e.
+precisely the case zoom exists for.
+
+**Keyboard.** `←` `→` navigate, `Home`/`End` jump, `z` zooms (centred, since
+there is no pointer to zoom toward), `Escape` closes. Keys are bound on the
+document rather than the viewer root: clicking a non-focusable `<img>` moves
+focus to `<body>`, and a root listener would then never fire — Escape appeared
+dead after any click on the media itself.
+
+**Layering.** `--md-sys-z-immersive: 1200`, above the snackbar. A toast
+floating over a full-bleed photo is both illegible and unreachable. The first
+attempt used a hand-picked `z-index: 60` and lost to the sticky chrome at 100 —
+which is the argument for the z-scale existing at all.
+
+**Below 600px** the arrows are hidden and swipe takes over, matching the
+gesture X's own viewer uses. Vertical drag is left alone so a zoomed image can
+still be panned.
+
+**Playback** goes through the same `M3EMedia` single-player manager as the
+grid, so an inline video stops when the viewer opens and cannot play behind it.
+
+---
+
+## 7. Capture banner
+
+The dashboard and the extension used to be strangers: the extension captured
+posts, and the only way to see them was to export a file from the popup and
+import it by hand. Nothing ever told you there was anything to fetch.
+
+The banner appears **only** when the dashboard runs inside the extension *and*
+there is something to report — a run in progress, posts waiting, or failures.
+A permanent "connected" badge would be noise directly above the library.
+
+| State | Tone | Says |
+| --- | --- | --- |
+| Capturing | primary container, pulsing dot | "Capturing from X…" + live count |
+| Posts waiting | tertiary container | "N new posts ready to import" + import button |
+| Stopped / paused | secondary container, square dot | why it stopped |
+| Failed | error container, square dot | plus "What failed?" |
+
+Tone is carried by container colour **and** dot shape (circle = running,
+square = stopped), so state survives greyscale and colour-blind viewing — the
+same rule the popup's status card follows. The pulse respects
+`prefers-reduced-motion`.
+
+**Dead letters.** The scraper has always recorded posts it couldn't parse to
+`xDeadLetters`, and until now the only code that touched that key was the reset
+button that deleted it — silent partial data loss, where the user believes the
+capture was complete. "What failed?" lists them with the reason and a link to
+each post.
+
+### 7.1 Why the dashboard is mirrored into the extension
+
+The dashboard has no `chrome.*` access when served from `file://` or
+`localhost`. Three ways to bridge that:
+
+1. **A content script relaying `postMessage`** — needs host permissions for
+   whatever origin the dashboard is served from, which is unknowable in
+   advance. A permission covering "every site you visit" is not a reasonable
+   ask for a personal archiving tool.
+2. **`externally_connectable`** — same problem: it needs a fixed origin list.
+3. **Run the page inside the extension**, where `chrome.storage` simply
+   exists. **No new permission at all.**
+
+Hence `tools/sync-shared.mjs` also mirrors `dashboard/` into
+`extension/dashboard/`, skipping the sample library — 1.3 MB of demo media has
+no business shipping to users. Because every shared asset is referenced as
+`../shared/…`, the same paths resolve from both locations and the mirror is a
+straight copy. Served standalone, `XBridge.available` is false, every method is
+a safe no-op, and the surface behaves exactly as before.
+
+> **Permission note.** Reusing an already-open library tab uses
+> `runtime.getContexts()`, **not** `tabs.query({url})`. Filtering a tab query
+> by URL requires the `tabs` permission, which Chrome surfaces at install as
+> *"read your browsing history"* — an absurd prompt for a tool whose entire
+> pitch is that your data never leaves your machine. `getContexts` only ever
+> reports the extension's own pages. `tests/integration.test.mjs` pins both
+> the permission set and the absence of a URL-filtered query.

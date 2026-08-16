@@ -269,3 +269,10 @@ body {
 .dialog .m3e-dialog__content { padding-inline: var(--md-sys-spacing-5); }
 .dialog .m3e-dialog__actions { padding: var(--md-sys-spacing-4) var(--md-sys-spacing-5); }
 .m3e-snackbar { bottom: var(--md-sys-spacing-4); max-width: calc(360px - var(--md-sys-spacing-6)); }
+
+
+/* Full-width primary route out of the popup and into the library. */
+.export__open {
+  width: 100%;
+  margin-block-start: var(--md-sys-spacing-3);
+}

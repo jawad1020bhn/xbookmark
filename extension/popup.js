@@ -64,6 +64,7 @@
     exportJson:   $("#exportJson"),
     exportJsonl:  $("#exportJsonl"),
     exportHint:   $("#exportHint"),
+    openDashboard: $("#openDashboard"),
     log:          $("#log"),
     logCount:     $("#logCount"),
     version:      $("#version"),
@@ -369,6 +370,41 @@
 
   el.exportJson.addEventListener("click", () => runExport("json", "x-bookmarks.json"));
   el.exportJsonl.addEventListener("click", () => runExport("jsonl", "x-bookmarks.jsonl"));
+
+  /* Open the library as an extension page, reusing an existing tab rather than
+     stacking a duplicate every time the button is pressed.
+
+     Finding that tab uses `runtime.getContexts`, NOT `tabs.query({url})`.
+     Filtering a tab query by URL requires the "tabs" permission, which Chrome
+     surfaces at install time as "read your browsing history" — an absurd ask
+     for a tool whose entire pitch is that your data stays local, and one this
+     feature does not otherwise need. `getContexts` only ever reports the
+     extension's own pages, so it needs no permission at all. */
+  el.openDashboard.addEventListener("click", async () => {
+    const url = chrome.runtime.getURL("dashboard/index.html");
+
+    try {
+      if (chrome.runtime.getContexts) {
+        const [existing] = await chrome.runtime.getContexts({
+          contextTypes: ["TAB"],
+          documentUrls: [url],
+        });
+        if (existing && existing.tabId != null) {
+          await chrome.tabs.update(existing.tabId, { active: true });
+          if (chrome.windows && existing.windowId != null) {
+            await chrome.windows.update(existing.windowId, { focused: true });
+          }
+          window.close();
+          return;
+        }
+      }
+    } catch (_) {
+      // getContexts is Chrome 116+. On anything older, just open a new tab.
+    }
+
+    await chrome.tabs.create({ url });
+    window.close();
+  });
 
   /* ---------------------------------------------------------------------------
      9 · Destructive reset — always behind a confirmation

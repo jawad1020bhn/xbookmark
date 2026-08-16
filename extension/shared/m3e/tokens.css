@@ -266,6 +266,10 @@
   --md-sys-z-scrim: 900;
   --md-sys-z-modal: 1000;
   --md-sys-z-snackbar: 1100;
+  /* Above the snackbar: the media viewer takes over the whole screen, and a
+     toast floating over a full-bleed photo would be both illegible and
+     unreachable. */
+  --md-sys-z-immersive: 1200;
 }
 
 /* ==========================================================================

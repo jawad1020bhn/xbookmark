@@ -209,6 +209,10 @@ recording because it is the argument for rendering your work.
 | 13 | Control borders at 1.6:1 | `outlineVariant` used for control boundaries | Moved to `outline`; test added |
 | 14 | HLS-only videos could never play; every image shifted the layout | The normalizer silently dropped `hls`, `width` and `height` while copying media | Fields preserved; ratios drive the grid; `tests/media.test.mjs` pins it |
 | 15 | A play button that led to a dead player | Chromium answers `"maybe"` for HLS and then cannot play it | `canPlayType` distrusted, Blink excluded, honest "Watch on X" fallback |
+| 16 | Lightbox opened *underneath* the app chrome | Hand-picked `z-index: 60`, below `--md-sys-z-sticky: 100` | New `--md-sys-z-immersive` token above the snackbar; test pins the ordering |
+| 17 | Escape did nothing after clicking the image | Keydown bound to the viewer root; clicking a non-focusable `<img>` moves focus to `<body>` | Bound on the document, guarded by `isOpen` |
+| 18 | Zoom was a no-op on most screenshots | Zoomed to natural size, which is smaller than the stage on a desktop monitor | `max(natural, 2.5× displayed)` |
+| 19 | Focus landed on "copy link", not "close" | The focus trap focuses the first tabbable child; the call raced it | Focus moved into a `requestAnimationFrame` after the trap installs |
 
 Defects 14 and 15 are worth separating from the rest. Every other entry was
 found by *looking* at the UI; these two were found by **exercising** it — one by
@@ -229,24 +233,33 @@ Honest list of what is not finished.
    passed through the dialog controller.
 2. **Saved views are persisted but have no UI.** `KEYS.views` is written and
    read; nothing surfaces it. Either build the picker or remove the storage.
-3. **Shrinking below 1200 px drops the visible selection.** `bindWindowClass`
+3. **The lightbox has no pinch-zoom on touch.** Tap-to-zoom and swipe work,
+   and native scrolling pans a zoomed image, but a two-finger pinch is not
+   wired up. Nobody has tested this on a real touch device — the sandbox has
+   no touchscreen, and emulated touch is not evidence.
+4. **Shrinking below 1200 px drops the visible selection.** `bindWindowClass`
    calls `clearDetailPaneOnly()` rather than re-opening the selection as a
    sheet. Rare in practice (people don't often resize across that boundary
    mid-read), but it is a real state loss.
-4. **Storage keys changed** `bm-*` → `xbm.*` with no migration. A returning
+5. **Storage keys changed** `bm-*` → `xbm.*` with no migration. A returning
    user's library appears empty until re-import. Given the redesign changes the
    metadata shape anyway, a one-time migration reading the old keys would be
    kind.
-5. **The sample library ships ~2 MB of generated media.** `dashboard/sample-media/`
+6. **`localStorage` caps the library at roughly 3,300 bookmarks.** At the
+   sample's ~1.5 kB/post, a 5 MB quota is exhausted well below the 10k–50k a
+   heavy X user actually has. `saveItems()` reports the failure honestly, but
+   the write is still lost. IndexedDB is the fix and it is the single most
+   consequential thing left undone.
+7. **The sample library ships ~2 MB of generated media.** `dashboard/sample-media/`
    exists so the grid and playback can be seen working without importing a real
    export. If bundle size ever matters, this is the first thing to drop.
-6. **No visual-regression baseline.** Screenshots were reviewed by eye this
+8. **No visual-regression baseline.** Screenshots were reviewed by eye this
    session. The harness exists (`/tmp/shot.mjs` + headless Chromium); committing
    reference images and diffing them would make defects 1–13 impossible to
    reintroduce silently.
-7. **The virtualisation ceiling is untested.** Rendering chunks at 60 items
+9. **The virtualisation ceiling is untested.** Rendering chunks at 60 items
    with a "load more" control is fine for thousands; nobody has tried 50 000.
-8. **Only Chromium was tested.** The sandbox has no Firefox or WebKit. The CSS
+10. **Only Chromium was tested.** The sandbox has no Firefox or WebKit. The CSS
    avoids Chromium-only features except `animation-timeline` (behind
    `@supports`) and `::-webkit-scrollbar` (progressive), but this is untested,
    not proven. This matters more now than it did: Safari is the one browser
@@ -258,9 +271,11 @@ Honest list of what is not finished.
 
 In priority order:
 
-1. **Commit visual-regression baselines.** The single highest-leverage
+1. **Move storage to IndexedDB** (with a `bm-*` → `xbm.*` migration in the
+   same pass). Everything else is polish on a system that silently stops
+   accepting writes at ~3,300 bookmarks.
+2. **Commit visual-regression baselines.** The single highest-leverage
    addition, given how many defects here were visual-only.
-2. **Migrate `bm-*` storage keys**, so existing users don't lose their library.
 3. **Build the saved-views UI** or delete the dead persistence.
 4. **Fix the selection loss** when crossing 1200 px downward.
 5. **Test on Firefox and WebKit** — specifically the HLS branch on Safari, the

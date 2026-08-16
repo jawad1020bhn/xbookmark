@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "X Bookmarks Exporter",
-  "version": "0.2.0",
-  "description": "Capture your own X bookmarks while you browse and export them as structured JSON for your personal dashboard.",
+  "version": "0.3.0",
+  "description": "Capture your own X bookmarks while you browse, then browse, search and tag them in a local dashboard.",
   "permissions": [
     "storage",
     "downloads"
