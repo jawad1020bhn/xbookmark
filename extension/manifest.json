@@ -1,10 +1,15 @@
 {
   "manifest_version": 3,
   "name": "X Bookmarks Exporter",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Capture your own X bookmarks while you browse and export them as structured JSON for your personal dashboard.",
-  "permissions": ["storage", "downloads"],
-  "host_permissions": ["https://x.com/*"],
+  "permissions": [
+    "storage",
+    "downloads"
+  ],
+  "host_permissions": [
+    "https://x.com/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
@@ -14,14 +19,22 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://x.com/*"],
-      "js": ["page.js"],
+      "matches": [
+        "https://x.com/*"
+      ],
+      "js": [
+        "page.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN"
     },
     {
-      "matches": ["https://x.com/*"],
-      "js": ["content.js"],
+      "matches": [
+        "https://x.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_start"
     }
   ]

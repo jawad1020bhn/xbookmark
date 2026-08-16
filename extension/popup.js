@@ -1,504 +1,462 @@
-/* ============================================================
-   X Bookmarks Exporter - Popup Script
+/* =============================================================================
+   X Bookmarks Exporter · Popup
    Material Design 3 Expressive
-   ============================================================
-*/
+
+   Colour, tokens, and interactions come from shared/m3e/*. This file owns only
+   popup behaviour: mirroring capture state into the UI, driving the transport
+   controls, and exporting.
+
+   The popup↔content-script protocol is unchanged:
+     tabs.sendMessage {type: start|pause|stop|panic|reset|getState}
+     runtime.onMessage {type:"state", state}
+     storage.onChanged.xCaptureState
+   ============================================================================= */
 (() => {
+  "use strict";
 
-  /* ============================================================
-     OKLCH color engine — generates tonal palette from seed
-     ============================================================ */
+  const { createSnackbar, createOverlay, bindRipple, escapeHtml } = window.M3E;
 
-  function hexToRgb(hex) {
-    hex = hex.replace(/^#/, "");
-    if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
-    const n = parseInt(hex, 16);
-    return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
-  }
+  /* ---------------------------------------------------------------------------
+     1 · Constants
+     --------------------------------------------------------------------------- */
 
-  function linearSRGBToOKLab(r, g, b) {
-    const lin = (c) => {
-      c = c / 255;
-      return c > 0.04045 ? Math.pow((c + 0.055) / 1.055, 2.4) : c / 12.92;
-    };
-    let R = lin(r), G = lin(g), B = lin(b);
-    const X = R * 0.4122214708 + G * 0.5363325363 + B * 0.0514459929;
-    const Y = R * 0.2119034982 + G * 0.6806995451 + B * 0.1073970119;
-    const Z = R * 0.0883024619 + G * 0.2817188376 + B * 0.6299813497;
-    const ll = Math.cbrt(X / 0.95047);
-    const mm = Math.cbrt(Y / 1.00000);
-    const nn = Math.cbrt(Z / 1.08883);
-    const L = 0.5 * (ll + mm) * 100;
-    const aa = (1 / Math.sqrt(3)) * (2 * ll - mm - nn) * 100;
-    const bb = (1 / Math.sqrt(2)) * (ll + mm - 2 * nn) * 100;
-    return [L, aa, bb];
-  }
-
-  function oklchFromHex(hex) {
-    const rgb = hexToRgb(hex);
-    const [l, a, b] = [
-      rgb[0] * 0.4122214708 + rgb[1] * 0.5363325363 + rgb[2] * 0.0514459929,
-      rgb[0] * 0.2119034982 + rgb[1] * 0.6806995451 + rgb[2] * 0.1073970119,
-      rgb[0] * 0.0883024619 + rgb[1] * 0.2817188376 + rgb[2] * 0.6299713497,
-    ];
-    const [okL, okA, okB] = linearSRGBToOKLab(rgb[0] * 255, rgb[1] * 255, rgb[2] * 255);
-    const C = Math.sqrt(okA * okA + okB * okB);
-    const H = Math.atan2(okB, okA) * 180 / Math.PI;
-    return [Math.max(0, Math.min(100, okL)), C, H < 0 ? H + 360 : H];
-  }
-
-  function oklabToLinear(okL, okA, okB) {
-    const L = okL / 100;
-    return {
-      l: L + 0.3972875 * okA / 100 + 0.5286894 * okB / 100,
-      m: L - 0.3544357 * okA / 100 + 0.4324390 * okB / 100,
-      s: L - 0.9582910 * okA / 100 - 0.1049459 * okB / 100,
-    };
-  }
-
-  function oklchToRgb(L, C, H) {
-    const rad = H * Math.PI / 180;
-    const a = C * Math.cos(rad);
-    const b = C * Math.sin(rad);
-    const xyz = oklabToLinear(L, a, b);
-    const X = Math.pow(xyz.l, 3) * 0.95047;
-    const Y = Math.pow(xyz.m, 3);
-    const Z = Math.pow(xyz.s, 3) / 1.08883;
-    const Rlin = X * 3.240970 + Y * -1.537383 + Z * -0.498643;
-    const Glin = X * -0.969244 + Y * 1.875930 + Z * 0.036114;
-    const Blin = X * 0.055643 + Y * -0.204013 + Z * 1.056940;
-    const srgb = (c) => c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
-    return [
-      Math.max(0, Math.min(255, Math.round(srgb(Rlin) * 255))),
-      Math.max(0, Math.min(255, Math.round(srgb(Glin) * 255))),
-      Math.max(0, Math.min(255, Math.round(srgb(Blin) * 255))),
-    ];
-  }
-
-  function tonalPalette(seedHex, mode = "dark") {
-    const [L, C, H] = oklchFromHex(seedHex);
-    const stops = mode === "dark"
-      ? [10, 20, 25, 30, 35, 40, 50, 60, 70, 80, 90, 95, 98]
-      : [98, 95, 92, 87, 83, 75, 65, 55, 45, 35, 25, 20, 10];
-    const result = {};
-    stops.forEach(l => {
-      const rgb = oklchToRgb(l, Math.max(0, C * 0.52), H);
-      result[`t${l}`] = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
-    });
-    return result;
-  }
-
-  function neutralPalette(mode = "dark") {
-    const stops = mode === "dark"
-      ? [10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 80, 85, 90, 95]
-      : [100, 98, 96, 93, 90, 87, 80, 70, 60, 50, 40, 35, 30, 20];
-    const result = {};
-    stops.forEach(l => {
-      const rgb = oklchToRgb(l, l > 50 ? 2.5 : 1.2, 210);
-      result[`n${l}`] = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
-    });
-    return result;
-  }
-
-  function applyBrandTheme(seedHex = "#69b8ff", mode = "dark") {
-    const brand = tonalPalette(seedHex, mode);
-    const neutral = neutralPalette(mode);
-    const root = document.documentElement;
-    const set = (name, val) => root.style.setProperty(name, val);
-
-    set("--md-sys-color-primary", brand.t50 || seedHex);
-    set("--md-sys-color-on-primary", neutral.n10);
-    set("--md-sys-color-primary-container", brand.t30);
-    set("--md-sys-color-on-primary-container", neutral.n95);
-    set("--md-sys-color-secondary", brand.t60);
-    set("--md-sys-color-on-secondary", neutral.n10);
-    set("--md-sys-color-secondary-container", brand.t30);
-    set("--md-sys-color-on-secondary-container", neutral.n95);
-    set("--md-sys-color-tertiary", brand.t70);
-    set("--md-sys-color-on-tertiary", neutral.n10);
-    set("--md-sys-color-tertiary-container", brand.t40);
-    set("--md-sys-color-on-tertiary-container", neutral.n15);
-    set("--md-sys-color-surface", neutral.n10);
-    set("--md-sys-color-surface-container-lowest", neutral.n8 || neutral.n10);
-    set("--md-sys-color-surface-container-low", neutral.n15);
-    set("--md-sys-color-surface-container", neutral.n20);
-    set("--md-sys-color-surface-container-high", neutral.n30);
-    set("--md-sys-color-surface-container-highest", neutral.n35);
-    set("--md-sys-color-on-surface", neutral.n90);
-    set("--md-sys-color-on-surface-variant", neutral.n70);
-    set("--md-sys-color-outline", neutral.n60);
-    set("--md-sys-color-outline-variant", neutral.n30);
-    set("--md-sys-color-inverse-surface", neutral.n95);
-    set("--md-sys-color-inverse-on-surface", neutral.n10);
-  }
-
-  const STATUS_LABELS = {
-    idle: "Idle",
-    capturing: "Capturing…",
-    paused: "Paused",
-    completed: "Completed",
-    stopped_by_user: "Stopped",
-    stopped_by_error: "Stopped (error)"
+  const STATUS = {
+    idle:             { label: "Idle",          detail: "No capture run yet." },
+    capturing:        { label: "Capturing",     detail: "Scrolling conservatively…" },
+    paused:           { label: "Paused",        detail: "Manual scrolling is still captured." },
+    completed:        { label: "Completed",     detail: "All available bookmarks captured." },
+    stopped_by_user:  { label: "Stopped",       detail: "You stopped this run." },
+    stopped_by_error: { label: "Stopped",       detail: "The run ended on an error." },
   };
 
   const REASONS = {
-    "end-of-feed": "Reached the end of the feed",
-    "incremental-complete": "Incremental pass complete",
-    "time-limit": "Hit the time limit",
-    "no-responses-seen": "No timeline responses intercepted — the page may stream over a transport this tool can't see",
-    "schema-mismatch": "Responses seen but no tweets extracted — X changed the shape",
-    "max-consecutive-errors": "Too many consecutive failures",
-    "rate-limit": "Rate limited — wait before retrying",
-    "auth-error": "Authentication problem — check you're logged in on x.com"
+    "end-of-feed": "Reached the end of the feed.",
+    "incremental-complete": "Incremental pass complete — no new bookmarks.",
+    "time-limit": "Hit the safety time limit.",
+    "no-responses-seen": "No timeline responses were intercepted. The page may stream over a transport this tool can't see.",
+    "schema-mismatch": "Responses arrived but no posts could be read — X changed the response shape.",
+    "max-consecutive-errors": "Too many consecutive failures.",
+    "rate-limit": "Rate limited by X. Wait a few minutes before retrying.",
+    "auth-error": "Authentication problem — check you're signed in on x.com.",
   };
 
-  const DEBOUNCE_MS = 80;
+  const LOG_MAX = 50;
+  const THEME_KEY = "bmPopupTheme";
+
+  /* ---------------------------------------------------------------------------
+     2 · DOM
+     --------------------------------------------------------------------------- */
+
+  const $ = (sel) => document.querySelector(sel);
+
+  const el = {
+    tabHint:      $("#tabHint"),
+    statusCard:   $("#statusCard"),
+    statusLabel:  $("#statusLabel"),
+    statusDetail: $("#statusDetail"),
+    progressHost: $("#progressHost"),
+    primaryBtn:   $("#primaryBtn"),
+    primaryLabel: $("#primaryLabel"),
+    primaryIcon:  $("#primaryIcon"),
+    pauseBtn:     $("#pauseBtn"),
+    stopBtn:      $("#stopBtn"),
+    panicBtn:     $("#panicBtn"),
+    exportJson:   $("#exportJson"),
+    exportJsonl:  $("#exportJsonl"),
+    exportHint:   $("#exportHint"),
+    log:          $("#log"),
+    logCount:     $("#logCount"),
+    version:      $("#version"),
+    resetBtn:     $("#resetBtn"),
+    themeToggle:  $("#themeToggle"),
+  };
+
+  const stats = {
+    captured:   { el: $("#statCaptured"), box: document.querySelector(".stat--captured") },
+    newItems:   { el: $("#statNew"),      box: document.querySelector(".stat--new") },
+    duplicates: { el: $("#statDupes"),    box: document.querySelector(".stat--dupes") },
+    failed:     { el: $("#statFailed"),   box: document.querySelector(".stat--failed") },
+  };
+
+  const ICON_PLAY = '<path d="M8 5v14l11-7L8 5Z"/>';
+  const ICON_RESUME = '<path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7Z"/>';
+
+  const snackbar = createSnackbar($("#snackbar"));
+  const dialog = createOverlay({ element: $("#dialog"), scrim: $("#scrim") });
+
   let currentState = null;
+  let captureCount = 0;
 
-  /* ============================================================
-     DOM references
-     ============================================================ */
-  const $$ = (sel, parent = document) => parent.querySelector(sel);
-  const logEl = $$("#log");
-  const logCountEl = $$("#logCount");
-  const statusEl = $$("#pbStatus");
-  const lastActivityEl = $$("#lastActivity");
-  const reasonEl = $$("#reason");
-  const startBtn = $$("#start");
-  const startLabel = $$("#startLabel");
-  const pauseBtn = $$("#pause");
-  const stopBtn = $$("#stop");
-  const panicBtn = $$("#panic");
-  const progressEl = $$(".progress");
-  const progressFill = $$(".progress__bar");
-  const themeToggle = $$("#themeToggle");
-  const verEl = $$("#ver");
-  const statEls = {
-    captured: $$("#statCaptured"),
-    newItems: $$("#statNew"),
-    duplicates: $$("#statDupes"),
-    failed: $$("#statFailed")
-  };
+  /* ---------------------------------------------------------------------------
+     3 · Theme
+     Reuses the shared engine. The popup keeps its own light/dark preference in
+     extension storage; the seed matches the dashboard's default so the two
+     surfaces are recognisably the same product.
+     --------------------------------------------------------------------------- */
 
-  /* ============================================================
-     Logging
-     ============================================================ */
-  function log(msg, type = "info") {
-    const li = document.createElement("li");
-    li.textContent = msg;
-    if (type === "error") li.classList.add("log-err");
-    else if (type === "warn") li.classList.add("log-warn");
-    else li.classList.add("log-ok");
-    logEl.prepend(li);
-    logCountEl.textContent = logEl.children.length;
-    if (logEl.children.length > 50) {
-      logEl.removeChild(logEl.lastChild);
-      logCountEl.textContent = logEl.children.length;
+  const theme = M3ETheme.createController({
+    seed: M3ETheme.DEFAULTS.seed,
+    variant: M3ETheme.DEFAULTS.variant,
+    scheme: "system",
+    density: "comfortable",
+  });
+
+  async function loadTheme() {
+    try {
+      const stored = await chrome.storage.local.get({ [THEME_KEY]: "system" });
+      theme.set({ scheme: stored[THEME_KEY] });
+    } catch {
+      /* storage unavailable (e.g. opened outside the extension) — keep default */
     }
+    syncThemeToggleLabel();
   }
 
-  function bump(el) {
-    el.classList.remove("pulse");
-    void el.offsetWidth;
-    el.classList.add("pulse");
+  function syncThemeToggleLabel() {
+    const dark = M3ETheme.resolveDark(theme.settings);
+    el.themeToggle.setAttribute(
+      "aria-label",
+      dark ? "Switch to light theme" : "Switch to dark theme"
+    );
   }
 
-  /* ============================================================
-     State rendering
-     ============================================================ */
+  el.themeToggle.addEventListener("click", async () => {
+    const next = M3ETheme.resolveDark(theme.settings) ? "light" : "dark";
+    theme.set({ scheme: next });
+    syncThemeToggleLabel();
+    try { await chrome.storage.local.set({ [THEME_KEY]: next }); } catch {}
+  });
+
+  /* ---------------------------------------------------------------------------
+     4 · Activity log
+     --------------------------------------------------------------------------- */
+
+  function log(message, level = "info") {
+    const li = document.createElement("li");
+    if (level === "warn") li.className = "is-warn";
+    else if (level === "error") li.className = "is-error";
+
+    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    li.innerHTML =
+      "<span>" + escapeHtml(message) + "</span>" +
+      '<span class="log__time">' + escapeHtml(time) + "</span>";
+
+    el.log.prepend(li);
+    while (el.log.children.length > LOG_MAX) el.log.removeChild(el.log.lastElementChild);
+    el.logCount.textContent = String(el.log.children.length);
+  }
+
+  /* ---------------------------------------------------------------------------
+     5 · State rendering
+     --------------------------------------------------------------------------- */
+
   function setStat(key, value) {
-    const el = statEls[key];
-    if (!el) return;
-    if (String(el.textContent) === String(value)) return;
-    el.textContent = value;
-    if (Number(value) > 0) bump(el);
+    const slot = stats[key];
+    if (!slot || !slot.el) return;
+    const next = String(value);
+    // Emphasis must be correct on first paint too, so set it before the
+    // early-out that skips the animation for unchanged values.
+    if (slot.box) slot.box.dataset.nonzero = String(Number(value) > 0);
+    if (slot.el.textContent === next) return;
+    slot.el.textContent = next;
+    // A number that changed should be *seen* to change. Expressive motion,
+    // applied at the smallest possible scale.
+    window.M3E.pulse(slot.el);
   }
 
   function renderState() {
     const s = currentState || {};
-    const status = s.status || "idle";
+    const status = s.status && STATUS[s.status] ? s.status : "idle";
+    const meta = STATUS[status];
     const st = s.stats || {};
     const running = status === "capturing";
+    const paused = status === "paused";
 
-    statusEl.textContent = STATUS_LABELS[status] || status;
-    statusEl.dataset.status = status;
+    el.statusCard.dataset.status = status;
+    el.statusLabel.textContent = meta.label;
 
-    if (s.updatedAt) {
-      const d = new Date(s.updatedAt);
-      lastActivityEl.textContent = "Last activity " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    } else {
-      lastActivityEl.textContent = "No capture run yet";
+    // Detail line: prefer a concrete stop reason, fall back to the generic
+    // description, and always append the time of last activity when we have it.
+    let detail = meta.detail;
+    if (s.lastStopReason && !running) {
+      detail = REASONS[s.lastStopReason] || "Stopped: " + s.lastStopReason;
     }
-
-    reasonEl.textContent = s.lastStopReason
-      ? (REASONS[s.lastStopReason] || "Stopped: " + s.lastStopReason)
-      : "";
-    if (status === "stopped_by_error" && !reasonEl.textContent) {
-      reasonEl.textContent = "Stopped on an error";
+    if (s.updatedAt && status !== "idle") {
+      const t = new Date(s.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      detail += " · " + t;
     }
+    el.statusDetail.textContent = detail;
+
+    el.progressHost.hidden = !running;
 
     setStat("captured", st.captured || 0);
     setStat("newItems", st.newItems || 0);
     setStat("duplicates", st.duplicates || 0);
     setStat("failed", st.failed || 0);
 
-    progressFill.style.transition = running
-      ? `width ${Math.random() * 3000 + 500}ms cubic-bezier(0.39, 1.29, 0.35, 0.98)`
-      : "none";
+    // One primary action whose meaning depends on state: start, or resume.
+    el.primaryBtn.disabled = running;
+    el.primaryLabel.textContent = paused ? "Resume capture" : "Start capture";
+    el.primaryIcon.innerHTML = paused ? ICON_RESUME : ICON_PLAY;
 
-    if (running) {
-      progressFill.style.width = "100%";
-      progressFill.style.transition = "none";
-      progressFill.offsetWidth;
-      progressFill.style.width = "0%";
-      progressFill.style.transition = `width ${Math.random() * 3000 + 500}ms cubic-bezier(0.39, 1.29, 0.35, 0.98)`;
-    } else {
-      progressFill.style.width = status === "completed" ? "100%" : "0%";
-    }
-
-    startBtn.disabled = running;
-    startLabel.textContent = status === "paused" ? "Resume capture" : "Start capture";
-    pauseBtn.disabled = !running || status === "paused";
-    stopBtn.disabled = !running && status !== "paused";
-    panicBtn.disabled = !running;
+    el.pauseBtn.disabled = !running;
+    el.stopBtn.disabled = !running && !paused;
+    el.panicBtn.disabled = !running;
   }
 
-  /* ============================================================
-     Storage
-     ============================================================ */
+  function renderExportHint() {
+    if (!captureCount) {
+      el.exportHint.textContent = "Nothing captured yet.";
+      el.exportJson.disabled = true;
+      el.exportJsonl.disabled = true;
+      return;
+    }
+    el.exportHint.textContent =
+      captureCount.toLocaleString() + (captureCount === 1 ? " post" : " posts") + " ready to export.";
+    el.exportJson.disabled = false;
+    el.exportJsonl.disabled = false;
+  }
+
+  /* ---------------------------------------------------------------------------
+     6 · Storage + messaging
+     --------------------------------------------------------------------------- */
+
   async function loadState() {
-    const { xCaptureState } = await chrome.storage.local.get({ xCaptureState: null });
-    if (xCaptureState) {
+    try {
+      const { xCaptureState = null, xBookmarks = [] } =
+        await chrome.storage.local.get({ xCaptureState: null, xBookmarks: [] });
       currentState = xCaptureState;
-      renderState();
-    } else {
+      captureCount = xBookmarks.length;
+    } catch {
       currentState = null;
-      renderState();
+      captureCount = 0;
     }
+    renderState();
+    renderExportHint();
   }
 
-  async function saveState() {
-    if (currentState) {
-      await chrome.storage.local.set({ xCaptureState: currentState });
-    }
-  }
-
-  async function sendMessage(type) {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab && tab.url && /^https:\/\/x\.com\//.test(tab.url)) {
-      try {
-        return await chrome.tabs.sendMessage(tab.id, { type });
-      } catch {
-        log("Cannot reach the x.com tab. Reload it and try again.", "error");
-        return null;
-      }
-    }
-    log("Open https://x.com/i/bookmarks or https://x.com/i/history in an active tab first.", "warn");
-    return null;
-  }
-
-  /* ============================================================
-     Capture controls
-     ============================================================ */
-  startBtn.addEventListener("click", async () => {
-    const res = await sendMessage("start");
-    if (!res) return;
-    if (res.ok) {
-      log(res.resumed ? "Capture resumed." : "Capture started. Auto-scrolling conservatively…");
-      setTimeout(loadState, 600);
-    } else if (res.reason === "already-running") {
-      log("Capture is already running.", "warn");
-    } else {
-      log("Failed to start capture: " + (res.reason || "unknown"), "error");
-    }
-  });
-
-  pauseBtn.addEventListener("click", async () => {
-    const res = await sendMessage("pause");
-    if (res && res.ok) {
-      log("Paused. Manual scrolling is still captured until you resume or stop.");
-      setTimeout(loadState, 400);
-    } else if (res) {
-      log("Pause failed: " + (res.reason || "unknown"), "error");
-    }
-  });
-
-  stopBtn.addEventListener("click", async () => {
-    const res = await sendMessage("stop");
-    if (res && res.ok) {
-      log("Stopping and flushing pending items…");
-      setTimeout(loadState, 800);
-    } else if (res) {
-      log("Stop failed: " + (res.reason || "unknown"), "error");
-    }
-  });
-
-  panicBtn.addEventListener("click", async () => {
-    const res = await sendMessage("panic");
-    if (res && res.ok) {
-      log("Panic stop requested.");
-      setTimeout(loadState, 400);
-    } else if (res) {
-      log("Panic stop failed: " + (res.reason || "unknown"), "error");
-    }
-  });
-
-  /* ============================================================
-     Export / download
-     ============================================================ */
-  async function buildExport(format) {
-    const { xBookmarks = [] } = await chrome.storage.local.get({ xBookmarks: [] });
-    if (!xBookmarks.length) {
-      log("Nothing captured yet.", "warn");
+  async function activeTab() {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      return tab || null;
+    } catch {
       return null;
     }
-    const parsed = JSON.parse(JSON.stringify(xBookmarks));
-    const ids = new Set(parsed.map((b) => b.tweet_id));
-    const valid = ids.size === parsed.length;
+  }
 
-    if (!valid) {
-      log(`Export has ${parsed.length - ids.size} duplicate(s) — fix before importing!`, "error");
+  /** Tell the user, up front, whether this popup can do anything at all. */
+  async function renderTabHint() {
+    const tab = await activeTab();
+    const ok = tab && tab.url && /^https:\/\/x\.com\//.test(tab.url);
+    if (ok) {
+      el.tabHint.textContent = "Ready on x.com";
+      el.tabHint.classList.remove("is-warn");
     } else {
-      log(`Export valid: ${parsed.length} bookmark(s).`);
+      el.tabHint.textContent = "Open x.com/i/bookmarks to capture";
+      el.tabHint.classList.add("is-warn");
     }
-
-    if (format === "jsonl") {
-      return parsed.map((b) => JSON.stringify(b)).join("\n");
-    }
-    return JSON.stringify({
-      export_version: 1,
-      exported_at: new Date().toISOString(),
-      bookmarks: parsed
-    }, null, 2);
+    el.primaryBtn.dataset.ready = String(!!ok);
+    return ok;
   }
 
-  function download(filename, content) {
-    const url = "data:application/json;charset=utf-8," + encodeURIComponent(content);
-    return chrome.downloads.download({ url, filename, saveAs: true });
-  }
-
-  $$("#exportJson").addEventListener("click", async () => {
-    const content = await buildExport("json");
-    if (content === null) return;
+  async function send(type) {
+    const tab = await activeTab();
+    if (!tab || !tab.url || !/^https:\/\/x\.com\//.test(tab.url)) {
+      snackbar.show("Open https://x.com/i/bookmarks in the active tab first.", { error: true });
+      log("No x.com tab active.", "warn");
+      return null;
+    }
     try {
-      await download("x-bookmarks.json", content);
-      log("Downloaded x-bookmarks.json.");
-    } catch (e) {
-      log("Export failed: " + e.message, "error");
+      return await chrome.tabs.sendMessage(tab.id, { type });
+    } catch {
+      snackbar.show("Can't reach the x.com tab. Reload it and try again.", { error: true });
+      log("Content script unreachable — reload the tab.", "error");
+      return null;
     }
-  });
-
-  $$("#exportJsonl").addEventListener("click", async () => {
-    const content = await buildExport("jsonl");
-    if (content === null) return;
-    try {
-      await download("x-bookmarks.jsonl", content);
-      log("Downloaded x-bookmarks.jsonl.");
-    } catch (e) {
-      log("Export failed: " + e.message, "error");
-    }
-  });
-
-  /* ============================================================
-     Reset
-     ============================================================ */
-  $$("#reset").addEventListener("click", async () => {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab && tab.id) {
-      try {
-        await chrome.tabs.sendMessage(tab.id, { type: "reset" });
-      } catch (e) {}
-    }
-    await chrome.storage.local.remove(["xBookmarks", "xCaptureState", "xDeadLetters"]);
-    currentState = null;
-    renderState();
-    log("Cleared captured data.");
-  });
-
-  /* ============================================================
-     Theme
-     ============================================================ */
-  async function applyTheme() {
-    const { bmPopupTheme = "dark" } = await chrome.storage.local.get({ bmPopupTheme: "dark" });
-    const html = document.documentElement;
-    html.dataset.theme = bmPopupTheme;
-    html.dataset.density = "comfortable";
-    html.dataset.motion = "full";
-
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    html.dataset.motion = reduced ? "reduced" : "full";
-
-    const seed = bmPopupTheme === "light" ? "#0f62fe" : "#69b8ff";
-    applyBrandTheme(seed, bmPopupTheme);
   }
 
-  themeToggle.addEventListener("click", async () => {
-    const { bmPopupTheme = "dark" } = await chrome.storage.local.get({ bmPopupTheme: "dark" });
-    const next = bmPopupTheme === "light" ? "dark" : "light";
-    await chrome.storage.local.set({ bmPopupTheme: next });
-    applyTheme();
-  });
+  /* ---------------------------------------------------------------------------
+     7 · Transport controls
+     --------------------------------------------------------------------------- */
 
-  /* ============================================================
-     Ripple effect
-     ============================================================ */
-  function bindRipple() {
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduced) return;
-
-    document.addEventListener("pointerdown", (e) => {
-      const t = e.target.closest(".btn, .icon-btn, .export-card, .theme-switch");
-      if (!t || t.disabled) return;
-
-      const r = t.getBoundingClientRect();
-      const size = Math.max(r.width, r.height) * 1.3;
-      const span = document.createElement("span");
-
-      span.className = "ripple";
-      span.style.width = span.style.height = size + "px";
-      span.style.left = (e.clientX - r.left - size / 2) + "px";
-      span.style.top = (e.clientY - r.top - size / 2) + "px";
-
-      t.appendChild(span);
-      setTimeout(() => span.remove(), 700);
+  function wireControl(button, type, handlers) {
+    button.addEventListener("click", async () => {
+      const res = await send(type);
+      if (!res) return;
+      if (res.ok) {
+        handlers.ok(res);
+        setTimeout(loadState, 500);
+      } else if (handlers.fail) {
+        handlers.fail(res);
+      } else {
+        log(type + " failed: " + (res.reason || "unknown"), "error");
+      }
     });
   }
 
-  /* ============================================================
-     Message listener (background / content script → popup)
-     ============================================================ */
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type === "state") {
-      currentState = msg.state;
-      renderState();
-      saveState();
-    }
+  wireControl(el.primaryBtn, "start", {
+    ok: (res) => log(res.resumed ? "Capture resumed." : "Capture started."),
+    fail: (res) => {
+      if (res.reason === "already-running") log("Capture is already running.", "warn");
+      else log("Couldn't start: " + (res.reason || "unknown"), "error");
+    },
   });
 
-  chrome.storage.onChanged.addListener((changes) => {
-    if (changes.xCaptureState) {
-      currentState = changes.xCaptureState.newValue || null;
-      renderState();
-    }
+  wireControl(el.pauseBtn, "pause", {
+    ok: () => log("Paused. Manual scrolling is still captured."),
   });
 
-  /* ============================================================
-     Init
-     ============================================================ */
-  function getVersion() {
-    try { return chrome.runtime.getManifest().version; }
-    catch { return "0.1.0"; }
+  wireControl(el.stopBtn, "stop", {
+    ok: () => log("Stopping and flushing pending items…"),
+  });
+
+  el.panicBtn.addEventListener("click", () => {
+    confirmDialog({
+      title: "Abort this run?",
+      body: "Panic stop halts capture immediately without flushing pending items. Anything already saved is kept.",
+      confirmLabel: "Abort now",
+      destructive: true,
+      onConfirm: async () => {
+        const res = await send("panic");
+        if (res && res.ok) {
+          log("Panic stop requested.", "warn");
+          setTimeout(loadState, 400);
+        }
+      },
+    });
+  });
+
+  /* ---------------------------------------------------------------------------
+     8 · Export
+     --------------------------------------------------------------------------- */
+
+  async function buildExport(format) {
+    const { xBookmarks = [] } = await chrome.storage.local.get({ xBookmarks: [] });
+    if (!xBookmarks.length) {
+      snackbar.show("Nothing captured yet.");
+      return null;
+    }
+
+    const items = xBookmarks.slice();
+    const ids = new Set(items.map((b) => b.tweet_id));
+    if (ids.size !== items.length) {
+      log((items.length - ids.size) + " duplicate id(s) in the export.", "warn");
+    }
+
+    if (format === "jsonl") return items.map((b) => JSON.stringify(b)).join("\n");
+    return JSON.stringify(
+      { export_version: 1, exported_at: new Date().toISOString(), bookmarks: items },
+      null,
+      2
+    );
   }
 
-  verEl.textContent = "v" + getVersion();
+  async function runExport(format, filename) {
+    const content = await buildExport(format);
+    if (content === null) return;
+    try {
+      await chrome.downloads.download({
+        url: "data:application/json;charset=utf-8," + encodeURIComponent(content),
+        filename,
+        saveAs: true,
+      });
+      snackbar.show("Exported " + filename);
+      log("Downloaded " + filename + ".");
+    } catch (e) {
+      snackbar.show("Export failed.", { error: true });
+      log("Export failed: " + e.message, "error");
+    }
+  }
 
-  const motionMedia = window.matchMedia("(prefers-reduced-motion: reduce)");
-  motionMedia.addEventListener("change", applyTheme);
+  el.exportJson.addEventListener("click", () => runExport("json", "x-bookmarks.json"));
+  el.exportJsonl.addEventListener("click", () => runExport("jsonl", "x-bookmarks.jsonl"));
 
-  applyTheme();
+  /* ---------------------------------------------------------------------------
+     9 · Destructive reset — always behind a confirmation
+     --------------------------------------------------------------------------- */
+
+  function confirmDialog({ title, body, confirmLabel, destructive, onConfirm }) {
+    $("#dialogTitle").textContent = title;
+    $("#dialogContent").innerHTML = '<p class="m3e-body-medium">' + escapeHtml(body) + "</p>";
+
+    const actions = $("#dialogActions");
+    actions.innerHTML =
+      '<button class="m3e-button m3e-button--text m3e-state" data-act="cancel">Cancel</button>' +
+      '<button class="m3e-button m3e-button--filled m3e-state' +
+      (destructive ? " m3e-button--error-filled" : "") +
+      '" data-act="ok">' + escapeHtml(confirmLabel) + "</button>";
+
+    actions.querySelector('[data-act="cancel"]').addEventListener("click", () => dialog.close());
+    actions.querySelector('[data-act="ok"]').addEventListener("click", async () => {
+      dialog.close();
+      await onConfirm();
+    });
+
+    dialog.open();
+  }
+
+  el.resetBtn.addEventListener("click", () => {
+    confirmDialog({
+      title: "Clear captured data?",
+      body: "This deletes every captured post from the extension's storage. Files you have already exported are untouched. This cannot be undone.",
+      confirmLabel: "Clear everything",
+      destructive: true,
+      onConfirm: async () => {
+        const tab = await activeTab();
+        if (tab && tab.id) {
+          try { await chrome.tabs.sendMessage(tab.id, { type: "reset" }); } catch {}
+        }
+        await chrome.storage.local.remove(["xBookmarks", "xCaptureState", "xDeadLetters"]);
+        currentState = null;
+        captureCount = 0;
+        renderState();
+        renderExportHint();
+        snackbar.show("Captured data cleared.");
+        log("Cleared captured data.", "warn");
+      },
+    });
+  });
+
+  /* ---------------------------------------------------------------------------
+     10 · Live updates
+     --------------------------------------------------------------------------- */
+
+  try {
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (msg && msg.type === "state") {
+        currentState = msg.state;
+        renderState();
+      }
+    });
+
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== "local") return;
+      if (changes.xCaptureState) {
+        currentState = changes.xCaptureState.newValue || null;
+        renderState();
+      }
+      if (changes.xBookmarks) {
+        captureCount = (changes.xBookmarks.newValue || []).length;
+        renderExportHint();
+      }
+    });
+  } catch {
+    /* not running as an extension */
+  }
+
+  /* ---------------------------------------------------------------------------
+     11 · Init
+     --------------------------------------------------------------------------- */
+
+  bindRipple(document.body);
+
+  try {
+    el.version.textContent = "v" + chrome.runtime.getManifest().version;
+  } catch {
+    el.version.textContent = "v0.1.0";
+  }
+
+  loadTheme();
+  renderTabHint();
   loadState();
-  bindRipple();
-
-  log("Popup ready. Open x.com to start capturing.", "info");
-
+  log("Popup ready.");
 })();
