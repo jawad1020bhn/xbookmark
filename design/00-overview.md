@@ -104,8 +104,9 @@ no build step, every mirrored text file carries an
 ## 5. Verifying it
 
 ```bash
-node tests/run-tests.mjs           # capture logic (10 tests, unchanged)
-node tests/design-system.test.mjs  # design-system invariants (10 tests)
+node --test tests/run-tests.mjs           # capture logic (10 tests, unchanged)
+node --test tests/design-system.test.mjs  # design-system invariants (10 tests)
+node --test tests/media.test.mjs          # media playback + grid data (11 tests)
 node tools/sync-shared.mjs         # re-mirror after editing shared/
 
 python3 -m http.server 8080        # then open /dashboard/index.html

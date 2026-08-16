@@ -207,6 +207,16 @@ recording because it is the argument for rendering your work.
 | 11 | Disabled text buttons grew a solid container | Blanket disabled rule | Text variant stays transparent |
 | 12 | Skip link's shadow smeared the page's top edge | Parked at exactly `-100%` | Parked clear of its own offset |
 | 13 | Control borders at 1.6:1 | `outlineVariant` used for control boundaries | Moved to `outline`; test added |
+| 14 | HLS-only videos could never play; every image shifted the layout | The normalizer silently dropped `hls`, `width` and `height` while copying media | Fields preserved; ratios drive the grid; `tests/media.test.mjs` pins it |
+| 15 | A play button that led to a dead player | Chromium answers `"maybe"` for HLS and then cannot play it | `canPlayType` distrusted, Blink excluded, honest "Watch on X" fallback |
+
+Defects 14 and 15 are worth separating from the rest. Every other entry was
+found by *looking* at the UI; these two were found by **exercising** it — one by
+checking what the normalizer actually emitted against what the scraper captured,
+the other by probing a real browser instead of believing its own feature
+report. Neither would have appeared in a screenshot, because in both cases the
+UI looked completely correct. A missing capability shows up as nothing at all,
+which is why the media path now carries tests rather than only a review.
 
 ---
 
@@ -227,16 +237,20 @@ Honest list of what is not finished.
    user's library appears empty until re-import. Given the redesign changes the
    metadata shape anyway, a one-time migration reading the old keys would be
    kind.
-5. **No visual-regression baseline.** Screenshots were reviewed by eye this
+5. **The sample library ships ~2 MB of generated media.** `dashboard/sample-media/`
+   exists so the grid and playback can be seen working without importing a real
+   export. If bundle size ever matters, this is the first thing to drop.
+6. **No visual-regression baseline.** Screenshots were reviewed by eye this
    session. The harness exists (`/tmp/shot.mjs` + headless Chromium); committing
    reference images and diffing them would make defects 1–13 impossible to
    reintroduce silently.
-6. **The virtualisation ceiling is untested.** Rendering chunks at 60 items
+7. **The virtualisation ceiling is untested.** Rendering chunks at 60 items
    with a "load more" control is fine for thousands; nobody has tried 50 000.
-7. **Only Chromium was tested.** The sandbox has no Firefox or WebKit. The CSS
+8. **Only Chromium was tested.** The sandbox has no Firefox or WebKit. The CSS
    avoids Chromium-only features except `animation-timeline` (behind
    `@supports`) and `::-webkit-scrollbar` (progressive), but this is untested,
-   not proven.
+   not proven. This matters more now than it did: Safari is the one browser
+   that takes the native-HLS branch, and it is the one browser I cannot run.
 
 ---
 
@@ -249,6 +263,7 @@ In priority order:
 2. **Migrate `bm-*` storage keys**, so existing users don't lose their library.
 3. **Build the saved-views UI** or delete the dead persistence.
 4. **Fix the selection loss** when crossing 1200 px downward.
-5. **Test on Firefox and WebKit.**
+5. **Test on Firefox and WebKit** — specifically the HLS branch on Safari, the
+   only path that no test here can execute.
 6. **Empty and error states for every collection** — currently generic. "No
    tagged posts yet" should suggest tagging something, not just report absence.

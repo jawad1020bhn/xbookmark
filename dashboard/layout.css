@@ -491,24 +491,76 @@
 }
 
 /* Media strip — asymmetric, organic. Sizes are ratios, not fixed pixels. */
-.bmk__media { display: grid; gap: 4px; grid-auto-flow: column; grid-auto-columns: 1fr; }
-.bmk__media[data-count="1"] { grid-auto-flow: row; }
-.bmk__media[data-count="3"] { grid-template-columns: 2fr 1fr; grid-template-rows: repeat(2, 1fr); }
+/* -----------------------------------------------------------------------------
+   Media grid — X's own 1 / 2 / 3 / 4 layout
+
+   The grid is sized by ASPECT RATIO, never by a fixed pixel height, and every
+   cell carries its intrinsic ratio from the capture. That is what stops the
+   list from reflowing as images stream in: the space is already correct before
+   a single byte of image arrives.
+   -------------------------------------------------------------------------- */
+.bmk__media {
+  display: grid;
+  gap: 3px;
+  margin-block-start: var(--md-sys-spacing-3);
+  border-radius: var(--md-sys-shape-corner-large);
+  overflow: hidden;
+  /* Isolate so the rounded corners clip video/img painting on every engine. */
+  isolation: isolate;
+}
+/* 1 — full width at the media's own ratio, capped so a tall portrait cannot
+   push the rest of the card off screen. */
+.bmk__media[data-count="1"] { grid-template-columns: 1fr; }
+.bmk__media[data-count="1"] .bmk__thumb { aspect-ratio: var(--_ar, 16 / 9); max-height: 62vh; }
+
+/* 2 — side by side, square-ish cells. */
+.bmk__media[data-count="2"] { grid-template-columns: 1fr 1fr; aspect-ratio: 16 / 9; }
+
+/* 3 — one tall leading cell, two stacked. */
+.bmk__media[data-count="3"] {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  aspect-ratio: 16 / 9;
+}
 .bmk__media[data-count="3"] > :first-child { grid-row: span 2; }
+
+/* 4 — 2×2. */
+.bmk__media[data-count="4"] {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  aspect-ratio: 16 / 9;
+}
+
 .bmk__thumb {
   position: relative;
-  display: grid;
-  place-items: center;
-  min-height: 96px;
-  max-height: 280px;
-  border-radius: var(--md-sys-shape-corner-medium);
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  border: none;
   background: var(--md-sys-color-surface-container-highest);
   color: var(--md-sys-color-on-surface-variant);
   overflow: hidden;
+  cursor: pointer;
 }
-.bmk__media > :first-child { border-start-start-radius: var(--md-sys-shape-corner-large); border-end-start-radius: var(--md-sys-shape-corner-large); }
-.bmk__media > :last-child { border-start-end-radius: var(--md-sys-shape-corner-large); border-end-end-radius: var(--md-sys-shape-corner-large); }
-.bmk__thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.bmk__thumb img,
+.bmk__thumb video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: var(--md-sys-color-surface-container-highest);
+}
+/* A single item shows the whole frame rather than cropping to fill. */
+.bmk__media[data-count="1"] .bmk__thumb img,
+.bmk__media[data-count="1"] .bmk__thumb video { object-fit: contain; }
+
+/* Playing video takes over its cell completely. */
+.bmk__thumb[data-playing="true"] { cursor: default; }
+.bmk__thumb[data-playing="true"] .bmk__thumb-play,
+.bmk__thumb[data-playing="true"] .bmk__thumb-tag { display: none; }
+
 .bmk__thumb-tag {
   position: absolute;
   inset: auto var(--md-sys-spacing-2) var(--md-sys-spacing-2) auto;
@@ -518,14 +570,73 @@
   color: #fff;
   font: 600 var(--md-sys-typescale-label-small-size) / 1.4 var(--md-ref-typeface-plain);
   font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+/* "+2" on the last visible cell when a post carries more than four items. */
+.bmk__thumb-more {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--md-sys-color-scrim-overlay);
+  color: #fff;
+  font: 600 var(--md-sys-typescale-title-medium-size) / 1 var(--md-ref-typeface-plain);
+  pointer-events: none;
 }
 .bmk__thumb-play {
   position: absolute;
+  inset: 50% auto auto 50%;
+  translate: -50% -50%;
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
+  width: 48px;
+  height: 48px;
   border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-scrim-overlay);
+  color: #fff;
+  pointer-events: none;
+  transition: scale var(--md-sys-motion-spring-fast-spatial),
+              background-color var(--md-sys-motion-spring-fast-effects);
+}
+.bmk__thumb:hover .bmk__thumb-play { scale: 1.08; }
+.bmk__thumb:active .bmk__thumb-play { scale: 0.94; }
+
+/* Sensitive media: blurred until asked for. Never autoplayed. */
+.bmk__thumb[data-sensitive="true"] img,
+.bmk__thumb[data-sensitive="true"] video { filter: blur(24px); transform: scale(1.06); }
+.bmk__thumb-warn {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--md-sys-spacing-2);
+  padding: var(--md-sys-spacing-3);
+  background: color-mix(in srgb, var(--md-sys-color-scrim) 45%, transparent);
+  color: #fff;
+  text-align: center;
+  font: var(--md-sys-typescale-label-medium-weight) var(--md-sys-typescale-label-medium-size) / 1.35 var(--md-ref-typeface-plain);
+}
+
+/* Media we cannot play or load. Say so; don't show a dead frame. */
+.bmk__thumb-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--md-sys-spacing-1);
+  padding: var(--md-sys-spacing-3);
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface-variant);
+  text-align: center;
+  font: var(--md-sys-typescale-label-small-weight) var(--md-sys-typescale-label-small-size) / 1.35 var(--md-ref-typeface-plain);
+}
+/* When a poster exists, keep showing it — a scrim reads better than a grey
+   void, and the frame still tells you what the video is. */
+.bmk__thumb-fallback--over {
   background: var(--md-sys-color-scrim-overlay);
   color: #fff;
 }
@@ -652,6 +763,31 @@
   border-radius: var(--md-sys-shape-corner-large);
   background: var(--md-sys-color-surface-container-highest);
   display: block;
+}
+.detail__media figure[data-sensitive="true"] img,
+.detail__media figure[data-sensitive="true"] video { filter: blur(28px); }
+.detail__media-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--md-sys-spacing-3);
+  padding: var(--md-sys-spacing-6);
+  border-radius: var(--md-sys-shape-corner-large);
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface-variant);
+  text-align: center;
+}
+.detail__media-fallback--over {
+  background-size: cover;
+  background-position: center;
+  box-shadow: inset 0 0 0 100vmax var(--md-sys-color-scrim-overlay);
+  color: #fff;
+}
+.detail__media-fallback p {
+  margin: 0;
+  max-width: 42ch;
+  font: var(--md-sys-typescale-body-medium-weight) var(--md-sys-typescale-body-medium-size) / var(--md-sys-typescale-body-medium-line-height) var(--md-ref-typeface-plain);
 }
 .detail__media figcaption {
   margin-block-start: var(--md-sys-spacing-2);

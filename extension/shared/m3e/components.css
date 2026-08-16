@@ -1568,3 +1568,25 @@ body {
     outline: 3px solid CanvasText;
   }
 }
+
+/* =============================================================================
+   30 · Video
+
+   Native controls, deliberately. The browser's own control set is already
+   keyboard-complete, screen-reader labelled, and brings picture-in-picture and
+   fullscreen for free; a hand-built control bar would be a large amount of
+   code whose best possible outcome is parity. What the design system supplies
+   is the frame: shape, surface and focus behaviour consistent with everything
+   else.
+   ============================================================================= */
+.m3e-video {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  background: var(--md-sys-color-surface-container-highest);
+  border-radius: inherit;
+}
+.m3e-video:focus-visible {
+  outline: 3px solid var(--md-sys-color-secondary);
+  outline-offset: 2px;
+}

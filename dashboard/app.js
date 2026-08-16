@@ -178,6 +178,21 @@
      3 · Normalisation
      =========================================================================== */
   const safeUrl = (u) => (typeof u === "string" && /^https?:\/\//i.test(u) ? u : null);
+
+  /**
+   * Media may also be served from beside the dashboard (the bundled sample
+   * library, or an archive someone has mirrored locally), so a same-origin
+   * relative path is legitimate here in a way it isn't for a tweet link.
+   * Anything with a scheme still has to be http(s) — this must never become a
+   * route for `javascript:` to reach an `src` attribute.
+   */
+  const safeMediaUrl = (u) => {
+    if (typeof u !== "string" || !u) return null;
+    if (/^https?:\/\//i.test(u)) return u;
+    // Reject protocol-relative ("//evil") and any other scheme.
+    if (/^\/\//.test(u) || /^[a-z][a-z0-9+.-]*:/i.test(u)) return null;
+    return u;
+  };
   const num = (...vals) => {
     for (const v of vals) if (v != null && Number.isFinite(Number(v))) return Number(v);
     return 0;
@@ -217,18 +232,61 @@
     };
   }
 
+  /**
+   * Normalise one media item.
+   *
+   * This used to keep only {type,url,mp4,alt,aspect,duration} and silently drop
+   * everything else the scraper had already captured. Two real consequences:
+   *   · `hls` was discarded, so any X video served only as an HLS playlist
+   *     could never play — the detail view built a <video> with an mp4 source
+   *     that was null;
+   *   · `width`/`height` were discarded, so every image had to be laid out
+   *     without an intrinsic size, guaranteeing layout shift on load.
+   * Both are preserved now. Field names accept the scraper's shape and the
+   * longer names used by X's own JSON, so hand-edited exports also import.
+   */
   function normalizeMedia(list) {
     return (Array.isArray(list) ? list : [])
       .filter((m) => m && typeof m === "object")
-      .map((m) => ({
-        type: m.type || "photo",
-        url: safeUrl(m.url) || safeUrl(m.media_url_https) || null,
-        mp4: safeUrl(m.mp4),
-        alt: m.alt || null,
-        aspect: Number(m.aspect) > 0 ? Number(m.aspect) : 16 / 9,
-        duration: Number(m.duration) || 0,
-      }))
-      .filter((m) => m.url);
+      .map((m, index) => {
+        const width = Number(m.width) || 0;
+        const height = Number(m.height) || 0;
+        // Prefer a stored aspect; fall back to intrinsic size; then 16:9.
+        const stored = Array.isArray(m.aspect_ratio) && m.aspect_ratio.length === 2
+          ? Number(m.aspect_ratio[0]) / Number(m.aspect_ratio[1])
+          : Number(m.aspect);
+        const aspect = Number.isFinite(stored) && stored > 0
+          ? stored
+          : width && height
+          ? width / height
+          : 16 / 9;
+
+        const variants = (Array.isArray(m.mp4_variants) ? m.mp4_variants : [])
+          .map((v) => ({ url: safeMediaUrl(v && v.url), bitrate: Number(v && v.bitrate) || 0 }))
+          .filter((v) => v.url)
+          .sort((a, b) => b.bitrate - a.bitrate);
+
+        const still = safeMediaUrl(m.url) || safeMediaUrl(m.media_url_https) || null;
+
+        return {
+          type: m.type || "photo",
+          url: still,
+          poster: safeMediaUrl(m.poster) || safeMediaUrl(m.poster_url) || still,
+          // Highest-bitrate variant wins when no explicit mp4 was captured.
+          mp4: safeMediaUrl(m.mp4) || safeMediaUrl(m.best_mp4_url) || (variants[0] && variants[0].url) || null,
+          mp4Variants: variants,
+          hls: safeMediaUrl(m.hls) || safeMediaUrl(m.hls_url) || null,
+          alt: m.alt || m.alt_text || null,
+          sensitive: Boolean(m.sensitive || m.possibly_sensitive),
+          width,
+          height,
+          aspect,
+          duration: Number(m.duration) || Number(m.duration_millis) || 0,
+          position: Number(m.position) || index + 1,
+        };
+      })
+      // A photo needs a still; a video needs a still OR something playable.
+      .filter((m) => m.url || m.mp4 || m.hls);
   }
 
   function normalize(list) {
@@ -239,7 +297,11 @@
       if (!id) continue;
 
       const url = safeUrl(b.url || b.tweet_url || b.canonical_url);
-      const media = normalizeMedia(b.media_items);
+      /* `media_items` is the scraper's field name; `media` is what this app
+         persists and exports. Accepting both means a file exported from the
+         dashboard re-imports with its media intact — round-tripping an export
+         used to silently lose every image and video. */
+      const media = normalizeMedia(b.media_items || b.media);
       const username = b.author_username || b.author_username_at_capture || null;
       const name = b.author_name || b.author_name_at_capture || null;
       const text = typeof b.text === "string" ? b.text : "";
@@ -632,26 +694,101 @@
     } catch { return escaped; }
   }
 
+  /**
+   * The media grid on a card: X's own 1 / 2 / 3 / 4 arrangement.
+   *
+   * Nothing here mounts a <video>. A list of two hundred bookmarks that are
+   * mostly video would mean two hundred media elements, each with its own
+   * decode pipeline and network activity — the page would crawl. Every cell
+   * renders as a poster image, and a real player is swapped in only when the
+   * user asks for one (see `playThumb`). This is the single most important
+   * performance decision on this surface.
+   */
   function mediaStrip(item) {
-    const media = item.media.slice(0, 3);
-    if (!media.length) return "";
+    const all = item.media;
+    if (!all.length) return "";
+
+    const shown = all.slice(0, 4);
+    const overflow = all.length - shown.length;
+
     return (
-      '<div class="bmk__media" data-count="' + media.length + '">' +
-      media.map((m) => {
-        const isMotion = m.type === "video" || m.type === "animated_gif";
-        const tag = m.type === "animated_gif"
-          ? '<span class="bmk__thumb-tag">GIF</span>'
-          : m.duration
-          ? '<span class="bmk__thumb-tag">' + esc(fmtDuration(m.duration)) + "</span>"
+      '<div class="bmk__media" data-count="' + shown.length + '">' +
+      shown.map((m, i) => {
+        const motion = M3EMedia.isMotion(m);
+        const badge = M3EMedia.badgeFor(m);
+        const unplayable = motion && M3EMedia.hlsOnly(m);
+        // Cards ask the CDN for a small WebP; the full-size original is only
+        // fetched if the user opens the post.
+        const poster = M3EMedia.sizedImage(m.poster || m.url, "small");
+        const last = i === shown.length - 1;
+
+        // A cell is a button when there is something to do with it.
+        const interactive = motion && !unplayable;
+        const label = interactive
+          ? (m.type === "animated_gif" ? "Play GIF" : "Play video" + (badge ? " (" + badge + ")" : ""))
           : "";
+
         return (
-          '<div class="bmk__thumb">' +
-          '<img src="' + esc(m.url) + '" alt="' + esc(m.alt || "") + '" loading="lazy" decoding="async" referrerpolicy="no-referrer" data-media="1">' +
-          (isMotion ? '<span class="bmk__thumb-play">' + svg("play", 22) + "</span>" : "") +
-          tag + "</div>"
+          "<" + (interactive ? "button" : "div") + ' class="bmk__thumb"' +
+            (interactive ? ' type="button" data-play="' + i + '" aria-label="' + esc(label) + '"' : "") +
+            (m.sensitive ? ' data-sensitive="true"' : "") +
+            ' style="--_ar:' + esc(M3EMedia.aspectRatio(m)) + '">' +
+
+            (poster
+              ? '<img src="' + esc(poster) + '" alt="' + esc(m.alt || "") + '"' +
+                (m.width && m.height ? ' width="' + m.width + '" height="' + m.height + '"' : "") +
+                ' loading="lazy" decoding="async" referrerpolicy="no-referrer" data-media="1">'
+              : "") +
+
+            (unplayable
+              ? '<span class="bmk__thumb-fallback' + (poster ? " bmk__thumb-fallback--over" : "") + '">' +
+                svg("play", 20) + "<span>Open on X to watch</span></span>"
+              : interactive
+              ? '<span class="bmk__thumb-play">' + svg("play", 24) + "</span>"
+              : "") +
+
+            (badge && !unplayable ? '<span class="bmk__thumb-tag">' + esc(badge) + "</span>" : "") +
+            (m.sensitive
+              ? '<span class="bmk__thumb-warn">' + svg("eye", 20) + "<span>Sensitive — tap to view</span></span>"
+              : "") +
+            (last && overflow > 0 ? '<span class="bmk__thumb-more">+' + overflow + "</span>" : "") +
+          "</" + (interactive ? "button" : "div") + ">"
         );
       }).join("") + "</div>"
     );
+  }
+
+  /**
+   * Swap a poster cell for a real player, in place.
+   * Called from the card click handler; nothing else mounts video on this view.
+   */
+  function playThumb(thumb, media) {
+    if (!thumb || thumb.dataset.playing === "true") return;
+
+    // First tap on sensitive media only un-blurs it. Watching is a second,
+    // deliberate action.
+    if (thumb.dataset.sensitive === "true") {
+      delete thumb.dataset.sensitive;
+      const warn = thumb.querySelector(".bmk__thumb-warn");
+      if (warn) warn.remove();
+      return;
+    }
+
+    const video = M3EMedia.createVideo(media, { autoplay: true, preload: "auto" });
+    if (!video) return;
+
+    thumb.dataset.playing = "true";
+    const poster = thumb.querySelector("img");
+    if (poster) poster.remove();
+    thumb.prepend(video);
+
+    // If the source turns out to be unplayable, restore an honest fallback
+    // rather than leaving a black rectangle.
+    video.addEventListener("error", () => {
+      thumb.innerHTML =
+        '<span class="bmk__thumb-fallback">' + svg("play", 20) +
+        "<span>Media unavailable</span></span>";
+    }, { once: true });
   }
 
   function fmtDuration(ms) {
@@ -870,15 +1007,56 @@
       ["Replies", item.replies], ["Views", item.views],
     ].filter((m) => m[1] > 0);
 
-    const media = item.media.map((m) => {
-      const isMotion = (m.type === "video" || m.type === "animated_gif") && m.mp4;
-      const label = m.type === "animated_gif" ? "GIF" : m.type === "video" ? "Video " + fmtDuration(m.duration) : "Photo";
-      const frame = isMotion
-        ? '<video controls preload="metadata" playsinline poster="' + esc(m.url) + '"' +
-          (m.type === "animated_gif" ? " loop muted" : "") +
-          '><source src="' + esc(m.mp4) + '" type="video/mp4"></video>'
-        : '<img src="' + esc(m.url) + '" alt="' + esc(m.alt || "") + '" loading="lazy" referrerpolicy="no-referrer" data-media="1">';
-      return "<figure>" + frame + "<figcaption>" + esc(label) + (m.alt ? " · " + esc(m.alt) : "") + "</figcaption></figure>";
+    /* The detail view is a single post, so mounting players eagerly is fine
+       here — the count is bounded at four. Cards are the opposite case and
+       stay poster-only until asked. */
+    const media = item.media.map((m, i) => {
+      const source = M3EMedia.playableSource(m);
+      const gif = m.type === "animated_gif";
+      const label = gif ? "GIF" : m.type === "video"
+        ? "Video" + (M3EMedia.formatDuration(m.duration) ? " · " + M3EMedia.formatDuration(m.duration) : "")
+        : "Photo";
+      const ratio = M3EMedia.aspectRatio(m);
+
+      let frame;
+      if (source) {
+        frame =
+          '<video class="m3e-video" data-detail-media="' + i + '"' +
+          ' preload="metadata" playsinline' +
+          (gif ? " loop muted autoplay" : " controls") +
+          (m.poster ? ' poster="' + esc(M3EMedia.sizedImage(m.poster, "medium")) + '"' : "") +
+          ' style="aspect-ratio:' + esc(ratio) + '"' +
+          (m.alt ? ' aria-label="' + esc(m.alt) + '"' : "") +
+          ' src="' + esc(source.src) + '"></video>';
+      } else if (M3EMedia.isMotion(m)) {
+        // Video we genuinely cannot play in this browser. Say so and point at
+        // the original rather than rendering a control bar that does nothing.
+        const still = m.poster || m.url;
+        frame =
+          '<div class="detail__media-fallback' + (still ? " detail__media-fallback--over" : "") + '"' +
+          ' style="aspect-ratio:' + esc(ratio) + ";" +
+          (still ? "background-image:url(" + esc(encodeURI(M3EMedia.sizedImage(still, "medium"))) + ")" : "") +
+          '">' +
+          svg("play", 24) +
+          "<p>This video is only published as an adaptive stream, which this browser " +
+          "can't play without extra software.</p>" +
+          (item.url
+            ? '<a class="m3e-button m3e-button--tonal m3e-button--xs m3e-state" href="' + esc(item.url) +
+              '" target="_blank" rel="noopener noreferrer">' + svg("external", 16) + "<span>Watch on X</span></a>"
+            : "") +
+          "</div>";
+      } else {
+        frame =
+          '<img src="' + esc(M3EMedia.sizedImage(m.url, "medium")) + '" alt="' + esc(m.alt || "") + '"' +
+          (m.width && m.height ? ' width="' + m.width + '" height="' + m.height + '"' : "") +
+          ' style="aspect-ratio:' + esc(ratio) + '"' +
+          ' loading="lazy" decoding="async" referrerpolicy="no-referrer" data-media="1">';
+      }
+
+      return (
+        '<figure' + (m.sensitive ? ' data-sensitive="true"' : "") + ">" + frame +
+        "<figcaption>" + esc(label) + (m.alt ? " · " + esc(m.alt) : "") + "</figcaption></figure>"
+      );
     }).join("");
 
     const ids = [
@@ -1004,6 +1182,8 @@
     const item = state.items.find((i) => i.tweet_id === id);
     if (!item) return;
     state.selectedId = id;
+    // Anything playing in the list is about to be covered or replaced.
+    M3EMedia.stopAll();
 
     document.querySelectorAll(".bmk").forEach((el) => {
       el.setAttribute("aria-selected", String(el.dataset.id === id));
@@ -1033,6 +1213,7 @@
 
   function clearDetail() {
     state.selectedId = null;
+    M3EMedia.stopAll();
     const body = $("detailBody");
     const placeholder = $("detailPlaceholder");
     if (body) { body.hidden = true; body.innerHTML = ""; }
@@ -1749,6 +1930,17 @@
       const card = event.target.closest(".bmk");
       if (!card) return;
 
+      // Playing media in place must not also open the detail view — the two
+      // would fight, and the player would be torn down the instant it mounted.
+      const thumb = event.target.closest("[data-play]");
+      if (thumb) {
+        event.stopPropagation();
+        const item = state.items.find((i) => i.tweet_id === card.dataset.id);
+        const media = item && item.media[Number(thumb.dataset.play)];
+        if (media) playThumb(thumb, media);
+        return;
+      }
+
       if (action) {
         event.stopPropagation();
         const id = card.dataset.id;
@@ -1781,6 +1973,10 @@
       const card = event.target.closest(".bmk");
       if (!card) return;
       if (event.key === "Enter" || event.key === " ") {
+        // A focused control inside the card — a play button, a tag button —
+        // owns its own activation. Only the card itself opens the detail.
+        if (event.target.closest("button, a, [data-play]") !== card &&
+            event.target.closest("button, a, [data-play]")) return;
         event.preventDefault();
         openDetail(card.dataset.id);
       }

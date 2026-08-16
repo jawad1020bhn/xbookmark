@@ -205,3 +205,108 @@ without a reload.
 `M3EColor.DEFAULT_SEED` / `DEFAULT_VARIANT` live in `color.js`, not `theme.js`,
 because the extension's service worker needs the brand colour to tint the
 toolbar badge and cannot import anything that touches the DOM.
+
+---
+
+## 5. Media
+
+Most bookmarks in a real X library are photo or video posts, so media is not a
+detail of the card — for many rows it *is* the card. It gets its own section
+because the decisions here are the ones most likely to be undone by someone who
+doesn't know why they were made.
+
+### 5.1 The grid
+
+The card reproduces X's own arrangement, because that is the shape users already
+associate with a post and any other layout makes a saved post look unfamiliar:
+
+| Items | Layout |
+| --- | --- |
+| 1 | Full width, **at the media's own aspect ratio**, capped at 62vh |
+| 2 | Two equal columns, 16:9 overall |
+| 3 | One full-height leading cell, two stacked beside it, 16:9 overall |
+| 4 | 2×2, 16:9 overall |
+| 5+ | First four, with `+N` on the last cell |
+
+Cells are separated by 3px and clipped by a single `large` radius on the
+container, so the group reads as one object rather than four.
+
+**Every cell is sized by ratio, never by pixel height.** A single photo carries
+its intrinsic ratio through a `--_ar` custom property set from the captured
+`width`/`height`, and images additionally carry real `width`/`height`
+attributes. The space is therefore correct before any bytes arrive, and the list
+does not reflow as it loads — a media-heavy feed that jumps while scrolling is
+unusable, and cumulative layout shift is the usual cause.
+
+Multi-item cells crop with `object-fit: cover` to keep the grid regular; a lone
+item uses `contain` so nothing is cut off when there is no grid to keep regular.
+
+### 5.2 Playback
+
+**Cards never mount a `<video>`.** Two hundred bookmarks that are mostly video
+would mean two hundred media elements, each with a decode pipeline and network
+activity. Cells render as poster images and a real player is swapped in only on
+activation. This is the single most important performance decision on the
+surface, and it is the one to check first if the library ever feels slow.
+
+Playing a thumbnail does **not** open the detail view. The two actions would
+otherwise fight and the player would be destroyed as it mounted.
+
+**One video at a time.** `M3EMedia` keeps a single stop function; starting any
+video stops the previous one, and opening or closing the detail pane stops
+everything. Concurrent audio is never what anyone wants and is easy to trigger
+in a list.
+
+Controls are the browser's own. Native `<video controls>` is already
+keyboard-complete, screen-reader labelled, and brings picture-in-picture and
+fullscreen for free; a bespoke control bar is a large amount of code whose best
+possible outcome is parity with it. The design system supplies the frame —
+shape, surface, focus ring — and nothing else.
+
+### 5.3 HLS, and why there is no player library
+
+X publishes video two ways: an adaptive HLS playlist, and fixed-bitrate MP4
+variants. Only Safari plays HLS natively; Chrome and Firefox need hls.js, which
+is larger than this entire application and would be the first runtime dependency
+in a deliberately zero-dependency, build-free repo. The MV3 content security
+policy also forbids loading it from a CDN, so it would have to be vendored.
+
+**The resolution: prefer the MP4, which X publishes for essentially every video
+and which plays natively everywhere.** Where several variants exist the
+highest-bitrate one wins. HLS is used only where the browser can play it
+unaided. That covers the real corpus with zero bytes of dependency.
+
+For the residual case — a video published *only* as a stream — the UI says so
+and offers "Watch on X" over the poster frame. An honest dead end beats a play
+button that leads to a black rectangle.
+
+> **Detection note.** `canPlayType` cannot be trusted for this and the code says
+> so at the point of use. Chromium answers `"maybe"` to both HLS mime types and
+> then fails to play a playlist; this was found by probing a real build, not
+> assumed. Blink is therefore excluded explicitly. `tests/media.test.mjs` pins
+> that behaviour for Chrome, Edge and Opera user agents.
+
+### 5.4 Bandwidth
+
+Card posters are requested from X's CDN as `?format=webp&name=small` and the
+detail view asks for `name=medium`; only `pbs.twimg.com` URLs are rewritten and
+everything else passes through untouched. On a library that is mostly images
+this is the difference between a few hundred kilobytes and several megabytes per
+screen.
+
+### 5.5 Sensitive media
+
+Media captured as sensitive renders blurred behind a "tap to view" scrim, and
+the first activation only reveals it — watching is a second, deliberate action.
+Sensitive media is never autoplayed.
+
+### 5.6 Accessibility
+
+- Playable cells are real `<button>`s, focusable and activated by Enter or
+  Space, labelled `Play video (0:15)` / `Play GIF` rather than the filename.
+  Non-interactive cells are plain `<div>`s and stay out of the tab order.
+- Captured alt text becomes the image's `alt` and the video's `aria-label`; it
+  is also shown in the detail view's figcaption, where it is useful to everyone.
+- Duration badges use tabular numerals so they don't jitter.
+- GIFs are muted and looped, as their source medium implies; nothing else
+  autoplays, which keeps `prefers-reduced-motion` users from being ambushed.
