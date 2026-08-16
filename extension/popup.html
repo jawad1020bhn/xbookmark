@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>X Bookmarks Exporter</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="wrap">
+
+    <!-- Header: brand + status pill -->
+    <header class="pb-head">
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+            <path d="M5 3h14a1 1 0 0 1 1 1v17l-8-4-8 4V4a1 1 0 0 1 1-1Z"/>
+          </svg>
+        </span>
+        <div class="brand__text">
+          <h1>Bookmarks Exporter</h1>
+          <span class="brand__sub overline">capture tool</span>
+        </div>
+      </div>
+      <span id="pbStatus" class="status-pill" data-status="idle">Idle</span>
+    </header>
+
+    <!-- Stat card: live capture stats -->
+    <section class="stat-card" aria-label="Capture status">
+      <div class="stat-card__row">
+        <span id="lastActivity" class="stat-card__time"></span>
+        <span id="reason" class="stat-card__reason"></span>
+      </div>
+      <div class="stat-chips">
+        <div class="stat-chip">
+          <span class="stat-chip__num" id="statCaptured">0</span>
+          <span class="stat-chip__label">captured</span>
+        </div>
+        <div class="stat-chip">
+          <span class="stat-chip__num" id="statNew">0</span>
+          <span class="stat-chip__label">new this run</span>
+        </div>
+        <div class="stat-chip">
+          <span class="stat-chip__num" id="statDupes">0</span>
+          <span class="stat-chip__label">duplicates</span>
+        </div>
+        <div class="stat-chip">
+          <span class="stat-chip__num" id="statFailed">0</span>
+          <span class="stat-chip__label">failed</span>
+        </div>
+      </div>
+      <div class="progress">
+        <div id="pbProgress" class="progress__bar"></div>
+      </div>
+    </section>
+
+    <!-- Capture controls -->
+    <div class="actions">
+      <button id="start" class="btn btn--filled btn--block">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path fill="currentColor" d="M8 5v14l11-7L8 5Z"/>
+        </svg>
+        <span id="startLabel">Start capture</span>
+      </button>
+      <div class="actions__row">
+        <button id="pause" class="btn btn--tonal btn--block">Pause</button>
+        <button id="stop" class="btn btn--tonal btn--block">Stop</button>
+        <button id="panic" class="btn btn--error btn--block">Panic</button>
+      </div>
+    </div>
+
+    <!-- Export cards -->
+    <div class="export">
+      <button id="exportJson" class="export-card">
+        <span class="export-card__icon">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+            <path d="M11 14.6V3h2v11.6l4.3-4.3 1.4 1.4L12 19l-6.7-6.3 1.4-1.4L11 14.6ZM4 20h16v2H4v-2Z"/>
+          </svg>
+        </span>
+        <span class="export-card__body">
+          <span class="export-card__title">Export JSON</span>
+          <span class="export-card__sub">x-bookmarks.json validated</span>
+        </span>
+        <svg class="export-card__chev" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+          <path d="M9 5.8L15.2 12 9 18.2l-1.4-1.4L12.4 12 7.6 7.2 9 5.8Z"/>
+        </svg>
+      </button>
+      <button id="exportJsonl" class="export-card">
+        <span class="export-card__icon">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+            <path d="M4 7h4l2 2h10v10H6a2 2 0 0 1-2-2V7Zm3 2v9h13V9H7Z"/>
+          </svg>
+        </span>
+        <span class="export-card__body">
+          <span class="export-card__title">Export JSONL</span>
+          <span class="export-card__sub">one bookmark per line</span>
+        </span>
+        <svg class="export-card__chev" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+          <path d="M9 5.8L15.2 12 9 18.2l-1.4-1.4L12.4 12 7.6 7.2 9 5.8Z"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Activity log (expandable) -->
+    <details class="log">
+      <summary>
+        <span>Activity log</span>
+        <span class="log__count" id="logCount">0</span>
+      </summary>
+      <ol id="log"></ol>
+    </details>
+
+    <!-- Footer -->
+    <footer class="pb-foot">
+      <span id="ver" class="pb-foot__ver">v0.1.0</span>
+      <button id="reset" class="btn btn--text btn--tiny">Clear data</button>
+      <button id="themeToggle" class="icon-btn" aria-label="Toggle theme" title="Toggle theme">
+        <svg viewBox="0 0 24 24" width="16" height="16">
+          <path fill="currentColor" d="M12 3a9 9 0 0 0 0 18 7 7 0 0 0 0-14 3 3 0 1 1 0-6 9 9 0 0 1 0 2Z"/>
+        </svg>
+      </button>
+    </footer>
+
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

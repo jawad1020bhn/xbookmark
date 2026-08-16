@@ -1,0 +1,72 @@
+{
+  "ok": true,
+  "status": 200,
+  "contentType": "application/json",
+  "json": {
+    "data": {
+      "bookmark_timeline_v2": {
+        "timeline": {
+          "instructions": [
+            {
+              "type": "TimelineAddEntries",
+              "entries": [
+                {
+                  "entryId": "tweet-222",
+                  "content": {
+                    "itemContent": {
+                      "tweet_results": {
+                        "result": {
+                          "__typename": "Tweet",
+                          "rest_id": "222",
+                          "core": {
+                            "user_results": {
+                              "result": {
+                                "rest_id": "9001",
+                                "legacy": { "screen_name": "alice", "name": "Alice" }
+                              }
+                            }
+                          },
+                          "legacy": {
+                            "full_text": "RT @bob: Original tweet text",
+                            "created_at": "Wed Jan 02 00:00:00 +0000 2026",
+                            "favorite_count": 1,
+                            "retweet_count": 0,
+                            "reply_count": 0,
+                            "conversation_id_str": "222",
+                            "retweeted_status_result": {
+                              "result": {
+                                "__typename": "Tweet",
+                                "rest_id": "333",
+                                "core": {
+                                  "user_results": {
+                                    "result": {
+                                      "rest_id": "9002",
+                                      "legacy": { "screen_name": "bob", "name": "Bob" }
+                                    }
+                                  }
+                                },
+                                "legacy": {
+                                  "full_text": "Original tweet text",
+                                  "created_at": "Tue Jan 01 00:00:00 +0000 2026",
+                                  "favorite_count": 9,
+                                  "retweet_count": 3,
+                                  "reply_count": 2,
+                                  "entities": { "urls": [] }
+                                }
+                              }
+                            },
+                            "entities": { "urls": [] }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}

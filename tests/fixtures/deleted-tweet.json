@@ -1,0 +1,34 @@
+{
+  "ok": true,
+  "status": 200,
+  "contentType": "application/json",
+  "json": {
+    "data": {
+      "bookmark_timeline_v2": {
+        "timeline": {
+          "instructions": [
+            {
+              "type": "TimelineAddEntries",
+              "entries": [
+                {
+                  "entryId": "tweet-999",
+                  "content": {
+                    "itemContent": {
+                      "tweet_results": {
+                        "result": {
+                          "__typename": "Tweet",
+                          "rest_id": "999",
+                          "legacy": {}
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
