@@ -22,8 +22,12 @@
       "view_count_at_capture": 142000,
       "has_media": true,
       "has_links": true,
-      "media_types": ["photo"],
-      "urls_expanded": ["https://example.com/timestamps"],
+      "media_types": [
+        "photo"
+      ],
+      "urls_expanded": [
+        "https://example.com/timestamps"
+      ],
       "conversation_id": "190100000000000001",
       "in_reply_to_status_id": null,
       "in_reply_to_user_id": null,
@@ -35,7 +39,20 @@
       "source_of_order": "feed-order",
       "normalizer_version": "2026-08-16.2",
       "captured_at": "2026-07-16T08:00:00.000Z",
-      "source_type": "graphql-bookmarks"
+      "source_type": "graphql-bookmarks",
+      "media_items": [
+        {
+          "type": "photo",
+          "url": "sample-media/photo-desk.jpg",
+          "width": 1200,
+          "height": 670,
+          "aspect": 1.791,
+          "alt": "A desk seen from above with a notebook of wireframe sketches, a coffee cup and a keyboard.",
+          "mp4": null,
+          "hls": null,
+          "duration": null
+        }
+      ]
     },
     {
       "tweet_id": "190100000000000002",
@@ -55,10 +72,15 @@
       "retweet_count_at_capture": 1203,
       "reply_count_at_capture": 240,
       "view_count_at_capture": 0,
-      "has_media": false,
+      "has_media": true,
       "has_links": true,
-      "media_types": [],
-      "urls_expanded": ["https://sqlite.org"],
+      "media_types": [
+        "photo",
+        "photo"
+      ],
+      "urls_expanded": [
+        "https://sqlite.org"
+      ],
       "conversation_id": "190100000000000002",
       "quoted_tweet_id": "189900000000000010",
       "quoted_tweet": {
@@ -76,7 +98,31 @@
       "source_of_order": "feed-order",
       "normalizer_version": "2026-08-16.2",
       "captured_at": "2026-07-16T08:01:00.000Z",
-      "source_type": "graphql-bookmarks"
+      "source_type": "graphql-bookmarks",
+      "media_items": [
+        {
+          "type": "photo",
+          "url": "sample-media/photo-facade.jpg",
+          "width": 900,
+          "height": 1206,
+          "aspect": 0.7463,
+          "alt": "A glass office facade shot from below against a blue sky.",
+          "mp4": null,
+          "hls": null,
+          "duration": null
+        },
+        {
+          "type": "photo",
+          "url": "sample-media/photo-charts.jpg",
+          "width": 900,
+          "height": 900,
+          "aspect": 1.0,
+          "alt": "Charts and graphs printed in purple and teal ink.",
+          "mp4": null,
+          "hls": null,
+          "duration": null
+        }
+      ]
     },
     {
       "tweet_id": "190100000000000003",
@@ -108,7 +154,8 @@
       "source_of_order": "feed-order",
       "normalizer_version": "2026-08-16.2",
       "captured_at": "2026-07-16T08:02:00.000Z",
-      "source_type": "graphql-bookmarks"
+      "source_type": "graphql-bookmarks",
+      "media_items": []
     },
     {
       "tweet_id": "190100000000000004",
@@ -130,8 +177,12 @@
       "view_count_at_capture": 98000,
       "has_media": true,
       "has_links": true,
-      "media_types": ["video"],
-      "urls_expanded": ["https://example.com/demo"],
+      "media_types": [
+        "video"
+      ],
+      "urls_expanded": [
+        "https://example.com/demo"
+      ],
       "conversation_id": "190000000000000900",
       "in_reply_to_status_id": "190000000000000500",
       "in_reply_to_user_id": "2002",
@@ -141,7 +192,35 @@
       "source_of_order": "feed-order",
       "normalizer_version": "2026-08-16.2",
       "captured_at": "2026-07-17T10:15:00.000Z",
-      "source_type": "graphql-bookmarks"
+      "source_type": "graphql-bookmarks",
+      "media_items": [
+        {
+          "type": "video",
+          "url": "sample-media/poster-forest.jpg",
+          "poster": "sample-media/poster-forest.jpg",
+          "width": 1280,
+          "height": 720,
+          "aspect": 1.7778,
+          "mp4": "sample-media/video-forest-720.mp4",
+          "hls": "https://video.twimg.com/hls/190100000000000004.m3u8",
+          "duration": 15000,
+          "alt": "A slow push through a misty evergreen forest at dawn.",
+          "mp4_variants": [
+            {
+              "bitrate": 2176000,
+              "url": "sample-media/video-forest-720.mp4",
+              "width": 1280,
+              "height": 720
+            },
+            {
+              "bitrate": 632000,
+              "url": "sample-media/video-forest-360.mp4",
+              "width": 640,
+              "height": 360
+            }
+          ]
+        }
+      ]
     },
     {
       "tweet_id": "190100000000000005",
@@ -161,9 +240,13 @@
       "retweet_count_at_capture": 41,
       "reply_count_at_capture": 18,
       "view_count_at_capture": 0,
-      "has_media": false,
+      "has_media": true,
       "has_links": false,
-      "media_types": [],
+      "media_types": [
+        "photo",
+        "animated_gif",
+        "photo"
+      ],
       "conversation_id": "190100000000000005",
       "first_seen_at": "2026-07-17T10:16:00.000Z",
       "last_seen_at": "2026-07-17T10:16:00.000Z",
@@ -171,7 +254,43 @@
       "source_of_order": "feed-order",
       "normalizer_version": "2026-08-16.2",
       "captured_at": "2026-07-17T10:16:00.000Z",
-      "source_type": "graphql-bookmarks"
+      "source_type": "graphql-bookmarks",
+      "media_items": [
+        {
+          "type": "photo",
+          "url": "sample-media/photo-forest.jpg",
+          "width": 1200,
+          "height": 670,
+          "aspect": 1.791,
+          "alt": "A misty forest at dawn.",
+          "mp4": null,
+          "hls": null,
+          "duration": null
+        },
+        {
+          "type": "animated_gif",
+          "url": "sample-media/poster-gif.jpg",
+          "poster": "sample-media/poster-gif.jpg",
+          "width": 480,
+          "height": 480,
+          "aspect": 1.0,
+          "mp4": "sample-media/gif-loop.mp4",
+          "hls": null,
+          "duration": 4000,
+          "alt": "A looping animation of the word \"loop\" orbiting the frame."
+        },
+        {
+          "type": "photo",
+          "url": "sample-media/photo-charts.jpg",
+          "width": 900,
+          "height": 900,
+          "aspect": 1.0,
+          "alt": "Charts and graphs printed in purple and teal ink.",
+          "mp4": null,
+          "hls": null,
+          "duration": null
+        }
+      ]
     },
     {
       "tweet_id": "190100000000000006",
@@ -191,10 +310,17 @@
       "retweet_count_at_capture": 176,
       "reply_count_at_capture": 64,
       "view_count_at_capture": 0,
-      "has_media": false,
+      "has_media": true,
       "has_links": true,
-      "media_types": [],
-      "urls_expanded": ["https://example.com/normalize"],
+      "media_types": [
+        "photo",
+        "photo",
+        "photo",
+        "photo"
+      ],
+      "urls_expanded": [
+        "https://example.com/normalize"
+      ],
       "conversation_id": "190100000000000006",
       "first_seen_at": "2026-07-18T09:30:00.000Z",
       "last_seen_at": "2026-07-18T09:30:00.000Z",
@@ -202,7 +328,53 @@
       "source_of_order": "feed-order",
       "normalizer_version": "2026-08-16.2",
       "captured_at": "2026-07-18T09:30:00.000Z",
-      "source_type": "graphql-bookmarks"
+      "source_type": "graphql-bookmarks",
+      "media_items": [
+        {
+          "type": "photo",
+          "url": "sample-media/photo-desk.jpg",
+          "width": 1200,
+          "height": 670,
+          "aspect": 1.791,
+          "alt": "A designer desk from above.",
+          "mp4": null,
+          "hls": null,
+          "duration": null
+        },
+        {
+          "type": "photo",
+          "url": "sample-media/photo-facade.jpg",
+          "width": 900,
+          "height": 1206,
+          "aspect": 0.7463,
+          "alt": "A glass office facade from below.",
+          "mp4": null,
+          "hls": null,
+          "duration": null
+        },
+        {
+          "type": "photo",
+          "url": "sample-media/photo-charts.jpg",
+          "width": 900,
+          "height": 900,
+          "aspect": 1.0,
+          "alt": "Printed data visualisations.",
+          "mp4": null,
+          "hls": null,
+          "duration": null
+        },
+        {
+          "type": "photo",
+          "url": "sample-media/photo-forest.jpg",
+          "width": 1200,
+          "height": 670,
+          "aspect": 1.791,
+          "alt": "A misty forest at dawn.",
+          "mp4": null,
+          "hls": null,
+          "duration": null
+        }
+      ]
     },
     {
       "tweet_id": "190100000000000007",
@@ -223,9 +395,11 @@
       "retweet_count_at_capture": 0,
       "reply_count_at_capture": 0,
       "view_count_at_capture": 0,
-      "has_media": false,
+      "has_media": true,
       "has_links": false,
-      "media_types": [],
+      "media_types": [
+        "video"
+      ],
       "conversation_id": null,
       "first_seen_at": "2026-07-18T09:31:00.000Z",
       "last_seen_at": "2026-07-18T09:31:00.000Z",
@@ -233,7 +407,21 @@
       "source_of_order": "feed-order",
       "normalizer_version": "2026-08-16.2",
       "captured_at": "2026-07-18T09:31:00.000Z",
-      "source_type": "graphql-bookmarks"
+      "source_type": "graphql-bookmarks",
+      "media_items": [
+        {
+          "type": "video",
+          "url": "sample-media/poster-forest.jpg",
+          "poster": "sample-media/poster-forest.jpg",
+          "width": 1280,
+          "height": 720,
+          "aspect": 1.7778,
+          "mp4": null,
+          "hls": "https://video.twimg.com/hls/190100000000000007.m3u8",
+          "duration": 42000,
+          "alt": "An adaptive-only stream, used here to exercise the unplayable-media path."
+        }
+      ]
     }
   ]
 }

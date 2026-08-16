@@ -1,0 +1,7 @@
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+
+# Nothing here needs a package manager, but keep strays out of the tree.
+node_modules/
