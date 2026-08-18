@@ -156,6 +156,26 @@ test("relative asset paths resolve from the dashboard page", () => {
   }
 });
 
+test("the theater player module is loaded before the app", () => {
+  // The theater mounts videos with `controls: false` and relies on
+  // window.M3EVideoControls for operation. If the script were ever dropped
+  // from index.html (or reordered after app.js), every theater video would
+  // mount with no controls at all — a silent, total loss of playback.
+  const html = read("extension/dashboard/index.html");
+  const scripts = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)].map((m) => m[1]);
+  const vc = scripts.findIndex((s) => s.includes("video-controls.js"));
+  const app = scripts.findIndex((s) => s.endsWith("app.js"));
+  assert.ok(vc > -1, "video-controls.js must be included in index.html");
+  assert.ok(app > -1, "app.js must be included in index.html");
+  assert.ok(vc < app, "video-controls.js must load before app.js");
+
+  // And the module itself must expose the API the app calls.
+  const controls = read("extension/shared/m3e/video-controls.js");
+  assert.match(controls, /M3EVideoControls\s*=\s*factory\(\)/);
+  assert.match(controls, /function bind\(video, options\)/);
+  assert.match(controls, /function cleanup\(\)/);
+});
+
 test("the sample library is not fetched inside the extension", () => {
   // It isn't mirrored, so the fetch would 404 on every extension start.
   const app = read("extension/dashboard/app.js");

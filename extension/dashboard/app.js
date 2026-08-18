@@ -1565,7 +1565,8 @@
     /* Mount the real player for whichever slide is centred, and tear down the
        ones that are not. A hundred <video> elements on one page is how a tab
        runs out of memory; one is how a feed feels instant. */
-    mountTheaterPlayers(rail, slice);
+    const players = mountTheaterPlayers(rail, slice);
+    if (players) carousels.push(players);
   }
 
   function theaterSlideHtml(entry) {
@@ -1618,7 +1619,7 @@
   }
 
   function mountTheaterPlayers(rail, entries) {
-    if (typeof IntersectionObserver === "undefined") return;
+    if (typeof IntersectionObserver === "undefined") return null;
     const byId = new Map(entries.map((e) => [e.id, e]));
 
     const observer = new IntersectionObserver(
@@ -1654,6 +1655,10 @@
     );
 
     rail.querySelectorAll(".slide").forEach((s) => observer.observe(s));
+
+    // Hand the observer to the view's teardown list so a re-render disconnects
+    // it instead of leaving it watching detached slides for the life of the page.
+    return { destroy: () => observer.disconnect() };
   }
 
   function mountSlideVideo(slide, entry) {
@@ -1684,20 +1689,33 @@
     if (!video) return;
     video.classList.add("slide__media", "slide__video");
     stage.appendChild(video);
-    const play = stage.querySelector(".slide__play");
-    if (play) play.remove();
 
     /* A GIF is a silent loop with no chrome; a real video gets the custom
        control layer (play/pause, seek, time, mute, rate, loop, PiP, resume).
        The controller returns its own teardown, stored on the slide so the
        centering observer can dispose it before removing the video. */
+    let controlsReady = false;
     if (!gif && window.M3EVideoControls) {
-      slide._vcCleanup = window.M3EVideoControls.bind(video, {
-        container: stage,
-        entryId: entry.id,
-        progress: progressStore,
-      });
+      try {
+        slide._vcCleanup = window.M3EVideoControls.bind(video, {
+          container: stage,
+          entryId: entry.id,
+          progress: progressStore,
+        });
+        controlsReady = true;
+      } catch (error) {
+        // A failed control layer must never leave the video unplayable:
+        // fall back to native controls and drop the stored teardown.
+        console.error("M3EVideoControls failed to bind", error);
+        slide._vcCleanup = null;
+      }
     }
+    if (!controlsReady) video.controls = true;
+
+    /* The large play button only goes away once something can actually play
+       the video — custom controls bound, or native controls enabled. */
+    const play = stage.querySelector(".slide__play");
+    if (play && (controlsReady || video.controls)) play.remove();
   }
 
   /** Poster-only preload for the slides either side of the one being watched.
@@ -1779,6 +1797,14 @@
 
     const down = (event) => {
       if (event.pointerType === "mouse" || pointerId !== null) return;
+      /* A drag that begins on the player's chrome is that control's own
+         gesture (scrub on the seek bar, tap-to-toggle on the controls) — it
+         must never read as a pull-down-to-exit. The media itself stays fair
+         game: swiping down on the video is the dismiss gesture. */
+      if (event.target.closest &&
+          event.target.closest(".slide__controls, .slide__resume, .slide__buffering")) {
+        return;
+      }
       pointerId = event.pointerId;
       startX = event.clientX;
       startY = event.clientY;

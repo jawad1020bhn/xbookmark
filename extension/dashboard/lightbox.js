@@ -439,6 +439,10 @@
          file to fill a 390px stage. */
       const video = window.M3EMedia.createVideo(m, {
         autoplay: true,
+        /* Native controls here by design: the lightbox is a plain viewer, not
+           the theater, so it keeps the browser's own controls rather than a
+           second custom layer. */
+        controls: true,
         preload: "auto",
         width: els.stage.clientWidth || 1280,
         onFail: () => {
