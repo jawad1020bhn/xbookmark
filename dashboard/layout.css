@@ -430,6 +430,19 @@
   background: var(--md-sys-color-surface-container-highest);
 }
 
+/* The inline hover preview. Layered over the poster (the tile is the nearest
+   positioned ancestor), letterboxed rather than cropped like every other
+   surface. The video's own native controls — unmute, fullscreen, PiP — sit in
+   its control bar and are never occluded by the scrim, which ignores pointer
+   events. */
+.tile__video {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: contain;
+}
+
 /* Availability never competes with the poster. It appears as quiet text only
    when a pointer hovers or the tile has keyboard focus; the inspector carries
    the explanation and recovery actions. */
@@ -487,11 +500,46 @@
   overflow-y: hidden;
   scroll-snap-type: x mandatory;
   overscroll-behavior-x: contain;
+  /* Horizontal paging is native; vertical drags are left to the dismiss
+     gesture, which is how swipe-down-to-close can read the pull without
+     fighting the pager. */
+  touch-action: pan-x;
   scroll-behavior: smooth;
   scrollbar-width: none;
   border-radius: var(--md-sys-shape-corner-extra-large);
 }
 .theater::-webkit-scrollbar { display: none; }
+
+/* The shell wraps the pager plus the floating exit control, so the close
+   button stays put while the slides scroll underneath it. */
+.theater__shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+}
+/* The exit path. A floating control like the viewer's own close, placed over
+   the letterboxed corner of the stage where media never covers it. */
+.theater__close {
+  position: absolute;
+  inset-block-start: var(--md-sys-spacing-3);
+  inset-inline-end: var(--md-sys-spacing-3);
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: rgb(0 0 0 / 0.55);
+  color: #fff;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition: scale var(--md-sys-motion-spring-fast-spatial);
+}
+.theater__close:hover { scale: 1.08; }
+.theater__close:active { scale: 0.94; }
+.theater__close:focus-visible { outline: 3px solid var(--md-sys-color-secondary); outline-offset: 3px; }
 .theater:focus-visible { outline: 3px solid var(--md-sys-color-secondary); outline-offset: 4px; }
 @media (prefers-reduced-motion: reduce) { .theater { scroll-behavior: auto; } }
 
@@ -575,6 +623,10 @@ html[data-view="theater"] .feed[data-view="theater"] {
   flex-direction: column;
   min-block-size: 0;
 }
+html[data-view="theater"] .theater__shell {
+  flex: 1 1 0;
+  min-block-size: 0;
+}
 html[data-view="theater"] .theater {
   flex: 1 1 0;
   min-block-size: 0;
@@ -597,6 +649,156 @@ html[data-view="theater"] .pane__foot { display: none; }
 
 .slide__video { inline-size: auto; }
 .slide__missing { display: grid; place-items: center; color: var(--md-sys-color-on-surface-variant); }
+
+/* -----------------------------------------------------------------------------
+   Theater video controls
+
+   A thin M3E layer over the native <video> element (mounted with `controls:
+   false`). It floats at the foot of the stage, hides while a video plays,
+   returns on hover / focus / pause / buffering, and its seek bar scrubs
+   without paging the theater carousel.
+   -------------------------------------------------------------------------- */
+.slide__controls {
+  position: absolute;
+  inset-inline: var(--md-sys-spacing-3);
+  inset-block-end: var(--md-sys-spacing-3);
+  display: grid;
+  gap: var(--md-sys-spacing-1);
+  padding: var(--md-sys-spacing-1) var(--md-sys-spacing-3);
+  border-radius: var(--md-sys-shape-corner-full);
+  background: color-mix(in srgb, var(--md-sys-color-surface-container-high) 86%, transparent);
+  color: var(--md-sys-color-on-surface);
+  backdrop-filter: blur(12px);
+  /* Temporary chrome: hidden by default, revealed by the controller. */
+  opacity: 0;
+  pointer-events: none;
+  translate: 0 8px;
+  transition: opacity var(--md-sys-motion-spring-fast-effects),
+              translate var(--md-sys-motion-spring-fast-spatial);
+}
+.slide__controls.is-visible { opacity: 1; pointer-events: auto; translate: 0 0; }
+/* A gesture that starts on the controls must never page the carousel. */
+.slide__controls { touch-action: none; }
+.slide__controls .m3e-icon-button { --_content: var(--md-sys-color-on-surface); }
+.slide__controls .m3e-icon-button[aria-pressed="true"] { --_content: var(--md-sys-color-primary); }
+
+.slide__controls-row {
+  display: flex;
+  align-items: center;
+  gap: var(--md-sys-spacing-1);
+}
+.slide__controls-spacer { flex: 1; }
+.slide__time {
+  display: inline-flex;
+  gap: 4px;
+  margin-inline: var(--md-sys-spacing-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.slide__rate {
+  width: 44px;
+  font: var(--md-sys-typescale-label-large-weight) var(--md-sys-typescale-label-large-size) / 1
+        var(--md-ref-typeface-plain);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The seek slider. A real range input — native keyboard seeking, screen-reader
+   semantics — restyled as a quiet M3 track with played (primary) and buffered
+   (soft white) fills driven by the `--_played` / `--_buffered` custom props. */
+.slide__seek {
+  --_played: 0;
+  --_buffered: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.slide__seek:disabled { opacity: 0.4; cursor: default; }
+.slide__seek:focus-visible { outline: 2px solid var(--md-sys-color-secondary); outline-offset: 2px; border-radius: var(--md-sys-shape-corner-full); }
+.slide__seek::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: linear-gradient(to right,
+    var(--md-sys-color-primary) 0 calc(var(--_played) * 1%),
+    rgb(255 255 255 / 0.4) calc(var(--_played) * 1%) calc(var(--_buffered) * 1%),
+    rgb(255 255 255 / 0.16) calc(var(--_buffered) * 1%) 100%);
+}
+.slide__seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-block-start: -6px;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-on-surface);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+}
+.slide__seek::-moz-range-track {
+  height: 4px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: linear-gradient(to right,
+    var(--md-sys-color-primary) 0 calc(var(--_played) * 1%),
+    rgb(255 255 255 / 0.4) calc(var(--_played) * 1%) calc(var(--_buffered) * 1%),
+    rgb(255 255 255 / 0.16) calc(var(--_buffered) * 1%) 100%);
+}
+.slide__seek::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-on-surface);
+}
+
+/* `hidden` must beat the author `display` rules below, or the spinner and the
+   resume chip would stay visible while marked hidden. */
+.slide__buffering[hidden],
+.slide__resume[hidden] { display: none; }
+
+/* Buffering: a quiet spinner, suppressed under reduced motion. */
+.slide__buffering {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: 50%;
+  translate: -50% -50%;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--md-sys-shape-corner-full);
+  border: 3px solid rgb(255 255 255 / 0.25);
+  border-block-start-color: #fff;
+  animation: slide-buffering-spin 0.9s linear infinite;
+  pointer-events: none;
+}
+@keyframes slide-buffering-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .slide__buffering { animation: none; }
+  .slide__controls { transition: none; }
+}
+
+/* Resume hint — a quiet chip that names where playback picked up, with a way
+   back to the start. */
+.slide__resume {
+  position: absolute;
+  inset-block-start: var(--md-sys-spacing-3);
+  inset-inline-start: 50%;
+  translate: -50% 0;
+  display: flex;
+  align-items: center;
+  gap: var(--md-sys-spacing-2);
+  padding: var(--md-sys-spacing-1) var(--md-sys-spacing-3);
+  border-radius: var(--md-sys-shape-corner-full);
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+  font: var(--md-sys-typescale-label-medium-weight) var(--md-sys-typescale-label-medium-size) / 1.25
+        var(--md-ref-typeface-plain);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+.slide__resume .m3e-button { --_content: #fff; min-block-size: 28px; }
+
 .slide__play {
   position: absolute;
   display: grid;
@@ -1108,6 +1310,18 @@ html[data-view="theater"] .pane__foot { display: none; }
   text-align: center;
   text-wrap: pretty;
 }
+/* Caption + filmstrip controls share one row; the caption takes the room and
+   the two icon buttons (thumbnail size, grid overview) sit at the end. */
+.lb__bottom-row {
+  display: flex;
+  align-items: center;
+  gap: var(--md-sys-spacing-3);
+  min-width: 0;
+}
+.lb__bottom-row .lb__caption { flex: 1; min-width: 0; text-align: start; }
+.lb__bottom-actions { display: flex; gap: var(--md-sys-spacing-1); flex: none; }
+.lb__bottom-actions .lb__btn { width: 40px; height: 40px; }
+.lb__btn[aria-pressed="true"] { background: rgb(255 255 255 / 0.14); }
 /* Filmstrip. Replaces the old dot row, which did not survive contact with a
    viewer that traverses an entire library rather than one post's four
    photos: forty dots is a texture, not a control. The strip is also a
@@ -1159,6 +1373,139 @@ html[data-view="theater"] .pane__foot { display: none; }
   border-radius: var(--md-sys-shape-corner-full);
   background: rgb(0 0 0 / 0.65);
   color: #fff;
+}
+
+/* Optional larger filmstrip thumbnails, toggled from the bottom bar. */
+.lb[data-strip="large"] .lb__frame { width: 96px; height: 96px; }
+.lb[data-strip="large"] .lb__frame-motion { width: 20px; height: 20px; }
+
+/* -----------------------------------------------------------------------------
+   Grid overview
+
+   A drawer that slides up over the whole viewer and shows every item as a
+   thumbnail. Cells are absolutely positioned by the windowed renderer in
+   lightbox.js, so only the rows near the viewport exist in the DOM no matter
+   how large the set is.
+   -------------------------------------------------------------------------- */
+.lb__overview {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--md-sys-color-scrim) 96%, var(--md-sys-color-surface-container));
+  color: #fff;
+  opacity: 0;
+  pointer-events: none;
+  translate: 0 100%;
+  transition: translate var(--md-sys-motion-spring-default-spatial),
+              opacity var(--md-sys-motion-spring-fast-effects);
+}
+.lb__overview[data-open="true"] { opacity: 1; pointer-events: auto; translate: 0 0; }
+@media (prefers-reduced-motion: reduce) { .lb__overview { transition: none; } }
+
+.lb__overview__head {
+  display: flex;
+  align-items: center;
+  gap: var(--md-sys-spacing-3);
+  padding: var(--md-sys-spacing-3) var(--md-sys-spacing-4);
+  border-block-end: 1px solid rgb(255 255 255 / 0.12);
+}
+.lb__overview__title { flex: 1; min-width: 0; }
+.lb__ov-title { margin: 0; }
+.lb__ov-count { margin: 0; opacity: 0.75; }
+
+.lb__jump { display: flex; align-items: center; gap: var(--md-sys-spacing-2); flex: none; }
+.lb__jump-label { opacity: 0.75; white-space: nowrap; }
+.lb__jump-input {
+  width: 76px;
+  padding: 8px 10px;
+  border: 1px solid rgb(255 255 255 / 0.28);
+  border-radius: var(--md-sys-shape-corner-small);
+  background: rgb(255 255 255 / 0.08);
+  color: #fff;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.lb__jump-input:focus-visible { outline: 3px solid var(--md-sys-color-secondary); outline-offset: 2px; }
+.lb__jump-total { opacity: 0.75; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lb__jump-go {
+  padding: 8px 16px;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: #fff;
+  color: #000;
+  font: 600 var(--md-sys-typescale-label-large-size) / 1.25 var(--md-ref-typeface-plain);
+  cursor: pointer;
+}
+.lb__jump-go:focus-visible { outline: 3px solid var(--md-sys-color-secondary); outline-offset: 2px; }
+
+.lb__overview__grid {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.35) transparent;
+}
+.lb__overview__grid::-webkit-scrollbar { width: 8px; }
+.lb__overview__grid::-webkit-scrollbar-thumb { background: rgb(255 255 255 / 0.35); border-radius: 4px; }
+
+.lb__overview-cell {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: var(--md-sys-shape-corner-small);
+  background: rgb(255 255 255 / 0.08);
+  color: #fff;
+  overflow: hidden;
+  cursor: pointer;
+}
+.lb__overview-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lb__overview-cell__blank {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: rgb(255 255 255 / 0.6);
+  font-size: var(--md-sys-typescale-body-small-size);
+}
+.lb__overview-cell__num {
+  position: absolute;
+  inset-block-end: 2px;
+  inset-inline-start: 4px;
+  padding: 1px 5px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: rgb(0 0 0 / 0.6);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.lb__overview-cell__motion {
+  position: absolute;
+  inset-block-end: 2px;
+  inset-inline-end: 4px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+  pointer-events: none;
+}
+.lb__overview-cell:hover { border-color: rgb(255 255 255 / 0.6); }
+.lb__overview-cell[aria-current="true"] { border-color: #fff; }
+.lb__overview-cell:focus-visible { outline: 3px solid var(--md-sys-color-secondary); outline-offset: 1px; }
+
+/* On a phone the head wraps: title on its own line, jump + close beneath. */
+@media (max-width: 599px) {
+  .lb__overview__head { flex-wrap: wrap; }
+  .lb__overview__title { flex-basis: 100%; }
 }
 
 .lb__unplayable {

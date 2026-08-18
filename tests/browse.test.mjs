@@ -157,6 +157,18 @@ test("theater pages exactly one item per flick", () => {
   assert.match(slide, /scroll-snap-align:\s*center/);
 });
 
+test("the theater always has an explicit exit path", () => {
+  // Immersive views must never trap the reader. The floating close button,
+  // the Escape key and a touch swipe-down all funnel into one exit function.
+  assert.match(app, /function exitTheater/);
+  assert.match(app, /data-theater-close/);
+  assert.match(app, /function bindTheaterDismiss/);
+  assert.match(layout, /\.theater__close\s*\{/);
+  // Escape is owned by the shared interaction runtime (bindEscape), not a
+  // bespoke global shortcut system in the app itself.
+  assert.match(read("shared/m3e/interactions.js"), /function bindEscape/);
+});
+
 test("a carousel is operable from the keyboard", () => {
   // A horizontally scrolling region drivable only by wheel or swipe fails
   // WCAG 2.1.1. The controller owns arrows, Home and End.
@@ -280,6 +292,100 @@ test("tiles render a poster, never a video element", () => {
   assert.match(fn, /loading="lazy"/);
 });
 
+test("motion tiles preview on hover, muted, with native controls for unmute", () => {
+  // Hover-to-play on pointer devices: the preview mounts lazily, starts muted
+  // (the browser refuses unmuted autoplay anyway), and a real video keeps its
+  // native controls so unmute, fullscreen and PiP come free. GIFs loop
+  // silently with no chrome. Clicking the tile itself still opens the viewer.
+  const fn = app.slice(app.indexOf("function mountTilePreview"), app.indexOf("function unmountTilePreview"));
+  assert.match(fn, /autoplay: true/);
+  assert.match(fn, /muted: true/);
+  assert.match(fn, /controls: !gif/);
+  assert.match(fn, /loop: gif/);
+  assert.match(app, /pointerenter/);
+  assert.match(app, /canHover/);
+  assert.match(app, /data-playing/);
+  // The tile click must not fire when the click is on a video's own controls;
+  // a GIF preview (no controls) still opens the viewer when clicked.
+  assert.match(app, /closest\("\.tile__video\[controls\]"\)/);
+});
+
+test("touch playback plays the centred tile and pauses while scrolling", () => {
+  // No hover on a phone, so the fallback is settled-in-view: play the most
+  // centred motion tile, pause while the page scrolls, resume ~140ms after it
+  // settles. Only one preview is ever mounted.
+  const fn = app.slice(app.indexOf("function createTileAutoplayer"), app.indexOf("Rails view"));
+  assert.match(fn, /IntersectionObserver/);
+  assert.match(fn, /window\.addEventListener\("scroll"/);
+  assert.match(fn, /setTimeout/);
+  assert.match(fn, /pausedByScroll/);
+});
+
+test("theater holds playback while the rail is mid-swipe", () => {
+  // The theatre's pager is a scroll container too: videos must not start
+  // mid-swipe, and the centred slide resumes once the rail settles.
+  const fn = app.slice(app.indexOf("function bindTheaterScrollPause"), app.indexOf("function bindTheaterDismiss"));
+  assert.match(fn, /theaterScrolling = true/);
+  assert.match(fn, /addEventListener\("scroll"/);
+  assert.match(fn, /setTimeout/);
+  assert.match(app, /&& !theaterScrolling/);
+});
+
+test("theater video uses a custom M3E control layer, not native controls", () => {
+  // Native controls are turned off in the theater and replaced by a thin
+  // controller (M3EVideoControls.bind) with play/pause, seek, time, mute,
+  // rate, loop, PiP and resume — all built on real buttons and a real range
+  // input, never a fake div slider.
+  const fn = app.slice(app.indexOf("function mountSlideVideo"), app.indexOf("function bindTheaterScrollPause"));
+  assert.match(fn, /controls: false/);
+  assert.match(fn, /M3EVideoControls\.bind/);
+  assert.match(fn, /progress: progressStore/);
+  assert.match(fn, /entryId: entry\.id/);
+  // The slide disposes the controller before the video element is removed.
+  assert.match(app, /slide\._vcCleanup/);
+
+  const controls = read("shared/m3e/video-controls.js");
+  assert.match(controls, /input/); // real range slider for seek
+  assert.match(controls, /type = "range"/);
+  for (const action of ["play", "mute", "loop", "rate", "pip"]) {
+    assert.match(controls, new RegExp('makeButton\\("' + action + '"'), "missing control: " + action);
+  }
+  // Keyboard seeking is native to the range input; play/pause etc. are real
+  // buttons, so Space/Enter work without a custom keymap.
+  assert.match(controls, /aria-label/);
+  assert.match(controls, /aria-pressed/);
+});
+
+test("theater playback position is resumed and persisted per media item", () => {
+  // Resume is the flagship of the custom layer: save per entry id, throttled,
+  // dropped when under ~3s watched or over ~95% complete, restored on mount
+  // with a "Resumed from" hint and a "Start over" action.
+  const app2 = read("dashboard/app.js");
+  assert.match(app2, /progress: "xbm\.progress"/);
+  assert.match(app2, /const progressStore/);
+  assert.match(app2, /PROGRESS_LIMIT/);
+
+  const controls = read("shared/m3e/video-controls.js");
+  assert.match(controls, /SAVE_INTERVAL/);
+  assert.match(controls, /RESUME_MIN/);
+  assert.match(controls, /RESUME_MAX/);
+  assert.match(controls, /function saveProgress/);
+  assert.match(controls, /function tryResume/);
+  assert.match(controls, /Resumed from/);
+  assert.match(controls, /Start over/);
+  assert.match(controls, /pagehide/);
+});
+
+test("theater preloads adjacent posters, never adjacent videos", () => {
+  // Perceived speed without bandwidth waste: the next/previous POSTER is
+  // prefetched when a slide centres; no video bytes are fetched for items
+  // nobody has watched.
+  const fn = app.slice(app.indexOf("const preloadAdjacentPosters"), app.indexOf("function bindTheaterScrollPause"));
+  assert.match(fn, /new Image\(\)/);
+  assert.match(fn, /sizedImage\(/);
+  assert.match(app, /preloadAdjacentPosters\(entries, entry\.id\)/);
+});
+
 test("unplayable media stays quiet until hover or inspection", () => {
   const tile = app.slice(app.indexOf("function tileHtml"), app.indexOf("function buildRails"));
   const detail = app.slice(app.indexOf("function detailHtml"), app.indexOf("function linkify"));
@@ -318,10 +424,13 @@ test("the viewer relabels itself as it crosses posts", () => {
 test("the filmstrip is windowed, not materialised in full", () => {
   // With a whole library loaded this can be thousands of items; building an
   // <img> for each to decorate a bottom bar costs more than the photo itself.
+  // The window radius varies with thumbnail size (larger thumbs, fewer shown),
+  // but the window itself stays bounded around the current index either way.
   const lb = read("dashboard/lightbox.js");
   assert.match(lb, /const STRIP_RADIUS/);
-  assert.match(lb, /Math\.max\(0, index - STRIP_RADIUS\)/);
-  assert.match(lb, /Math\.min\(items\.length, index \+ STRIP_RADIUS \+ 1\)/);
+  assert.match(lb, /const stripRadius = \(\) =>/);
+  assert.match(lb, /Math\.max\(0, index - radius\)/);
+  assert.match(lb, /Math\.min\(items\.length, index \+ radius \+ 1\)/);
 });
 
 /* ---------------------------------------------------------------------------
@@ -385,7 +494,12 @@ test("reduced motion is honoured by the new surfaces", () => {
 
 test("every tile is a real button with a meaningful label", () => {
   const fn = app.slice(app.indexOf("function tileHtml"), app.indexOf("function buildRails"));
-  assert.match(fn, /<button type="button"/);
+  // A tile is a role="button" container rather than a literal button so it can
+  // host an inline video preview (native controls are interactive content,
+  // which a button element may not contain); bindFeed supplies the Enter/Space
+  // activation the role promises.
+  assert.match(fn, /role="button"/);
+  assert.match(fn, /tabindex="0"/);
   // Not "image": the label leads with the ACTION, then the subject, then the
   // source, because a screen-reader user decides whether to keep listening
   // during the first few words.
