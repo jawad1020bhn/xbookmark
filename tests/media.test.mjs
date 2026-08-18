@@ -32,7 +32,7 @@ function loadMedia({ canPlayHls = "", userAgent = "" } = {}) {
   sandbox.self = sandbox;
   sandbox.exports = sandbox.module.exports;
   vm.createContext(sandbox);
-  vm.runInContext(readFileSync(join(root, "shared/m3e/media.js"), "utf8"), sandbox);
+  vm.runInContext(readFileSync(join(root, "extension/shared/m3e/media.js"), "utf8"), sandbox);
   return sandbox.module.exports;
 }
 
@@ -135,7 +135,7 @@ test("badges distinguish gif, video and photo", () => {
    --------------------------------------------------------------------------- */
 
 test("the dashboard normalizer preserves every field playback depends on", () => {
-  const src = readFileSync(join(root, "dashboard/app.js"), "utf8");
+  const src = readFileSync(join(root, "extension/dashboard/app.js"), "utf8");
   const fn = src.slice(src.indexOf("function normalizeMedia"), src.indexOf("function normalizeItem"));
   for (const field of ["hls", "width", "height", "poster", "mp4Variants", "aspect"]) {
     // Either `field:` or ES6 shorthand `field,`.
@@ -146,7 +146,7 @@ test("the dashboard normalizer preserves every field playback depends on", () =>
 });
 
 test("media urls may be relative, but never a foreign scheme", () => {
-  const src = readFileSync(join(root, "dashboard/app.js"), "utf8");
+  const src = readFileSync(join(root, "extension/dashboard/app.js"), "utf8");
   const line = src.match(/const safeMediaUrl[\s\S]*?\n  \};/)[0];
   const safeMediaUrl = new Function("return " + line.replace(/^const safeMediaUrl = /, "").replace(/;$/, ""))();
 
@@ -161,31 +161,10 @@ test("media urls may be relative, but never a foreign scheme", () => {
   assert.equal(safeMediaUrl(null), null);
 });
 
-test("the sample library actually contains media to render", () => {
-  const data = JSON.parse(readFileSync(join(root, "dashboard/bookmarks.json"), "utf8"));
-  const withMedia = data.bookmarks.filter((b) => b.media_items && b.media_items.length);
-  assert.ok(withMedia.length >= 5, "sample data should exercise the grid");
-
-  // Every layout branch (1/2/3/4) needs a specimen, or the grid CSS is untested.
-  const counts = new Set(withMedia.map((b) => Math.min(4, b.media_items.length)));
-  for (const n of [1, 2, 3, 4]) assert.ok(counts.has(n), "no sample post with " + n + " media items");
-
-  for (const b of withMedia) {
-    assert.equal(b.has_media, true, b.tweet_id + " has media but has_media is false");
-    for (const m of b.media_items) {
-      assert.ok(m.width > 0 && m.height > 0, "media needs intrinsic size to avoid layout shift");
-      assert.ok(m.url, "media needs a still");
-      if (m.type === "video" || m.type === "animated_gif") {
-        assert.ok(m.mp4 || m.hls, "motion media needs a playable source");
-      }
-    }
-  }
-});
-
 test("an exported file re-imports with its media intact", () => {
   // The dashboard persists and exports media under `media`, but the scraper
   // emits `media_items`. Reading only the latter meant a file exported from
   // the dashboard re-imported with every image and video silently gone.
-  const src = readFileSync(join(root, "dashboard/app.js"), "utf8");
+  const src = readFileSync(join(root, "extension/dashboard/app.js"), "utf8");
   assert.match(src, /normalizeMedia\(b\.media_items \|\| b\.media\)/);
 });

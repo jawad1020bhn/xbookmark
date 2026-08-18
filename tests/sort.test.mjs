@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const app = readFileSync(join(root, "dashboard/app.js"), "utf8");
+const app = readFileSync(join(root, "extension/dashboard/app.js"), "utf8");
 
 /** Lift a top-level helper out of app.js so it can be tested in isolation. */
 function lift(name) {
@@ -157,7 +157,7 @@ test("shuffle scores are precomputed, not recomputed per comparison", () => {
    --------------------------------------------------------------------------- */
 
 test("scrolling inside a menu does not close it", () => {
-  const src = readFileSync(join(root, "shared/m3e/interactions.js"), "utf8");
+  const src = readFileSync(join(root, "extension/shared/m3e/interactions.js"), "utf8");
   // The scroll listener is in the capture phase, so it also sees scrolling
   // within the menu — which closed the menu the moment a user reached for a
   // lower item.
@@ -167,7 +167,7 @@ test("scrolling inside a menu does not close it", () => {
 });
 
 test("a menu is capped to the space available on screen", () => {
-  const src = readFileSync(join(root, "shared/m3e/interactions.js"), "utf8");
+  const src = readFileSync(join(root, "extension/shared/m3e/interactions.js"), "utf8");
   // Clamping only the top edge let a tall menu run off the bottom, leaving
   // items rendered outside the viewport and unreachable by any scroll.
   assert.match(src, /menu\.style\.maxHeight = above \+ "px"/);

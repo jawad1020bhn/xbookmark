@@ -21,10 +21,10 @@ import vm from "node:vm";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p) => readFileSync(join(root, p), "utf8");
 
-const app = read("dashboard/app.js");
-const html = read("dashboard/index.html");
-const layout = read("dashboard/layout.css");
-const components = read("shared/m3e/components.css");
+const app = read("extension/dashboard/app.js");
+const html = read("extension/dashboard/index.html");
+const layout = read("extension/dashboard/layout.css");
+const components = read("extension/shared/m3e/components.css");
 
 /* ---------------------------------------------------------------------------
    The unit is a media item
@@ -166,13 +166,13 @@ test("the theater always has an explicit exit path", () => {
   assert.match(layout, /\.theater__close\s*\{/);
   // Escape is owned by the shared interaction runtime (bindEscape), not a
   // bespoke global shortcut system in the app itself.
-  assert.match(read("shared/m3e/interactions.js"), /function bindEscape/);
+  assert.match(read("extension/shared/m3e/interactions.js"), /function bindEscape/);
 });
 
 test("a carousel is operable from the keyboard", () => {
   // A horizontally scrolling region drivable only by wheel or swipe fails
   // WCAG 2.1.1. The controller owns arrows, Home and End.
-  const src = read("shared/m3e/interactions.js");
+  const src = read("extension/shared/m3e/interactions.js");
   const fn = src.slice(src.indexOf("function bindCarousel"), src.indexOf("function pulse"));
   for (const key of ["ArrowRight", "ArrowLeft", "Home", "End"]) {
     assert.match(fn, new RegExp('case "' + key + '"'), "carousel must handle " + key);
@@ -185,7 +185,7 @@ test("a rail hands the scroll back at its ends", () => {
   // Translating vertical wheel into horizontal scroll is right up until the
   // rail runs out, at which point trapping the gesture stops the page
   // scrolling at all — the classic carousel scroll-jail.
-  const src = read("shared/m3e/interactions.js");
+  const src = read("extension/shared/m3e/interactions.js");
   const fn = src.slice(src.indexOf("function bindCarousel"), src.indexOf("function pulse"));
   assert.match(fn, /const at = going > 0 \? scroller\.scrollLeft >= max - 1 : scroller\.scrollLeft <= 1;/);
   assert.match(fn, /if \(at\) return;/);
@@ -213,7 +213,7 @@ function loadMedia() {
   sandbox.self = sandbox;
   sandbox.exports = sandbox.module.exports;
   vm.createContext(sandbox);
-  vm.runInContext(read("shared/m3e/media.js"), sandbox);
+  vm.runInContext(read("extension/shared/m3e/media.js"), sandbox);
   return sandbox.module.exports;
 }
 
@@ -240,7 +240,7 @@ test("playback picks a variant sized for where it is rendered", () => {
 test("a video that fails steps down the ladder before giving up", () => {
   // A dead source produces a black rectangle and a play button that does
   // nothing, which is the exact failure this module exists to prevent.
-  const src = read("shared/m3e/media.js");
+  const src = read("extension/shared/m3e/media.js");
   const fn = src.slice(src.indexOf("function createVideo"), src.indexOf("function autoplayInView"));
   assert.match(fn, /video\.addEventListener\("error"/);
   assert.match(fn, /const next = ladder\[\+\+rung\]/);
@@ -248,7 +248,7 @@ test("a video that fails steps down the ladder before giving up", () => {
 });
 
 test("autoplaying video is muted, or the browser refuses to start it", () => {
-  const src = read("shared/m3e/media.js");
+  const src = read("extension/shared/m3e/media.js");
   const fn = src.slice(src.indexOf("function createVideo"), src.indexOf("function autoplayInView"));
   assert.match(fn, /gif \|\| !!options\.autoplay/);
 });
@@ -268,12 +268,12 @@ test("the scraper keeps the whole variant ladder and the poster", () => {
 });
 
 test("only one video plays at a time, in every surface", () => {
-  const src = read("shared/m3e/media.js");
+  const src = read("extension/shared/m3e/media.js");
   assert.match(src, /function claimPlayback/);
   // Every renderer must stop playback when it tears its DOM down, or a video
   // keeps playing from a detached node with no way to reach it.
   assert.match(app, /M3EMedia\.stopAll\(\)/);
-  assert.match(read("dashboard/lightbox.js"), /M3EMedia\.stopAll\(\)/);
+  assert.match(read("extension/dashboard/lightbox.js"), /M3EMedia\.stopAll\(\)/);
 });
 
 test("theater tears videos down rather than merely pausing them", () => {
@@ -344,7 +344,7 @@ test("theater video uses a custom M3E control layer, not native controls", () =>
   // The slide disposes the controller before the video element is removed.
   assert.match(app, /slide\._vcCleanup/);
 
-  const controls = read("shared/m3e/video-controls.js");
+  const controls = read("extension/shared/m3e/video-controls.js");
   assert.match(controls, /input/); // real range slider for seek
   assert.match(controls, /type = "range"/);
   for (const action of ["play", "mute", "loop", "rate", "pip"]) {
@@ -360,12 +360,12 @@ test("theater playback position is resumed and persisted per media item", () => 
   // Resume is the flagship of the custom layer: save per entry id, throttled,
   // dropped when under ~3s watched or over ~95% complete, restored on mount
   // with a "Resumed from" hint and a "Start over" action.
-  const app2 = read("dashboard/app.js");
+  const app2 = read("extension/dashboard/app.js");
   assert.match(app2, /progress: "xbm\.progress"/);
   assert.match(app2, /const progressStore/);
   assert.match(app2, /PROGRESS_LIMIT/);
 
-  const controls = read("shared/m3e/video-controls.js");
+  const controls = read("extension/shared/m3e/video-controls.js");
   assert.match(controls, /SAVE_INTERVAL/);
   assert.match(controls, /RESUME_MIN/);
   assert.match(controls, /RESUME_MAX/);
@@ -413,7 +413,7 @@ test("the viewer traverses the whole library, not one post", () => {
 });
 
 test("the viewer relabels itself as it crosses posts", () => {
-  const lb = read("dashboard/lightbox.js");
+  const lb = read("extension/dashboard/lightbox.js");
   assert.match(lb, /function ctxFor/);
   // Captured content is attacker-influenced and must never be interpolated.
   assert.match(lb, /els\.title\.textContent = /);
@@ -426,7 +426,7 @@ test("the filmstrip is windowed, not materialised in full", () => {
   // <img> for each to decorate a bottom bar costs more than the photo itself.
   // The window radius varies with thumbnail size (larger thumbs, fewer shown),
   // but the window itself stays bounded around the current index either way.
-  const lb = read("dashboard/lightbox.js");
+  const lb = read("extension/dashboard/lightbox.js");
   assert.match(lb, /const STRIP_RADIUS/);
   assert.match(lb, /const stripRadius = \(\) =>/);
   assert.match(lb, /Math\.max\(0, index - radius\)/);

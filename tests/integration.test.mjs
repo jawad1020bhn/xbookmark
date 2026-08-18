@@ -20,8 +20,8 @@ const read = (p) => readFileSync(join(root, p), "utf8");
    --------------------------------------------------------------------------- */
 
 test("the lightbox sits above every other layer", () => {
-  const tokens = read("shared/m3e/tokens.css");
-  const layout = read("dashboard/layout.css");
+  const tokens = read("extension/shared/m3e/tokens.css");
+  const layout = read("extension/dashboard/layout.css");
 
   // The viewer replaces the screen, so it must outrank the snackbar too — a
   // toast floating over a full-bleed photo is illegible and unreachable.
@@ -42,9 +42,9 @@ test("the lightbox sits above every other layer", () => {
 });
 
 test("the custom keyboard shortcut system is absent", () => {
-  const lightbox = read("dashboard/lightbox.js");
-  const app = read("dashboard/app.js");
-  const html = read("dashboard/index.html");
+  const lightbox = read("extension/dashboard/lightbox.js");
+  const app = read("extension/dashboard/app.js");
+  const html = read("extension/dashboard/index.html");
   // No bespoke global shortcut layer anywhere: nothing maps keys like "/" or
   // "i" to actions, and the lightbox owns no key handling of its own (it uses
   // the shared carousel/escape primitives).
@@ -59,14 +59,14 @@ test("the custom keyboard shortcut system is absent", () => {
 });
 
 test("modal Escape remains owned by the shared overlay primitive", () => {
-  const interactions = read("shared/m3e/interactions.js");
+  const interactions = read("extension/shared/m3e/interactions.js");
   const overlay = interactions.slice(interactions.indexOf("function createOverlay"), interactions.indexOf("Snackbar queue"));
   assert.match(overlay, /event\.key === "Escape"/);
   assert.match(overlay, /event\.stopPropagation\(\); close\(\)/);
 });
 
 test("the lightbox escapes user content rather than interpolating it", () => {
-  const src = read("dashboard/lightbox.js");
+  const src = read("extension/dashboard/lightbox.js");
   // Captions and alt text come from captured posts and are attacker-influenced.
   assert.match(src, /els\.caption\.textContent = /);
   assert.doesNotMatch(src, /caption\.innerHTML\s*=\s*[^"']*(alt|caption)/i);
@@ -76,8 +76,8 @@ test("the lightbox has a jump surface that scales to large sets", () => {
   // Traversing hundreds or thousands of items needs more than a filmstrip:
   // a windowed grid overview, a numeric jump, faster filmstrip scrubbing, and
   // an optional larger thumbnail size.
-  const src = read("dashboard/lightbox.js");
-  const layout = read("dashboard/layout.css");
+  const src = read("extension/dashboard/lightbox.js");
+  const layout = read("extension/dashboard/layout.css");
 
   // Grid overview drawer — windowed, like the filmstrip, so it never
   // materialises a thousand <img> elements.
@@ -106,7 +106,7 @@ test("the lightbox has a jump surface that scales to large sets", () => {
    --------------------------------------------------------------------------- */
 
 test("the bridge degrades to a no-op outside the extension", () => {
-  const src = read("dashboard/bridge.js");
+  const src = read("extension/dashboard/bridge.js");
   // `chrome` exists in plain Chromium pages; `chrome.runtime.id` does not.
   assert.match(src, /chrome\.runtime\.id/);
   for (const fn of ["read", "pull", "deadLetters"]) {
@@ -149,7 +149,7 @@ test("the dashboard is mirrored into the extension, without the sample data", ()
 test("relative asset paths resolve in both locations", () => {
   // dashboard/../shared/ works from the repo AND from extension/dashboard/,
   // which is the whole reason the mirror can be a straight copy.
-  const html = read("dashboard/index.html");
+  const html = read("extension/dashboard/index.html");
   for (const m of html.matchAll(/(?:src|href)="(\.\.\/[^"]+)"/g)) {
     const fromRepo = join(root, "dashboard", m[1]);
     const fromExt = join(root, "extension/dashboard", m[1]);
@@ -160,7 +160,7 @@ test("relative asset paths resolve in both locations", () => {
 
 test("the sample library is not fetched inside the extension", () => {
   // It isn't mirrored, so the fetch would 404 on every extension start.
-  const app = read("dashboard/app.js");
+  const app = read("extension/dashboard/app.js");
   const seed = app.slice(app.indexOf("seed with the sample file"), app.indexOf('fetch("bookmarks.json")'));
   assert.match(seed, /XBridge && XBridge\.available/);
 });
@@ -168,7 +168,7 @@ test("the sample library is not fetched inside the extension", () => {
 test("captured posts reach the dashboard through the normal import path", () => {
   // The bridge must not invent a second normalisation path; scraper output has
   // to go through `normalize` + `merge` exactly as an imported file does.
-  const app = read("dashboard/app.js");
+  const app = read("extension/dashboard/app.js");
   const fn = app.slice(app.indexOf("async function importFromExtension"));
   const body = fn.slice(0, fn.indexOf("\n  }"));
   assert.match(body, /XBridge\.pull\(\)/);

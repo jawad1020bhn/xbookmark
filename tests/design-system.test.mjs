@@ -8,7 +8,7 @@
      · every colour role pair that carries text meets WCAG AA (4.5:1);
      · every role pair that carries a meaningful non-text boundary meets 1.4.11
        (3:1);
-     · the extension's mirrored copy of shared/ is current;
+     · the extension's shared/ directory is canonical;
      · both surfaces reference only files that exist.
 
    Run: node tests/design-system.test.mjs
@@ -17,14 +17,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
-const M3EColor = require(join(ROOT, "shared/m3e/color.js"));
+const M3EColor = require(join(ROOT, "extension/shared/m3e/color.js"));
 
 /* The full personalisation space a user can actually reach from the settings
    dialog: 6 curated seeds (plus any custom colour, which these bracket) ×
@@ -115,7 +114,7 @@ test("meaningful non-text boundaries meet WCAG 1.4.11 (3:1)", () => {
 });
 
 test("no control border uses the decorative outlineVariant role", () => {
-  const css = readFileSync(join(ROOT, "shared/m3e/components.css"), "utf8");
+  const css = readFileSync(join(ROOT, "extension/shared/m3e/components.css"), "utf8");
   // Selectors whose border is the control's own boundary.
   const CONTROL_BORDERS = [
     ".m3e-button--outlined",
@@ -159,7 +158,7 @@ test("curated seeds stay visually distinct under every variant", () => {
   // Variants re-chroma the seed to a fixed target, so only HUE survives. Two
   // seeds sharing a hue collapse to the same scheme and the theme picker shows
   // two identical swatches. Guard the curated set against that.
-  const theme = readFileSync(join(ROOT, "shared/m3e/theme.js"), "utf8");
+  const theme = readFileSync(join(ROOT, "extension/shared/m3e/theme.js"), "utf8");
   const block = theme.match(/const SEEDS = \[([\s\S]*?)\];/);
   assert.ok(block, "could not find the SEEDS list in theme.js");
   const hexes = [...block[1].matchAll(/"(#[0-9A-Fa-f]{6})"/g)].map((m) => m[1]);
@@ -186,25 +185,9 @@ test("curated seeds stay visually distinct under every variant", () => {
    Packaging
    --------------------------------------------------------------------------- */
 
-test("extension/shared is in sync with shared/", () => {
-  // A Chrome extension cannot reference files above its root, so shared/ is
-  // mirrored into the package. If the mirror drifts, the popup silently ships
-  // a stale design system.
-  try {
-    execFileSync(process.execPath, [join(ROOT, "tools/sync-shared.mjs"), "--check"], {
-      stdio: "pipe",
-    });
-  } catch (err) {
-    assert.fail(
-      "extension/shared is stale — run: node tools/sync-shared.mjs\n" +
-      String(err.stderr || "")
-    );
-  }
-});
-
 test("every asset referenced by a surface exists", () => {
   const surfaces = [
-    { html: "dashboard/index.html", base: "dashboard" },
+    { html: "extension/dashboard/index.html", base: "extension/dashboard" },
     { html: "extension/popup.html", base: "extension" },
   ];
 
@@ -243,11 +226,11 @@ test("the popup loads no remote resources (MV3 CSP forbids them)", () => {
    --------------------------------------------------------------------------- */
 
 test("component CSS references only defined custom properties", () => {
-  const tokens = readFileSync(join(ROOT, "shared/m3e/tokens.css"), "utf8");
-  const components = readFileSync(join(ROOT, "shared/m3e/components.css"), "utf8");
+  const tokens = readFileSync(join(ROOT, "extension/shared/m3e/tokens.css"), "utf8");
+  const components = readFileSync(join(ROOT, "extension/shared/m3e/components.css"), "utf8");
 
   // Colour roles are injected at runtime by theme.js, so collect those too.
-  const themeJs = readFileSync(join(ROOT, "shared/m3e/theme.js"), "utf8");
+  const themeJs = readFileSync(join(ROOT, "extension/shared/m3e/theme.js"), "utf8");
 
   const defined = new Set([
     ...[...tokens.matchAll(/^\s*(--[\w-]+)\s*:/gm)].map((m) => m[1]),
