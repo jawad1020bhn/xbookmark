@@ -29,6 +29,8 @@
     external: '<path d="M14 3h7v7h-2V6.4l-9 9L8.6 14l9-9H14V3ZM5 7h6v2H7v8h8v-4h2v6H5V7Z"/>',
     copy: '<path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1Zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H8V7h11v14Z"/>',
     play: '<path d="M8 5v14l11-7L8 5Z"/>',
+    fullscreen: '<path d="M5 5h5v2H7v3H5V5Zm9 0h5v5h-2V7h-3V5ZM5 14h2v3h3v2H5v-5Zm12 0h2v5h-5v-2h3v-3Z"/>',
+    fullscreenExit: '<path d="M8 5h2v5H5V8h3V5Zm6 0h2v3h3v2h-5V5ZM5 14h5v5H8v-3H5v-2Zm9 0h5v2h-3v3h-2v-5Z"/>',
   };
   const svg = (name, size) =>
     '<svg viewBox="0 0 24 24" width="' + size + '" height="' + size +
@@ -80,6 +82,7 @@
         "</div>" +
         '<p class="lb__counter m3e-label-large" id="lbCounter"></p>' +
         '<div class="lb__bar-actions">' +
+          '<button class="lb__btn m3e-state" id="lbFull" type="button" aria-label="Enter full screen">' + svg("fullscreen", 20) + "</button>" +
           '<button class="lb__btn m3e-state" id="lbCopy" type="button" aria-label="Copy media link">' + svg("copy", 20) + "</button>" +
           '<a class="lb__btn m3e-state" id="lbOpen" target="_blank" rel="noopener noreferrer" aria-label="Open post on X">' + svg("external", 20) + "</a>" +
           '<button class="lb__btn m3e-state" id="lbClose" type="button" aria-label="Close viewer">' + svg("close", 22) + "</button>" +
@@ -112,6 +115,7 @@
       next: root.querySelector("#lbNext"),
       open: root.querySelector("#lbOpen"),
       copy: root.querySelector("#lbCopy"),
+      full: root.querySelector("#lbFull"),
       close: root.querySelector("#lbClose"),
     };
 
@@ -125,6 +129,20 @@
       const link = m && (m.url || m.mp4 || m.hls);
       if (link && onCopy) onCopy(new URL(link, location.href).href);
     });
+
+    /* Full-screen watch. The viewer element itself goes fullscreen, so the
+       chrome (nav, filmstrip, close) keeps working there; the media then
+       genuinely fills the display rather than the browser window. */
+    if (document.fullscreenEnabled && els.full) {
+      els.full.addEventListener("click", toggleFullscreen);
+      document.addEventListener("fullscreenchange", () => {
+        const on = document.fullscreenElement === root;
+        els.full.innerHTML = svg(on ? "fullscreenExit" : "fullscreen", 20);
+        els.full.setAttribute("aria-label", on ? "Exit full screen" : "Enter full screen");
+      });
+    } else if (els.full) {
+      els.full.hidden = true;
+    }
 
     /* Space is the universal play/pause in every video surface anyone has
        used. Without it the only way to pause is to hit a native control that
@@ -159,6 +177,7 @@
         case "Home":       event.preventDefault(); show(0); break;
         case "End":        event.preventDefault(); show(items.length - 1); break;
         case "z": case "Z": event.preventDefault(); toggleZoomCentre(); break;
+        case "f": case "F": event.preventDefault(); toggleFullscreen(); break;
         default: break;
       }
     }, true);
@@ -383,6 +402,15 @@
     toggleZoom({ clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 }, img);
   }
 
+  function toggleFullscreen() {
+    if (!document.fullscreenEnabled || !root) return;
+    if (document.fullscreenElement === root) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      root.requestFullscreen().catch(() => {});
+    }
+  }
+
   function step(delta) {
     if (items.length < 2) return;
     const to = index + delta;
@@ -391,6 +419,7 @@
   }
 
   function teardown() {
+    if (document.fullscreenElement === root) document.exitFullscreen().catch(() => {});
     window.M3EMedia.stopAll();
     els.stage.innerHTML = "";
     items = [];

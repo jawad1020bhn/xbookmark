@@ -239,20 +239,10 @@
   <!-- ---------------------------------------------------------------------
        Inspector — persistent on expanded windows, a sheet below that.
        Deliberately NOT called "detail": it holds the post behind whatever
-       media is selected, which is context, not the main event.
+       media is selected, which is context, not the main event. The pane is
+       collapsed entirely while nothing is selected — the feed keeps the room.
        --------------------------------------------------------------------- -->
-  <aside class="shell__detail" id="detailPane" aria-label="Post details" aria-live="polite">
-    <div class="detail-empty" id="detailPlaceholder">
-      <div class="detail-empty__glyph" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor">
-          <path d="M4 5h7v6H4V5Zm9 0h7v10h-7V5ZM4 13h7v6H4v-6Zm9 4h7v2h-7v-2Z"/>
-        </svg>
-      </div>
-      <p class="m3e-title-medium">Nothing selected</p>
-      <p class="m3e-body-medium detail-empty__body">
-        Pick anything in the feed to see the post it came from.
-      </p>
-    </div>
+  <aside class="shell__detail" id="detailPane" aria-label="Post details" aria-live="polite" data-open="false">
     <div class="detail" id="detailBody" hidden></div>
   </aside>
 </div>

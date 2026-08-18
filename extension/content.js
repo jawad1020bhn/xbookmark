@@ -5,12 +5,31 @@ const NORMALIZER_VERSION = "2026-08-16.3";
 const SOURCE_TYPE = "graphql-bookmarks";
 
 const config = {
-  minScrollDelay: 2500,
-  maxScrollDelay: 6000,
-  maxScrollBatches: 40,
-  emptyScrollStop: 5,
-  knownOnlyPagesStop: 3,
-  maxRuntimeMs: 15 * 60 * 1000,
+  /* Deliberately slow. The run's job is COMPLETENESS, not speed: every pause
+     is time X gets to answer the previous page before the next one is asked
+     for, and a scrape that outruns the network is a scrape with holes in it.
+     Delays are randomised inside the band so the cadence never looks — or
+     behaves — like a metronome. */
+  minScrollDelay: 4500,
+  maxScrollDelay: 9000,
+  /* Pause between the small viewport-sized steps that walk each batch down
+     to the bottom of the rendered page (see scrollToBottomSlowly). */
+  scrollStepDelay: 900,
+  /* Safety cap only, not a target. 40 batches used to end a big library run
+     mid-feed (~800 bookmarks); 400 clears any realistic library and the
+     end-of-feed detector is what actually finishes a run. */
+  maxScrollBatches: 400,
+  /* How many consecutive quiet scrolls prove the feed truly ended. Raised
+     from 5: a slow connection can serve nothing for three or four scrolls
+     and still have more feed, and stopping early there skips the tail. */
+  emptyScrollStop: 8,
+  /* Pages of already-known bookmarks before an incremental pass declares
+     itself complete. Raised from 3: X does not return bookmarks in a strict
+     order, so a new item can hide several pages behind known ones. */
+  knownOnlyPagesStop: 6,
+  /* The slower cadence needs a bigger time budget or the clock becomes the
+     thing that truncates the run. */
+  maxRuntimeMs: 60 * 60 * 1000,
   batchSize: 100,
   maxConsecutiveErrors: 3
 };
@@ -505,8 +524,37 @@ async function handleResponse(payload) {
   }
 }
 
+/**
+ * Walk to the bottom of the rendered page in viewport-sized steps rather
+ * than teleporting there in one jump.
+ *
+ * Why: X's timeline is virtualised. A single `scrollTo(scrollHeight)` skips
+ * past everything between here and the bottom faster than the list can
+ * mount it, which can leave the pagination trigger unfired and — worse —
+ * lets one giant leap stand in for the many small movements the feed
+ * actually paginates on. Stepping through the whole distance is slower on
+ * purpose: every intermediate viewport gets its chance to render and to
+ * request the next page, so nothing between the top and the bottom is
+ * skipped over.
+ */
+async function scrollToBottomSlowly(run) {
+  let guard = 0;
+  // The page grows underneath us as responses land, so re-read the target
+  // every step instead of computing it once.
+  while (!run.stop && !run.pause && guard++ < 80) {
+    const bottom = document.body.scrollHeight - window.innerHeight;
+    if (window.scrollY >= bottom - 4) break;
+    window.scrollBy(0, Math.max(240, Math.round(window.innerHeight * 0.75)));
+    await sleep(config.scrollStepDelay);
+  }
+  // Land exactly at the end so the "load more" sentinel is definitely on
+  // screen while the long between-batch pause runs.
+  window.scrollTo(0, document.body.scrollHeight);
+}
+
 async function runCaptureLoop(run) {
   let previousTotal = (await getStored()).length;
+  let previousHeight = 0;
 
   while (!run.stop && !run.pause && !run.breaker.tripped) {
     const elapsed = Date.now() - run.startedAt;
@@ -515,15 +563,23 @@ async function runCaptureLoop(run) {
     if (run.stableEmpty >= config.emptyScrollStop) { run.reason = "end-of-feed"; break; }
     if (run.knownOnlyPages >= config.knownOnlyPagesStop) { run.reason = "incremental-complete"; break; }
 
-    window.scrollTo(0, document.body.scrollHeight);
+    await scrollToBottomSlowly(run);
     const delay = config.minScrollDelay + Math.random() * (config.maxScrollDelay - config.minScrollDelay);
     await sleep(delay);
     run.scrollBatches++;
 
+    /* "Empty" must mean the feed genuinely gave nothing — measured on TWO
+       channels, not one. The item count alone misses the incremental case
+       where a page of already-known bookmarks arrives (total unchanged, feed
+       very much alive), which used to tick the end-of-feed counter while
+       there was plenty of page left. Page growth catches that: if the
+       document got taller, content loaded, and the run is not at the end. */
     const total = (await getStored()).length + run.buffer.size;
-    if (total > previousTotal) {
+    const height = document.body.scrollHeight;
+    if (total > previousTotal || height > previousHeight) {
       run.stableEmpty = 0;
-      previousTotal = total;
+      previousTotal = Math.max(previousTotal, total);
+      previousHeight = Math.max(previousHeight, height);
     } else {
       run.stableEmpty++;
     }

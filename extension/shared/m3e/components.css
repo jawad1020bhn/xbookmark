@@ -1242,6 +1242,21 @@ body {
               border-radius var(--md-sys-motion-spring-fast-spatial);
 }
 .m3e-menu__item:hover { background: var(--md-sys-color-surface-container-high); }
+/* Two-line items: label above, supporting text below. Without this the two
+   spans render inline and read as one run-on string. */
+.m3e-menu__item-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  text-align: start;
+}
+.m3e-menu__item-text > .m3e-body-small { color: var(--md-sys-color-on-surface-variant); }
+.m3e-menu__item[aria-selected="true"] .m3e-menu__item-text > .m3e-body-small {
+  color: inherit;
+  opacity: 0.8;
+}
 .m3e-menu__item[aria-selected="true"] {
   background: var(--md-sys-color-secondary-container);
   color: var(--md-sys-color-on-secondary-container);
