@@ -45,9 +45,17 @@ test("the custom keyboard shortcut system is absent", () => {
   const lightbox = read("dashboard/lightbox.js");
   const app = read("dashboard/app.js");
   const html = read("dashboard/index.html");
+  // No bespoke global shortcut layer anywhere: nothing maps keys like "/" or
+  // "i" to actions, and the lightbox owns no key handling of its own (it uses
+  // the shared carousel/escape primitives).
   assert.doesNotMatch(lightbox, /addEventListener\("keydown"|event\.key/);
-  assert.doesNotMatch(app, /bindGlobalKeys|event\.key/);
+  assert.doesNotMatch(app, /bindGlobalKeys/);
+  assert.doesNotMatch(app, /(key|code)\s*===\s*["'][a-z][^"']*["']/i);
   assert.doesNotMatch(html, /<kbd|Press slash|Press i/);
+  // The one keydown app.js does own is button-role activation for tiles
+  // (Enter/Space), which is semantics a role=button element is owed, not a
+  // shortcut system.
+  assert.match(app, /event\.key !== "Enter" && event\.key !== " "/);
 });
 
 test("modal Escape remains owned by the shared overlay primitive", () => {
@@ -62,6 +70,35 @@ test("the lightbox escapes user content rather than interpolating it", () => {
   // Captions and alt text come from captured posts and are attacker-influenced.
   assert.match(src, /els\.caption\.textContent = /);
   assert.doesNotMatch(src, /caption\.innerHTML\s*=\s*[^"']*(alt|caption)/i);
+});
+
+test("the lightbox has a jump surface that scales to large sets", () => {
+  // Traversing hundreds or thousands of items needs more than a filmstrip:
+  // a windowed grid overview, a numeric jump, faster filmstrip scrubbing, and
+  // an optional larger thumbnail size.
+  const src = read("dashboard/lightbox.js");
+  const layout = read("dashboard/layout.css");
+
+  // Grid overview drawer — windowed, like the filmstrip, so it never
+  // materialises a thousand <img> elements.
+  assert.match(src, /function openOverview/);
+  assert.match(src, /function paintOverview/);
+  assert.match(src, /lb__overview-cell/);
+  assert.match(layout, /\.lb__overview\s*\{/);
+
+  // Jump to a position by number, with Enter handled by the form's submit
+  // (not a bespoke key handler).
+  assert.match(src, /function jumpFromInput/);
+  assert.match(src, /lbJumpInput/);
+
+  // Filmstrip traversal: drag scrubbing plus the shared carousel controller
+  // (wheel translation and arrow keys live in shared/m3e, not here).
+  assert.match(src, /function bindStripScrub/);
+  assert.match(src, /M3E\.bindCarousel\(els\.strip/);
+
+  // Optional larger filmstrip thumbnails.
+  assert.match(src, /function toggleStripSize/);
+  assert.match(layout, /\.lb\[data-strip="large"\] \.lb__frame/);
 });
 
 /* ---------------------------------------------------------------------------

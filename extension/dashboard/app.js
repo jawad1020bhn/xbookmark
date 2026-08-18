@@ -60,6 +60,7 @@
     items: "xbm.items",
     meta: "xbm.meta",
     settings: "xbm.settings",
+    progress: "xbm.progress",
   };
 
   const DEFAULT_SETTINGS = Object.assign({}, M3ETheme.DEFAULTS, {
@@ -199,9 +200,11 @@
     settings: Object.assign({}, DEFAULT_SETTINGS),
     collection: "all",
     view: "rails",
+    previousView: "rails",   // where Escape / the close button returns to
     sort: "newest",
     shuffleSeed: String(Date.now() % 2147483647),
     selectedId: null,      // "<tweet_id>:<position>" — a media item, not a post
+    progress: {},          // resume positions, keyed by media entry id
     rendered: 0,
     lastList: [],
     fullSync: false,
@@ -226,6 +229,11 @@
   let autoplayer = null;
   let virtualGrid = null;
   const carousels = [];
+
+  /* Inline preview playback is hover-driven on a device with a real pointer
+     and settled-in-view driven on touch, where there is no hover to key off. */
+  const canHover = (typeof matchMedia === "function") && matchMedia("(hover: hover)").matches;
+  let theaterScrolling = false;   // the theater rail is mid-swipe: hold playback
 
   const readJSON = (key, fallback) => {
     try {
@@ -253,6 +261,27 @@
   }
   const saveMeta = () => writeJSON(KEYS.meta, state.meta);
   const saveSettings = () => writeJSON(KEYS.settings, state.settings);
+
+  /* Resume positions for theater playback, keyed by media entry id
+     (`<tweet_id>:<position>`). The video-controls controller owns the *rules*
+     (under ~3s or over ~95% is dropped); this owns the *storage*. Bounded, so
+     years of watching cannot quietly fill localStorage. */
+  const PROGRESS_LIMIT = 1000;
+  const progressStore = {
+    get(id) { return state.progress[id] || null; },
+    set(id, p) {
+      state.progress[id] = p;
+      const ids = Object.keys(state.progress);
+      if (ids.length > PROGRESS_LIMIT) {
+        ids.sort((a, b) => (state.progress[a].at || 0) - (state.progress[b].at || 0));
+        for (const stale of ids.slice(0, ids.length - PROGRESS_LIMIT)) delete state.progress[stale];
+      }
+      writeJSON(KEYS.progress, state.progress);
+    },
+    clear(id) {
+      if (state.progress[id]) { delete state.progress[id]; writeJSON(KEYS.progress, state.progress); }
+    },
+  };
   const saveItems = () => {
     if (!writeJSON(KEYS.items, state.items.map(strip))) {
       snack.show("Library is too large for this browser's storage. Export a backup to keep it safe.", { error: true });
@@ -808,6 +837,9 @@
 
   function setView(view) {
     if (!VIEWS.includes(view) || view === state.view) return;
+    // Remember the last non-theater view so Escape and the close button can
+    // put the reader back where they were, not at some arbitrary default.
+    if (view !== "theater") state.previousView = view;
     state.view = view;
     state.settings.view = view;
     saveSettings();
@@ -816,6 +848,23 @@
     // The three views have wildly different heights; keeping the old scroll
     // offset lands the reader in the middle of nowhere.
     scrollFeedTop();
+  }
+
+  /**
+   * Leave the theater.
+   *
+   * Immersive views must always have a visible way out. The floating close
+   * button, the Escape key and (on touch) a downward swipe all land here,
+   * returning to whichever non-theater view the reader came from.
+   */
+  function exitTheater() {
+    if (state.view !== "theater") return;
+    const back = state.previousView && state.previousView !== "theater" ? state.previousView : "rails";
+    setView(back);
+    // The theater rail held focus; hand it to the now-active view control so
+    // a keyboard user isn't dropped back at the document root.
+    const seg = document.querySelector('#viewSeg [data-view="' + back + '"]');
+    if (seg) seg.focus({ preventScroll: true });
   }
 
   function syncViewSeg() {
@@ -924,7 +973,13 @@
       (m.alt ? ": " + m.alt.slice(0, 100) : "");
 
     return (
-      '<button type="button" class="m3e-tile tile" data-entry="' + esc(entry.id) + '"' +
+      /* A container with role=button, not a literal button: while a preview
+         is playing the tile legitimately hosts a video element whose native
+         controls supply unmute, fullscreen and PiP, and a button element may
+         not contain interactive content. The delegated keydown handler in
+         bindFeed supplies Enter/Space activation, which is what the role
+         promises. */
+      '<div class="m3e-tile tile" role="button" tabindex="0" data-entry="' + esc(entry.id) + '"' +
       ' data-motion="' + motion + '"' +
       (unplayable ? ' data-unplayable="true"' : "") +
       (archived ? ' data-archived="true"' : "") +
@@ -963,8 +1018,165 @@
             "</span>" +
           "</span>" +
         "</span>" +
-      "</button>"
+      "</div>"
     );
+  }
+
+  /* ---------------------------------------------------------------------------
+     Inline preview playback
+
+     A motion tile is a poster until the reader asks for it. Asking comes two
+     ways, depending on the device: a pointer that can hover plays the tile the
+     cursor is over, and a touch screen plays the most-centred tile while the
+     page is at rest. Both mount a muted, autoplaying player — a real video
+     carries its own native controls (unmute, fullscreen, PiP), a GIF loops
+     silently with no chrome — and both tear it down again, so a rail of
+     forty videos never means forty live media pipelines.
+     --------------------------------------------------------------------------- */
+
+  /** Mount the muted preview for a tile. Returns the video element, or null. */
+  function mountTilePreview(tile, entry) {
+    if (!entry || !tile || tile.querySelector(".tile__video")) return null;
+    const media = entry.media;
+    if (!M3EMedia.isMotion(media) || M3EMedia.hlsOnly(media)) return null;
+    const box = tile.querySelector(".m3e-tile__media");
+    if (!box) return null;
+
+    const gif = media.type === "animated_gif";
+    const video = M3EMedia.createVideo(media, {
+      autoplay: true,
+      muted: true,
+      controls: !gif,
+      loop: gif,
+      width: box.clientWidth || tile.clientWidth || 400,
+      onFail: () => unmountTilePreview(tile),
+    });
+    if (!video) return null;
+
+    video.classList.add("tile__video");
+    box.appendChild(video);
+    tile.dataset.playing = "true";
+    return video;
+  }
+
+  function unmountTilePreview(tile) {
+    if (!tile) return;
+    const video = tile.querySelector(".tile__video");
+    if (video) { try { video.pause(); } catch (_) {} video.remove(); }
+    tile.removeAttribute("data-playing");
+  }
+
+  /**
+   * Touch-only counterpart to hover: play the most-centred motion tile in
+   * view, pausing while the page scrolls and resuming once it settles. Only
+   * one preview is ever mounted, so the cost stays bounded no matter how
+   * many tiles are on screen.
+   */
+  function createTileAutoplayer(feed) {
+    if (canHover || typeof IntersectionObserver === "undefined") return { destroy() {}, rescan() {} };
+
+    const records = new Map(); // tile -> { entry, ratio }
+    let active = null;         // { tile, video } — the one mounted preview
+    let scrolling = false;
+    let pausedByScroll = false; // we paused the active video for a scroll
+    let settle = null;
+
+    const onScroll = () => {
+      scrolling = true;
+      clearTimeout(settle);
+      if (active && active.video && !active.video.paused) {
+        try { active.video.pause(); } catch (_) {}
+        pausedByScroll = true;
+      } else {
+        pausedByScroll = false;
+      }
+      settle = setTimeout(() => {
+        scrolling = false;
+        /* Resume only what the scroll itself paused — a video the reader
+           paused by hand stays paused, or a swipe becomes hostile. */
+        if (pausedByScroll && active && active.video && active.video.paused) {
+          const attempt = active.video.play();
+          if (attempt && attempt.catch) attempt.catch(() => {});
+        }
+        pausedByScroll = false;
+        choose();
+      }, 140);
+    };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const rec = records.get(entry.target);
+          if (!rec) continue;
+          rec.ratio = entry.isIntersecting ? entry.intersectionRatio : 0;
+        }
+        if (!scrolling) choose();
+      },
+      { threshold: [0, 0.4, 0.55, 0.7, 1] }
+    );
+
+    function choose() {
+      /* Reduced motion is a user request that nothing moves: tear down and
+         stay down, the same gate the hover path applies per-event. */
+      if (M3E.reducedMotion()) {
+        if (active) { unmountTilePreview(active.tile); active = null; }
+        return;
+      }
+
+      let best = null;
+      for (const rec of records.values()) {
+        if (rec.ratio >= 0.55 && (!best || rec.ratio > best.ratio)) best = rec;
+      }
+
+      if (!best) {
+        if (active) { unmountTilePreview(active.tile); active = null; }
+        return;
+      }
+
+      if (!active || active.tile !== best.tile) {
+        if (active) unmountTilePreview(active.tile);
+        let video = best.tile.querySelector(".tile__video");
+        if (!video) video = mountTilePreview(best.tile, best.entry);
+        active = video ? { tile: best.tile, video } : null;
+        // Mounted mid-scroll: hold it until the page settles.
+        if (active && scrolling) { try { active.video.pause(); } catch (_) {} }
+      }
+      // Same tile as before: the settle callback already resumed a scroll-pause;
+      // a hand-pause is left alone, and nothing else needs doing here.
+    }
+
+    const rescan = () => {
+      // Observe tiles that have appeared (the virtualised grid rebuilds its
+      // window), and forget tiles the feed no longer contains.
+      feed.querySelectorAll(".tile[data-motion='true']").forEach((tile) => {
+        if (records.has(tile)) return;
+        const entry = entryById(state.lastList, tile.dataset.entry);
+        if (!entry) return;
+        records.set(tile, { entry, ratio: 0 });
+        observer.observe(tile);
+      });
+      for (const tile of Array.from(records.keys())) {
+        if (!feed.contains(tile)) {
+          observer.unobserve(tile);
+          records.delete(tile);
+          if (active && active.tile === tile) active = null;
+        }
+      }
+      if (!scrolling) choose();
+    };
+
+    rescan();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return {
+      rescan,
+      destroy() {
+        clearTimeout(settle);
+        window.removeEventListener("scroll", onScroll);
+        observer.disconnect();
+        if (active) unmountTilePreview(active.tile);
+        active = null;
+      },
+    };
   }
 
   /* ---------------------------------------------------------------------------
@@ -1170,6 +1382,7 @@
   }
 
   function setViewAndRender(view) {
+    if (view !== "theater") state.previousView = view;
     state.view = view;
     state.settings.view = view;
     saveSettings();
@@ -1333,16 +1546,26 @@
     const slice = list.slice(0, THEATER_LIMIT);
     state.rendered = slice.length;
 
+    /* The floating exit control lives OUTSIDE the scrolling rail so it stays
+       put while the slides page underneath it, and floats over the letterboxed
+       corner of the stage where media never covers it. */
     feed.innerHTML =
-      '<div class="theater" id="theater" tabindex="0" role="group" aria-label="Media, one at a time">' +
-        slice.map((e) => theaterSlideHtml(e)).join("") +
+      '<div class="theater__shell">' +
+        '<div class="theater" id="theater" tabindex="0" role="group" aria-label="Media, one at a time">' +
+          slice.map((e) => theaterSlideHtml(e)).join("") +
+        "</div>" +
+        '<button type="button" class="theater__close m3e-state" data-theater-close' +
+        ' aria-label="Exit theater view" title="Exit theater (Esc)">' + svg("close", 22) + "</button>" +
       "</div>" +
       '<div class="theater__hint m3e-label-medium" aria-hidden="true">' +
-        svg("prev", 16) + "<span>Swipe or scroll</span>" + svg("next", 16) +
+        svg("prev", 16) + "<span>Swipe or scroll · Esc exits</span>" + svg("next", 16) +
       "</div>";
 
     const rail = $("theater");
+    const shell = rail && rail.closest(".theater__shell");
     carousels.push(M3E.bindCarousel(rail, {}));
+    carousels.push({ destroy: bindTheaterDismiss(rail, shell) });
+    carousels.push({ destroy: bindTheaterScrollPause(rail) });
 
     /* Mount the real player for whichever slide is centred, and tear down the
        ones that are not. A hundred <video> elements on one page is how a tab
@@ -1416,13 +1639,19 @@
             if (M3EMedia.isMotion(entry.media) && !slide.querySelector("video")) {
               mountSlideVideo(slide, entry);
             }
+            preloadAdjacentPosters(entries, entry.id);
           } else {
             slide.dataset.active = "false";
             const video = slide.querySelector("video");
-            // Tear the element down rather than just pausing it: a paused
-            // <video> still holds a decoder and a buffer, and fifty of them
-            // is a memory leak with extra steps.
-            if (video) { try { video.pause(); } catch (_) {} video.remove(); }
+            // Dispose the control layer (saving resume progress) before the
+            // element goes, then tear the element down rather than just
+            // pausing it: a paused <video> still holds a decoder and a buffer,
+            // and fifty of them is a memory leak with extra steps.
+            if (video) {
+              if (slide._vcCleanup) { slide._vcCleanup(); slide._vcCleanup = null; }
+              try { video.pause(); } catch (_) {}
+              video.remove();
+            }
           }
         }
       },
@@ -1435,11 +1664,22 @@
   function mountSlideVideo(slide, entry) {
     const stage = slide.querySelector(".slide__stage");
     if (!stage) return;
+    const gif = entry.media.type === "animated_gif";
     const video = M3EMedia.createVideo(entry.media, {
-      autoplay: state.settings.autoplay && !M3E.reducedMotion(),
+      /* Custom controls, not native ones: the theater renders its own M3E
+         control layer, because its interaction rules (scrub must never page
+         the carousel, chrome hides while playing, resume persists) are not
+         what a native control bar is built for. */
+      controls: false,
+      /* Never start mid-swipe: the rail's scroll binder resumes the centred
+         video once the page settles, which is the theatre equivalent of the
+         feed's "stop while scrolling" rule. */
+      autoplay: state.settings.autoplay && !M3E.reducedMotion() && !theaterScrolling,
       preload: "auto",
       width: stage.clientWidth || 900,
       onFail: () => {
+        // Tear the control layer down before the honest failure card takes over.
+        if (slide._vcCleanup) { slide._vcCleanup(); slide._vcCleanup = null; }
         stage.insertAdjacentHTML(
           "beforeend",
           '<div class="slide__dead"><p class="m3e-body-medium">This video could not be loaded.</p></div>'
@@ -1451,6 +1691,162 @@
     stage.appendChild(video);
     const play = stage.querySelector(".slide__play");
     if (play) play.remove();
+
+    /* A GIF is a silent loop with no chrome; a real video gets the custom
+       control layer (play/pause, seek, time, mute, rate, loop, PiP, resume).
+       The controller returns its own teardown, stored on the slide so the
+       centering observer can dispose it before removing the video. */
+    if (!gif && window.M3EVideoControls) {
+      slide._vcCleanup = window.M3EVideoControls.bind(video, {
+        container: stage,
+        entryId: entry.id,
+        progress: progressStore,
+      });
+    }
+  }
+
+  /** Poster-only preload for the slides either side of the one being watched.
+      One decoded image makes the next swipe feel instant, without ever pulling
+      a video's bytes for something nobody has watched. */
+  const preloadAdjacentPosters = (() => {
+    const seen = new Set();
+    return (entries, id) => {
+      const at = entries.findIndex((e) => e.id === id);
+      if (at < 0) return;
+      for (const offset of [-1, 1]) {
+        const e = entries[at + offset];
+        if (!e) continue;
+        const url = M3EMedia.sizedImage(e.media.poster || e.media.url, "large");
+        if (!url || seen.has(url)) continue;
+        if (seen.size > 500) seen.clear();
+        seen.add(url);
+        const img = new Image();
+        img.decoding = "async";
+        img.referrerPolicy = "no-referrer";
+        img.src = url;
+      }
+    };
+  })();
+
+  /** Pause theater playback while the rail scrolls; resume the centred slide
+      when it settles. Returns a teardown that is disposed with the view. */
+  function bindTheaterScrollPause(rail) {
+    if (!rail) return function () {};
+    let settle = null;
+
+    const onScroll = () => {
+      theaterScrolling = true;
+      clearTimeout(settle);
+      rail.querySelectorAll("video").forEach((v) => { try { v.pause(); } catch (_) {} });
+      settle = setTimeout(() => {
+        theaterScrolling = false;
+        if (!state.settings.autoplay || M3E.reducedMotion()) return;
+        const video = rail.querySelector('.slide[data-active="true"] video');
+        // Paused and not simply finished: a video the reader let play out
+        // stays finished rather than being restarted by a settle.
+        if (video && video.paused && !video.ended) {
+          const attempt = video.play();
+          if (attempt && attempt.catch) attempt.catch(() => {});
+        }
+      }, 140);
+    };
+
+    rail.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      clearTimeout(settle);
+      rail.removeEventListener("scroll", onScroll);
+      theaterScrolling = false;
+    };
+  }
+
+  /**
+   * Swipe-down-to-close, for touch and pen.
+   *
+   * The theater's native gesture is horizontal paging (`touch-action: pan-x`),
+   * so a one-finger drag that is clearly vertical and downward is free to mean
+   * "leave" without fighting the pager. The shell is pulled along with the
+   * finger and springs back unless the drag passes the commit distance, at
+   * which point it exits the theater. Horizontal paging is left entirely to
+   * the browser — this never intercepts a page turn.
+   */
+  function bindTheaterDismiss(rail, shell) {
+    if (!rail || !shell) return function () {};
+    let pointerId = null;
+    let startX = 0;
+    let startY = 0;
+    let dragging = false;
+
+    const clear = () => {
+      shell.style.transition = "";
+      shell.style.transform = "";
+      shell.style.opacity = "";
+    };
+
+    const down = (event) => {
+      if (event.pointerType === "mouse" || pointerId !== null) return;
+      pointerId = event.pointerId;
+      startX = event.clientX;
+      startY = event.clientY;
+      dragging = false;
+      if (rail.setPointerCapture) {
+        try { rail.setPointerCapture(event.pointerId); } catch (_) { /* not critical */ }
+      }
+    };
+
+    const move = (event) => {
+      if (event.pointerId !== pointerId) return;
+      const dx = event.clientX - startX;
+      const dy = event.clientY - startY;
+      if (!dragging) {
+        // Only commit once the gesture is unambiguously a downward pull, not
+        // the opening moments of a horizontal page turn.
+        if (!(dy > 12 && Math.abs(dy) > Math.abs(dx))) return;
+        dragging = true;
+      }
+      event.preventDefault();
+      const eased = Math.max(0, dy);
+      const progress = Math.min(1, eased / Math.max(1, shell.clientHeight));
+      shell.style.transform = "translate3d(0," + eased.toFixed(1) + "px,0)";
+      shell.style.opacity = String(Math.max(0, 1 - progress * 1.4).toFixed(3));
+    };
+
+    const up = (event) => {
+      if (event.pointerId !== pointerId) return;
+      pointerId = null;
+      if (!dragging) return;
+      dragging = false;
+      const dy = event.clientY - startY;
+      const commit = Math.min(240, Math.max(120, shell.clientHeight * 0.28));
+      if (dy >= commit) {
+        exitTheater();
+      } else if (M3E.reducedMotion()) {
+        clear();
+      } else {
+        shell.style.transition =
+          "transform 260ms cubic-bezier(0.2, 0, 0, 1), opacity 260ms cubic-bezier(0.2, 0, 0, 1)";
+        shell.style.transform = "";
+        shell.style.opacity = "";
+        setTimeout(clear, 280);
+      }
+    };
+
+    const cancel = (event) => {
+      if (event.pointerId !== pointerId) return;
+      pointerId = null;
+      dragging = false;
+      clear();
+    };
+
+    rail.addEventListener("pointerdown", down);
+    rail.addEventListener("pointermove", move, { passive: false });
+    rail.addEventListener("pointerup", up);
+    rail.addEventListener("pointercancel", cancel);
+    return () => {
+      rail.removeEventListener("pointerdown", down);
+      rail.removeEventListener("pointermove", move);
+      rail.removeEventListener("pointerup", up);
+      rail.removeEventListener("pointercancel", cancel);
+    };
   }
 
   /* ---------------------------------------------------------------------------
@@ -1542,7 +1938,11 @@
     // firing against detached nodes for the life of the page.
     while (carousels.length) { const c = carousels.pop(); if (c && c.destroy) c.destroy(); }
     if (virtualGrid) { virtualGrid.destroy(); virtualGrid = null; }
-    if (autoplayer && autoplayer.disconnect) { autoplayer.disconnect(); autoplayer = null; }
+    if (autoplayer) {
+      if (autoplayer.destroy) autoplayer.destroy();
+      else if (autoplayer.disconnect) autoplayer.disconnect();
+      autoplayer = null;
+    }
     M3EMedia.stopAll();
 
     const list = mediaIndex();
@@ -1556,10 +1956,11 @@
     else if (state.view === "theater") renderTheater(list);
     else renderGrid(list, false);
 
-    // GIFs autoplay in place wherever they are visible: a still frame of a
-    // looping GIF is an unreadable object, and the loop IS the content.
+    // Inline previews. Hover-to-play is wired once in bindFeed; the touch
+    // fallback (most-centred tile, paused while scrolling) is per-render
+    // because the virtualised grid keeps replacing its tile nodes.
     if (state.view !== "theater" && state.settings.autoplay) {
-      autoplayer = M3EMedia.autoplayInView($("feed"), { threshold: 0.5 });
+      autoplayer = createTileAutoplayer($("feed"));
     }
   }
 
@@ -2208,7 +2609,7 @@
           '<span class="m3e-label-medium settings__label">Playback</span>' +
           '<div class="m3e-switch-row"><span class="m3e-switch-row__text">' +
             '<span class="m3e-switch-row__title">Autoplay in view</span>' +
-            '<span class="m3e-switch-row__support">GIFs and video start, muted, while they are on screen. Off saves bandwidth.</span>' +
+            '<span class="m3e-switch-row__support">Videos and GIFs preview muted — under the cursor on a pointer device, or on the centred tile when the page is at rest on touch. Off saves bandwidth.</span>' +
           "</span>" +
           '<button class="m3e-switch m3e-state" id="setAutoplay" role="switch" aria-checked="' + !!s.autoplay + '">' +
             '<span class="m3e-switch__handle">' + svg("check", 14) + "</span></button></div>" +
@@ -2676,6 +3077,8 @@
       }
 
       // Theater controls
+      const theaterClose = event.target.closest("[data-theater-close]");
+      if (theaterClose) { exitTheater(); return; }
       const slidePlay = event.target.closest("[data-play-slide]");
       if (slidePlay) {
         const slide = slidePlay.closest(".slide");
@@ -2700,8 +3103,17 @@
       const tile = event.target.closest(".tile[data-entry]");
       if (!tile) return;
 
+      /* A controllable preview owns its own clicks: the video's native
+         controls (unmute, fullscreen, PiP) and the play/pause toggle on the
+         video itself must not be stolen by "open the viewer". A GIF preview
+         has no controls, so a click there still opens the viewer. */
+      if (event.target.closest(".tile__video[controls]")) return;
+
       const entry = entryById(state.lastList, tile.dataset.entry);
       if (entry) {
+        // Stop the hover preview before handing off to the viewer, so the two
+        // surfaces never both hold a live player.
+        unmountTilePreview(tile);
         // A poster-only stream has no useful full-screen playback. Go straight
         // to the inspector where its explanation and recovery actions live.
         if (M3EMedia.hlsOnly(entry.media)) openDetail(tile.dataset.entry);
@@ -2734,6 +3146,39 @@
         img.replaceWith(span);
       }
     }, true);
+
+    /* Hover-to-play. pointerenter/pointerleave don't bubble, so these are
+       registered in the capture phase to work as a single delegated pair over
+       every tile, however many renders recreate them. Touch devices fail the
+       canHover gate and rely on the settled-in-view autoplayer instead. */
+    feed.addEventListener("pointerenter", (event) => {
+      const tile = event.target.closest && event.target.closest(".tile[data-motion='true']");
+      if (!tile || !canHover) return;
+      if (!state.settings.autoplay || M3E.reducedMotion()) return;
+      const entry = entryById(state.lastList, tile.dataset.entry);
+      if (entry) mountTilePreview(tile, entry);
+    }, true);
+
+    feed.addEventListener("pointerleave", (event) => {
+      const tile = event.target.closest && event.target.closest(".tile[data-motion='true']");
+      if (tile && canHover) unmountTilePreview(tile);
+    }, true);
+
+    /* Keyboard activation for role="button" tiles. This is standard button
+       behaviour (Enter/Space), not a shortcut system: it only fires when the
+       tile itself is focused, and hands off when focus is on an inner control
+       such as the preview video. */
+    feed.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const tile = event.target.closest(".tile[data-entry][role='button']");
+      if (!tile || event.target !== tile) return;
+      event.preventDefault();
+      const entry = entryById(state.lastList, tile.dataset.entry);
+      if (!entry) return;
+      unmountTilePreview(tile);
+      if (M3EMedia.hlsOnly(entry.media)) openDetail(tile.dataset.entry);
+      else openViewer(entry);
+    });
   }
 
   function init() {
@@ -2747,6 +3192,7 @@
     theme = M3ETheme.createController(state.settings);
 
     state.meta = readJSON(KEYS.meta, {}) || {};
+    state.progress = readJSON(KEYS.progress, {}) || {};
     state.items = normalize(readJSON(KEYS.items, []) || []);
     state.collection = state.settings.lastCollection || "all";
     state.view = VIEWS.includes(state.settings.view) ? state.settings.view : "rails";
@@ -2892,6 +3338,13 @@
 
     if ($("fileImport")) $("fileImport").addEventListener("change", (e) => handleFile(e.target, {}));
     if ($("fileRestore")) $("fileRestore").addEventListener("change", (e) => handleFile(e.target, { restore: true }));
+
+    /* Escape leaves the theater. The listener is shared (see bindEscape in
+       shared/m3e/interactions.js) and deliberately runs only after any open
+       overlay, menu or field has had its turn with the key. */
+    if (M3E.bindEscape) {
+      M3E.bindEscape(() => { if (state.view === "theater") exitTheater(); });
+    }
 
     bindFeed();
     bindCaptureBanner();

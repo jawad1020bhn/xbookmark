@@ -31,6 +31,8 @@
     play: '<path d="M8 5v14l11-7L8 5Z"/>',
     fullscreen: '<path d="M5 5h5v2H7v3H5V5Zm9 0h5v5h-2V7h-3V5ZM5 14h2v3h3v2H5v-5Zm12 0h2v5h-5v-2h3v-3Z"/>',
     fullscreenExit: '<path d="M8 5h2v5H5V8h3V5Zm6 0h2v3h3v2h-5V5ZM5 14h5v5H8v-3H5v-2Zm9 0h5v2h-3v3h-2v-5Z"/>',
+    grid: '<path d="M3 3h5v7H3V3Zm7 0h5v5h-5V3Zm7 0h4v9h-4V3ZM3 12h5v9H3v-9Zm7 7h5v2h-5v-2Zm0-9h5v7h-5v-7Zm7 4h4v7h-4v-7Z"/>',
+    image: '<path d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm1 13h14v-2.2l-3.5-3.5-2.6 2.6-3.4-4.2L5 15.4V17Zm10.5-6a1.8 1.8 0 1 0-1.8-1.8A1.8 1.8 0 0 0 15.5 11Z"/>',
   };
   const svg = (name, size) =>
     '<svg viewBox="0 0 24 24" width="' + size + '" height="' + size +
@@ -46,6 +48,11 @@
   let onChange = null;
   let contextAt = null;
   let ignoreClickUntil = 0;
+  let stripCarousel = null; // M3E controller: wheel translation + arrow keys
+  let stripLarge = false;   // optional larger filmstrip thumbnails
+  let overviewOpen = false;
+  let overview = null;      // { cols, rows, cell, gap } — overview layout cache
+  let overviewKey = "";     // skip repaints when the visible window is unchanged
   const prefetchCache = new Map();
 
   /**
@@ -96,13 +103,44 @@
       '<button class="lb__nav lb__nav--next m3e-state" id="lbNext" type="button" aria-label="Next">' + svg("next", 28) + "</button>" +
 
       '<div class="lb__bar lb__bar--bottom">' +
-        '<p class="lb__caption m3e-body-medium" id="lbCaption"></p>' +
+        '<div class="lb__bottom-row">' +
+          '<p class="lb__caption m3e-body-medium" id="lbCaption"></p>' +
+          /* Filmstrip controls: thumbnail size and the grid overview. Both are
+             hidden for a single item, where there is nothing to jump between. */
+          '<div class="lb__bottom-actions">' +
+            '<button class="lb__btn m3e-state" id="lbStripSize" type="button" aria-pressed="false"' +
+              ' aria-label="Larger thumbnails" title="Larger thumbnails">' + svg("image", 18) + "</button>" +
+            '<button class="lb__btn m3e-state" id="lbOverviewBtn" type="button" aria-pressed="false"' +
+              ' aria-label="Browse all items" title="Browse all items">' + svg("grid", 18) + "</button>" +
+          "</div>" +
+        "</div>" +
         /* A filmstrip, not dots. The viewer now traverses an entire library:
            forty dots is not a control, it is a texture. A strip of thumbnails
            is the only affordance that scales to hundreds and it doubles as a
            preview of what is coming, which dots never were. */
         '<div class="lb__strip" id="lbStrip" role="tablist" aria-label="Media in this set"></div>' +
-      "</div>";
+      "</div>" +
+
+      /* Grid overview — a windowed drawer of every item, for jumping around a
+         set of hundreds or thousands. Slides up over the whole viewer; the
+         rest of the chrome is inert while it is open. */
+      '<section class="lb__overview" id="lbOverview" aria-label="All items" aria-hidden="true" data-open="false">' +
+        '<div class="lb__overview__head">' +
+          '<div class="lb__overview__title">' +
+            '<p class="lb__ov-title m3e-title-medium m3e-title-medium--emphasized">All items</p>' +
+            '<p class="lb__ov-count m3e-body-small" id="lbOverviewCount"></p>' +
+          "</div>" +
+          '<form class="lb__jump" id="lbJumpForm">' +
+            '<label class="lb__jump-label m3e-body-small" for="lbJumpInput">Go to</label>' +
+            '<input class="lb__jump-input" id="lbJumpInput" type="number" inputmode="numeric" min="1" max="1" value="1"' +
+              ' aria-label="Jump to item number" />' +
+            '<span class="lb__jump-total m3e-body-small" id="lbJumpTotal"></span>' +
+            '<button class="lb__jump-go m3e-state" type="submit">Go</button>' +
+          "</form>" +
+          '<button class="lb__btn m3e-state" id="lbOverviewClose" type="button" aria-label="Close overview">' + svg("close", 22) + "</button>" +
+        "</div>" +
+        '<div class="lb__overview__grid" id="lbOverviewGrid"></div>' +
+      "</section>";
 
     document.body.appendChild(root);
 
@@ -119,7 +157,22 @@
       copy: root.querySelector("#lbCopy"),
       full: root.querySelector("#lbFull"),
       close: root.querySelector("#lbClose"),
+      top: root.querySelector(".lb__bar--top"),
+      bottom: root.querySelector(".lb__bar--bottom"),
+      stripSize: root.querySelector("#lbStripSize"),
+      overviewBtn: root.querySelector("#lbOverviewBtn"),
+      overview: root.querySelector("#lbOverview"),
+      overviewClose: root.querySelector("#lbOverviewClose"),
+      overviewGrid: root.querySelector("#lbOverviewGrid"),
+      overviewCount: root.querySelector("#lbOverviewCount"),
+      jumpForm: root.querySelector("#lbJumpForm"),
+      jumpInput: root.querySelector("#lbJumpInput"),
+      jumpTotal: root.querySelector("#lbJumpTotal"),
     };
+
+    // The overview drawer starts closed. Inert (not just aria-hidden) keeps its
+    // controls out of the tab order until it is actually opened.
+    els.overview.inert = true;
 
     overlay = window.M3E.createOverlay({ element: root, restoreFocus: true, onClose: teardown });
 
@@ -151,6 +204,47 @@
       if (performance.now() < ignoreClickUntil) return;
       if (event.target === root || event.target === els.stage) close();
     });
+
+    /* Filmstrip: the shared carousel controller gives wheel translation,
+       Arrow/Home/End keys, and a bounded scroll extent — without any bespoke
+       key handling in this file. */
+    stripCarousel = window.M3E.bindCarousel(els.strip, {});
+    bindStripScrub();
+
+    /* Escape closes the overview first and leaves the viewer open; only when
+       the overview is already closed does the overlay's own Escape handler
+       (which closes the viewer) get the key. Registered in the capture phase
+       in shared/m3e so it runs before that handler. */
+    window.M3E.bindEscapeCapture((event) => {
+      if (!overviewOpen) return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeOverview();
+    });
+
+    /* Grid overview wiring. A single delegated click on the grid serves every
+       cell (they are rebuilt on scroll), the form's submit event is Enter's
+       native behaviour, and scroll/resize repaint the windowed grid. */
+    els.overviewBtn.addEventListener("click", toggleOverview);
+    els.overviewClose.addEventListener("click", () => closeOverview());
+    els.stripSize.addEventListener("click", toggleStripSize);
+    els.jumpForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      jumpFromInput();
+    });
+    els.overviewGrid.addEventListener("click", (event) => {
+      const cell = event.target.closest(".lb__overview-cell");
+      if (!cell || performance.now() < ignoreClickUntil) return;
+      const i = Number(cell.dataset.i);
+      show(i, i < index ? -1 : 1);
+      closeOverview();
+    });
+    els.overviewGrid.addEventListener("scroll", scheduleOverviewPaint, { passive: true });
+    if (typeof ResizeObserver === "function") {
+      new ResizeObserver(overviewResize).observe(els.overviewGrid);
+    } else {
+      window.addEventListener("resize", overviewResize);
+    }
 
     bindGestures();
   }
@@ -417,6 +511,19 @@
     if (ctx.url) { els.open.href = ctx.url; els.open.hidden = false; }
     else els.open.hidden = true;
 
+    /* Overview / jump / strip-size controls. Cheap DOM writes, but only the
+       controls themselves — the grid is painted lazily on open. */
+    if (els.overviewCount) {
+      els.overviewCount.textContent = items.length.toLocaleString() + (items.length === 1 ? " item" : " items");
+    }
+    if (els.jumpTotal) els.jumpTotal.textContent = "/ " + items.length.toLocaleString();
+    if (els.jumpInput) {
+      els.jumpInput.max = String(items.length);
+      els.jumpInput.value = String(index + 1);
+    }
+    if (els.overviewBtn) els.overviewBtn.hidden = !many;
+    if (els.stripSize) els.stripSize.hidden = !many;
+
     renderStrip(many);
   }
 
@@ -429,14 +536,17 @@
    * being looked at.
    */
   const STRIP_RADIUS = 12;
+  /* Larger thumbs show fewer items in the window, so the radius shrinks. */
+  const stripRadius = () => (stripLarge ? 8 : STRIP_RADIUS);
 
   function renderStrip(many) {
     els.strip.innerHTML = "";
     els.strip.hidden = !many;
     if (!many) return;
 
-    const from = Math.max(0, index - STRIP_RADIUS);
-    const to = Math.min(items.length, index + STRIP_RADIUS + 1);
+    const radius = stripRadius();
+    const from = Math.max(0, index - radius);
+    const to = Math.min(items.length, index + radius + 1);
 
     for (let i = from; i < to; i++) {
       const m = items[i];
@@ -464,7 +574,10 @@
         dot.innerHTML = svg("play", 12);
         cell.appendChild(dot);
       }
-      cell.addEventListener("click", () => show(i, i < index ? -1 : 1));
+      cell.addEventListener("click", () => {
+        if (performance.now() < ignoreClickUntil) return; // a scrub, not a pick
+        show(i, i < index ? -1 : 1);
+      });
       els.strip.appendChild(cell);
     }
 
@@ -472,6 +585,196 @@
     if (active && active.scrollIntoView) {
       active.scrollIntoView({ inline: "center", block: "nearest", behavior: "auto" });
     }
+  }
+
+  /* ---------------------------------------------------------------------------
+     Filmstrip scrubbing
+
+     A grab-and-drag scrub for mouse pointers. Touch already scrolls the strip
+     natively; a mouse doesn't, so the same physical gesture is provided here.
+     A drag that actually moved suppresses the click that would otherwise
+     follow, so scrubbing never accidentally picks an item under the cursor.
+     --------------------------------------------------------------------------- */
+  function bindStripScrub() {
+    let pointerId = null;
+    let startX = 0;
+    let startLeft = 0;
+    let moved = false;
+
+    els.strip.addEventListener("pointerdown", (event) => {
+      if (event.pointerType !== "mouse" || pointerId !== null) return;
+      pointerId = event.pointerId;
+      startX = event.clientX;
+      startLeft = els.strip.scrollLeft;
+      moved = false;
+      if (els.strip.setPointerCapture) {
+        try { els.strip.setPointerCapture(event.pointerId); } catch (_) { /* not critical */ }
+      }
+    });
+
+    els.strip.addEventListener("pointermove", (event) => {
+      if (event.pointerId !== pointerId) return;
+      const dx = event.clientX - startX;
+      if (!moved && Math.abs(dx) < 4) return;
+      moved = true;
+      event.preventDefault();
+      els.strip.scrollLeft = startLeft - dx;
+    }, { passive: false });
+
+    const end = (event) => {
+      if (event.pointerId !== pointerId) return;
+      pointerId = null;
+      if (moved) { ignoreClickUntil = performance.now() + 300; moved = false; }
+    };
+    els.strip.addEventListener("pointerup", end);
+    els.strip.addEventListener("pointercancel", end);
+  }
+
+  function toggleStripSize() {
+    stripLarge = !stripLarge;
+    root.dataset.strip = stripLarge ? "large" : "small";
+    els.stripSize.setAttribute("aria-pressed", String(stripLarge));
+    const label = stripLarge ? "Smaller thumbnails" : "Larger thumbnails";
+    els.stripSize.setAttribute("aria-label", label);
+    els.stripSize.title = label;
+    renderStrip(items.length > 1);
+  }
+
+  /* ---------------------------------------------------------------------------
+     Grid overview — a windowed drawer of every item
+
+     Renders only the rows near the viewport plus a small overscan, exactly as
+     the dashboard's virtual grid does, so a thousand-item library does not
+     materialise a thousand <img> elements. Geometry is uniform: every cell is
+     the same square, so position is pure arithmetic from the index.
+     --------------------------------------------------------------------------- */
+  const OVERVIEW_CELL = 84;
+  const OVERVIEW_GAP = 8;
+  const OVERVIEW_INSET = 12;
+
+  function layoutOverview() {
+    const grid = els.overviewGrid;
+    const width = grid.clientWidth - OVERVIEW_INSET * 2;
+    const cols = Math.max(2, Math.floor((width + OVERVIEW_GAP) / (OVERVIEW_CELL + OVERVIEW_GAP)));
+    const rows = Math.ceil(items.length / cols);
+    const total = OVERVIEW_INSET * 2 + rows * (OVERVIEW_CELL + OVERVIEW_GAP) - OVERVIEW_GAP;
+    grid.style.blockSize = Math.max(0, total) + "px";
+    overview = { cols, rows, cell: OVERVIEW_CELL, gap: OVERVIEW_GAP };
+    overviewKey = "";
+  }
+
+  function paintOverview() {
+    if (!overview || !overviewOpen) return;
+    const grid = els.overviewGrid;
+    const { cols, rows, cell, gap } = overview;
+    const rowH = cell + gap;
+    const viewTop = grid.scrollTop;
+    const viewBottom = viewTop + grid.clientHeight;
+    const fromRow = Math.max(0, Math.floor((viewTop - OVERVIEW_INSET) / rowH) - 2);
+    const toRow = Math.min(rows, Math.ceil((viewBottom - OVERVIEW_INSET) / rowH) + 2);
+    const from = fromRow * cols;
+    const to = Math.max(from, Math.min(items.length, toRow * cols));
+    const key = index + "|" + from + "|" + to;
+    if (key === overviewKey) return;
+    overviewKey = key;
+
+    let html = "";
+    for (let i = from; i < to; i++) {
+      const col = i % cols;
+      const row = (i - col) / cols;
+      const left = OVERVIEW_INSET + col * (cell + gap);
+      const top = OVERVIEW_INSET + row * (cell + gap);
+      const m = items[i];
+      const active = i === index;
+      const src = window.M3EMedia.sizedImage(m.poster || m.url, "small");
+      html +=
+        '<button type="button" class="lb__overview-cell" data-i="' + i + '"' +
+        ' style="transform:translate3d(' + left + "px," + top + "px,0);width:" + cell + "px;height:" + cell + 'px"' +
+        ' aria-label="Item ' + (i + 1) + " of " + items.length + '"' +
+        (active ? ' aria-current="true"' : "") +
+        ">" +
+        (src
+          ? '<img src="' + src + '" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">'
+          : '<span class="lb__overview-cell__blank">' + (i + 1) + "</span>") +
+        (window.M3EMedia.isMotion(m)
+          ? '<span class="lb__overview-cell__motion">' + svg("play", 11) + "</span>"
+          : "") +
+        '<span class="lb__overview-cell__num">' + (i + 1) + "</span>" +
+        "</button>";
+    }
+    grid.innerHTML = html;
+    grid.dataset.rendered = String(to - from);
+  }
+
+  let overviewFrame = 0;
+  function scheduleOverviewPaint() {
+    if (overviewFrame) return;
+    overviewFrame = requestAnimationFrame(() => { overviewFrame = 0; paintOverview(); });
+  }
+
+  function overviewResize() {
+    if (!overviewOpen) return;
+    layoutOverview();
+    paintOverview();
+  }
+
+  /** The chrome behind the drawer becomes inert: not tabbable, not announced. */
+  function setOverviewInert(on) {
+    ["top", "prev", "stage", "next", "bottom"].forEach((key) => {
+      const el = els[key];
+      if (el) el.inert = on;
+    });
+  }
+
+  function openOverview() {
+    if (overviewOpen || !els.overview) return;
+    overviewOpen = true;
+    els.overview.inert = false;
+    els.overview.setAttribute("aria-hidden", "false");
+    els.overview.dataset.open = "true";
+    els.overviewBtn.setAttribute("aria-pressed", "true");
+    els.overviewBtn.setAttribute("aria-label", "Close overview");
+    setOverviewInert(true);
+
+    layoutOverview();
+    // Centre the current item's row, then paint the window around it.
+    const { cols, cell, gap } = overview;
+    const rowH = cell + gap;
+    const row = Math.floor(index / cols);
+    const target = OVERVIEW_INSET + row * rowH - (els.overviewGrid.clientHeight - cell) / 2;
+    els.overviewGrid.scrollTop = Math.max(0, Math.min(target, els.overviewGrid.scrollHeight - els.overviewGrid.clientHeight));
+    paintOverview();
+
+    const active = els.overviewGrid.querySelector('.lb__overview-cell[aria-current="true"]');
+    (active || els.overviewClose).focus({ preventScroll: true });
+  }
+
+  function closeOverview(refocus) {
+    if (!els.overview) return;
+    const wasOpen = overviewOpen;
+    overviewOpen = false;
+    els.overview.dataset.open = "false";
+    els.overview.setAttribute("aria-hidden", "true");
+    els.overview.inert = true;
+    els.overviewBtn.setAttribute("aria-pressed", "false");
+    els.overviewBtn.setAttribute("aria-label", "Browse all items");
+    setOverviewInert(false);
+    if (wasOpen && refocus !== false) els.overviewBtn.focus({ preventScroll: true });
+  }
+
+  function toggleOverview() {
+    if (overviewOpen) closeOverview();
+    else openOverview();
+  }
+
+  function jumpFromInput() {
+    const raw = els.jumpInput.value;
+    if (raw === "") return; // an empty field is a no-op, not "jump to 1"
+    const value = Number(raw);
+    if (!Number.isFinite(value)) return;
+    const to = Math.max(0, Math.min(items.length - 1, Math.round(value) - 1));
+    show(to, to < index ? -1 : 1);
+    closeOverview();
   }
 
   /**
@@ -526,6 +829,7 @@
 
   function teardown() {
     if (document.fullscreenElement === root) document.exitFullscreen().catch(() => {});
+    if (overviewOpen) closeOverview(false);
     window.M3EMedia.stopAll();
     els.stage.innerHTML = "";
     items = [];
@@ -545,6 +849,7 @@
     if (!Array.isArray(list) || !list.length) return;
     if (!root) build();
     items = list;
+    if (overviewOpen) closeOverview(false);
     context = ctx || {};
     onCopy = context.onCopy || null;
     onChange = context.onChange || null;

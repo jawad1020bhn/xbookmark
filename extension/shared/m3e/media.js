@@ -328,6 +328,17 @@
     return h ? h + ":" + pad(m) + ":" + pad(s) : m + ":" + pad(s);
   }
 
+  /** The same clock, but for a value already in seconds. */
+  function formatTime(seconds) {
+    return formatDuration((Number(seconds) || 0) * 1000);
+  }
+
+  /** True when this video element can be popped into picture-in-picture. */
+  function supportsPiP(video) {
+    return !!(typeof document !== "undefined" && document.pictureInPictureEnabled &&
+      video && typeof video.requestPictureInPicture === "function");
+  }
+
   /** The short badge a thumbnail shows: `GIF`, a duration, or nothing. */
   function badgeFor(media) {
     if (!media) return "";
@@ -351,6 +362,8 @@
     aspectRatio,
     sizedImage,
     formatDuration,
+    formatTime,
+    supportsPiP,
     badgeFor,
   };
 });

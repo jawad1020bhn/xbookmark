@@ -72,7 +72,9 @@
 
     const focusables = () =>
       Array.from(container.querySelectorAll(FOCUSABLE)).filter(
-        (el) => el.offsetParent !== null || el === document.activeElement
+        (el) =>
+          (el.offsetParent !== null || el === document.activeElement) &&
+          !el.closest("[inert]") // inert sub-surfaces are not part of the trap
       );
 
     const onKeydown = (event) => {
@@ -141,7 +143,11 @@
 
     if (scrim && options.dismissOnScrim !== false) scrim.addEventListener("click", close);
     el.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") { event.stopPropagation(); close(); }
+      /* Escape while typing in a field is the field's own clear/cancel; it
+         must not dismiss the whole surface out from under someone mid-edit. */
+      if (event.key === "Escape" && !/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)) {
+        event.stopPropagation(); close();
+      }
     });
 
     return { open: show, close, get isOpen() { return open; } };
@@ -530,6 +536,41 @@
   }
 
   /* ---------------------------------------------------------------------------
+     Escape key — view-level exit
+
+     One document-level listener for "leave this mode" behaviour (the theater).
+     Escape is owned first by whoever already claimed it: overlays and the
+     lightbox stop propagation, menus close themselves in the capture phase
+     and mark the event handled, and a form field keeps Escape for its own
+     clear/cancel meaning. Only when none of those applied does the handler
+     run, so a global listener can exist without stealing the key from the
+     surfaces that legitimately use it.
+     --------------------------------------------------------------------------- */
+  function bindEscape(handler) {
+    const onKeydown = (event) => {
+      if (event.key !== "Escape") return;
+      if (event.defaultPrevented) return;
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)) return;
+      handler(event);
+    };
+    document.addEventListener("keydown", onKeydown);
+    return () => document.removeEventListener("keydown", onKeydown);
+  }
+
+  /* Same idea, but in the CAPTURE phase, so it runs before any bubble-phase
+     listener — including an open overlay's own Escape handler. A nested
+     sub-surface (the lightbox's grid overview) uses this to take the first
+     turn at Escape and close itself, leaving its parent open. */
+  function bindEscapeCapture(handler) {
+    const onKeydown = (event) => {
+      if (event.key !== "Escape") return;
+      handler(event);
+    };
+    document.addEventListener("keydown", onKeydown, true);
+    return () => document.removeEventListener("keydown", onKeydown, true);
+  }
+
+  /* ---------------------------------------------------------------------------
      Utilities
      --------------------------------------------------------------------------- */
   function pulse(element) {
@@ -567,6 +608,8 @@
     bindRovingFocus,
     bindSwitch,
     bindCarousel,
+    bindEscape,
+    bindEscapeCapture,
     pulse,
     debounce,
     escapeHtml,
