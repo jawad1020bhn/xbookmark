@@ -129,10 +129,32 @@ function resolveUser(userResult) {
   };
 }
 
-function buildMediaItems(media) {
+/**
+ * Normalise X's media payload into the shape the dashboard plays back.
+ *
+ * The dashboard is a media browser first, so this is the most load-bearing
+ * function in the scraper. Three things it must get right, each of which was
+ * previously lost:
+ *
+ *  1. EVERY mp4 variant, not just the best one. X publishes the same video at
+ *     three or four bitrates (typically 320p / 480p / 720p / 1080p). Keeping
+ *     the whole ladder lets the player choose by rendered size — a 180px-wide
+ *     tile in a carousel has no business downloading a 1080p file, and a
+ *     full-screen viewer should not be stuck with the 320p one. Only the
+ *     winner was kept before, so it was always one or the other.
+ *  2. A real poster. For a video, `media_url_https` IS the still frame, but
+ *     naming it `url` and nothing else meant every consumer had to know that.
+ *     It is emitted as `poster` too, explicitly.
+ *  3. The sensitivity flag, so the UI can gate a blur instead of ambushing
+ *     someone scrolling in public.
+ *
+ * `mp4` (the best variant) is still emitted unchanged: it is what every
+ * existing consumer and test reads.
+ */
+function buildMediaItems(media, postSensitive) {
   return (Array.isArray(media) ? media : [])
     .filter((m) => m && typeof m === "object")
-    .map((m) => {
+    .map((m, index) => {
       const info = m.original_info || {};
       const size = (m.sizes && (m.sizes.large || m.sizes.medium)) || {};
       const width = Number(info.width) || Number(size.w) || 0;
@@ -140,20 +162,37 @@ function buildMediaItems(media) {
       const ratio = m.video_info && Array.isArray(m.video_info.aspect_ratio)
         ? m.video_info.aspect_ratio[0] / m.video_info.aspect_ratio[1]
         : width && height ? width / height : 0;
+
       const variants = (m.video_info && m.video_info.variants) || [];
-      const mp4 = variants
-        .filter((v) => v.content_type === "video/mp4" && v.url)
-        .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+
+      /* The full ladder, best first. `bitrate` is the only quality signal X
+         gives; the resolution is in the URL path but is not machine-readable
+         in any documented way, so bitrate ordering is what we can trust. */
+      const mp4Variants = variants
+        .filter((v) => v && v.content_type === "video/mp4" && v.url)
+        .map((v) => ({ url: v.url, bitrate: Number(v.bitrate) || 0 }))
+        .sort((a, b) => b.bitrate - a.bitrate);
+
       const hls = variants.find((v) => v.content_type === "application/x-mpegURL" && v.url);
+      const still = m.media_url_https || m.media_url || null;
+
       return {
         type: m.type || "photo",
-        url: m.media_url_https || m.media_url || null,
+        url: still,
+        // For photos the still *is* the media; for video it is the poster
+        // frame. Saying so removes a guess from every consumer downstream.
+        poster: still,
         width, height,
         aspect: Number.isFinite(ratio) && ratio > 0 ? ratio : 0,
-        mp4: (mp4 && mp4.url) || null,
+        mp4: (mp4Variants[0] && mp4Variants[0].url) || null,
+        mp4_variants: mp4Variants,
         hls: (hls && hls.url) || null,
         duration: (m.video_info && Number(m.video_info.duration_millis)) || 0,
-        alt: m.ext_alt_text || m.alt_text || null
+        alt: m.ext_alt_text || m.alt_text || null,
+        sensitive: Boolean(postSensitive || m.sensitive_media_warning || m.possibly_sensitive),
+        // Media order inside a post is meaningful (a thread's screenshots are
+        // sequential) and is lost the moment anything re-sorts the array.
+        position: index + 1
       };
     });
 }
@@ -264,7 +303,10 @@ function normalizeTweet(tweet) {
     has_media: media.length > 0,
     has_links: urls.length > 0,
     media_types: media.map((m) => m.type),
-    media_items: buildMediaItems(media),
+    /* Sensitivity is flagged on the post, not on each attachment, so it is
+       pushed down here — the media grid is what has to blur, and it should
+       not have to reach back up to the post to find out. */
+    media_items: buildMediaItems(media, Boolean(l.possibly_sensitive)),
     urls_expanded: urlsExpanded,
     conversation_id: l.conversation_id_str || null,
     in_reply_to_status_id: l.in_reply_to_status_id_str || null,

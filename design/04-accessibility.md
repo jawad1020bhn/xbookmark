@@ -60,14 +60,24 @@ Every state that matters is encoded at least twice:
 
 | Meaning | Colour | Second channel | Third |
 |---|---|---|---|
-| Card selected | primary outline | **radius 20 → 28** | 4 px spine |
-| Card archived | dimmed | **radius 20 → 12** | "Archived" text |
+| Tile selected | primary outline | **3 px ring + 2 px offset** | `aria-selected` |
+| Tile pressed | — | **radius 20 → 16** | scale 0.985 |
+| Filter chip on | secondary container | **radius partial → full** | `aria-pressed` |
+| Motion vs still | — | **play glyph** | duration or `GIF` badge |
+| Unplayable video | — | **glyph is "open", not "play"** | explanatory card on open |
+| Sensitive media | — | **blur** | veil label "Sensitive · tap to show" |
 | Capture paused | tertiary container | **dot becomes a square** | word "Paused" |
 | Capture error | error container | **dot becomes a rotated square** | word + reason |
-| Log severity | container colour | **bullet shape** | position/time |
 | Zero-value stat | dimmed to `outline` | the numeral is `0` | — |
 
 Turn the display to greyscale and every one of these still reads.
+
+This constraint bites harder in a media browser than it did in a list, and it
+is the reason shape does so much work in §3 of the foundations. Over a text
+card you can always tint the background to signal state. Over a photograph you
+cannot: any tint is a change to the user's content. Shape, outline and glyph
+are the only channels left, so all three are used deliberately rather than
+decoratively.
 
 ---
 
@@ -79,8 +89,18 @@ Turn the display to greyscale and every one of these still reads.
 - **Focus ring** on every focusable element: 3 px `secondary` at 2 px offset.
   Drawn on `secondary` specifically so it never disappears against the
   `primary` fills it most often sits on. Never removed without replacement.
-- **Roving tabindex** in the card list — one tab stop for the whole list,
-  arrows to move within it.
+- **Every carousel is keyboard-operable.** A horizontally scrolling region
+  drivable only by a wheel or a swipe fails **WCAG 2.1.1 (Keyboard)**
+  outright, and it is the single most common accessibility failure in
+  carousel-based UIs. Each rail is focusable and responds to `←` `→` `Home`
+  `End`; `bindCarousel` owns that, so no rail can be added without it.
+- **Scroll is handed back at the ends.** The wheel-to-horizontal translation
+  stops applying once a rail has no room left in that direction, so the page
+  keeps scrolling instead of the pointer being trapped in a rail — a
+  **2.1.2 (No Keyboard Trap)** problem in spirit even when it is a pointer
+  doing the scrolling.
+- **`i` inspects the focused tile**, so the post behind a picture is reachable
+  without the pointer-only context-menu gesture that also exposes it.
 - **Focus trap** in modal overlays only (dialog, bottom sheet, side sheet), via
   `M3E.createOverlay`. The persistent detail pane at ≥1200 px is deliberately
   *not* trapped — it is part of the page.
@@ -100,6 +120,17 @@ Turn the display to greyscale and every one of these still reads.
   errors so a screen reader interrupts rather than queueing behind a long read.
 - Result counts announced on filter change, so a keyboard user knows the list
   changed underneath them.
+- **Every tile is a real `<button>`** with a composed label:
+  `Play video by Engineer Daily: <caption>`. Action first, then medium, then
+  source, then the caption — a screen-reader user decides whether to keep
+  listening during the first few words, so the action cannot be last.
+- **Alt text falls back to the post's own words.** Where a capture carries no
+  caption, the post text is used, truncated. It usually describes the picture
+  better than any generic string, and "image" describes nothing at all.
+- **`aria-describedby` points at the shell, not at a view.** The hint that says
+  what activating a tile does lives outside the three renderers, because a
+  reference to an id that exists in only one of them is silently dropped by
+  the other two — which is worse than having no hint.
 - Icon-only buttons all carry `aria-label`, and **relabel themselves when their
   meaning flips**. The theme toggle is the example: it shows a sun and says
   "Switch to light theme" while dark, a moon and "Switch to dark theme" while
@@ -128,10 +159,21 @@ set `html[data-motion="reduced"]`:
 - springs collapse to a near-instant snap;
 - looping animations stop (breathing status dot, wavy progress scroll) while
   keeping their static shape;
-- no transform-based entrance animations.
+- no transform-based entrance animations;
+- tiles stop scaling on hover and press, and respond by shape alone;
+- carousels and the theater switch from `scroll-behavior: smooth` to `auto`,
+  so paging jumps rather than glides;
+- **autoplay is off.** This is the one that matters most in a media browser.
+  Someone who has asked the operating system to stop things moving has asked,
+  specifically and unambiguously, for video not to start playing at them.
 
 Because motion is never the sole carrier of meaning, nothing is lost: the wave
-still reads as a wave, the status word still says "Capturing".
+still reads as a wave, the status word still says "Capturing", and every video
+still plays the moment it is asked to.
+
+Autoplay additionally has its own switch in Personalise, independent of the
+motion setting, because bandwidth is a legitimate reason to want it off and
+those two preferences should not be welded together.
 
 ---
 
@@ -148,7 +190,30 @@ A dedicated `@media (forced-colors: active)` block:
 
 ---
 
-## 7. Other
+## 7. Media-specific concerns
+
+- **Sensitive media** is blurred, and the first activation only reveals it.
+  Opening is a second, deliberate action. Nothing marked sensitive autoplays.
+- **No seizure risk from autoplay**: only one item plays at a time, it is
+  always muted, and it stops the moment it leaves the viewport.
+- **Layout never shifts as media loads.** Intrinsic `width`/`height` plus the
+  `--_ar` ratio mean the box is correct before any bytes arrive. Cumulative
+  layout shift is a genuine accessibility problem, not just a metric — a
+  target that moves as you reach for it is a **2.5.x** failure for anyone with
+  a motor impairment.
+- **Video controls are the browser's own**, which are already keyboard
+  complete, screen-reader labelled and localised. A bespoke control bar is a
+  large amount of code whose best possible outcome is parity with them.
+- **`Space` plays and pauses in the viewer**, because native controls auto-hide
+  and would otherwise have to be summoned back before they could be used.
+- **Unplayable video says so.** An HLS-only item renders an explanation and a
+  "Watch on X" link rather than a play button that leads nowhere. A control
+  that does nothing is worse for a screen-reader user than an absent one,
+  because nothing announces the failure.
+
+---
+
+## 8. Other
 
 - **Zoom** — layout holds to 200 % without horizontal scrolling; the type scale
   is in `rem`-relative units and containers are fluid.

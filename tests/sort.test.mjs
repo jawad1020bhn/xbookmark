@@ -128,8 +128,8 @@ test("only shuffles are marked as re-dealing", () => {
 });
 
 test("comparators never mutate the list they are given", () => {
-  // `visible()` is called on every render; sorting in place would scramble
-  // state.items as a side effect.
+  // `mediaIndex()` is called on every render; sorting in place would scramble
+  // the caller's array as a side effect.
   const fn = app.slice(app.indexOf("function sortList("), app.indexOf("const isShuffle"));
   assert.match(fn, /const copy = list\.slice\(\);/);
   assert.match(fn, /copy\.sort\(cmp\)/);
@@ -138,10 +138,14 @@ test("comparators never mutate the list they are given", () => {
 
 test("shuffle scores are precomputed, not recomputed per comparison", () => {
   // A comparator runs O(n log n) times; hashing inside it would make a large
-  // library crawl.
+  // library crawl. The sorted unit is a media ENTRY (`<tweet_id>:<position>`),
+  // not a post, so the map is keyed by entry id.
   const fn = app.slice(app.indexOf("function sortList("), app.indexOf("const isShuffle"));
   assert.match(fn, /score = new Map\(/);
-  assert.match(fn, /random: \(a, b\) => score\.get\(a\.tweet_id\) - score\.get\(b\.tweet_id\)/);
+  assert.match(fn, /random: \(a, b\) => score\.get\(a\.id\) - score\.get\(b\.id\)/);
+  // The hash itself must not appear inside a comparator body.
+  const cmpBlock = fn.slice(fn.indexOf("const cmp = {"));
+  assert.doesNotMatch(cmpBlock, /hashSeed\(/);
 });
 
 /* ---------------------------------------------------------------------------

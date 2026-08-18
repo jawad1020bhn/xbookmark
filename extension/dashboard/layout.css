@@ -4,18 +4,26 @@
 */
 /* =============================================================================
    Dashboard · Layout & product components
-   Built on shared/m3e — this file adds only what the library surface needs.
+   Built on shared/m3e — this file adds only what the media browser needs.
    -----------------------------------------------------------------------------
+   The organising principle: MEDIA OCCUPIES THE CENTRE, CHROME LIVES AT EDGES.
+
+   Every layout decision below is a consequence of that. The app bar becomes
+   glass and floats rather than reserving a band. The compact navigation is a
+   floating pill that hides on scroll rather than a docked bar that
+   permanently costs 80px. Tiles have no padding, no card border and no
+   caption row, because each of those is a pixel not showing a photograph.
+
    Canonical M3 adaptive layout, driven by <html data-window-class>:
 
-     compact    (<600)      nav bar (bottom) · single pane · bottom sheet · FAB
-     medium     (600–839)   nav rail        · single pane · side sheet   · FAB
-     expanded   (840–1199)  nav rail        · 2-col feed  · side sheet
-     large      (1200–1599) nav rail        · list-detail (persistent detail)
-     extra-large(≥1600)     nav rail        · list-detail, wider measure
+     compact    (<600)      floating toolbar · single pane · bottom sheet
+     medium     (600–839)   nav rail         · single pane · side sheet
+     expanded   (840–1199)  nav rail         · wider feed  · side sheet
+     large      (1200–1599) nav rail         · feed + persistent inspector
+     extra-large(≥1600)     nav rail         · feed + inspector, wider
 
-   The detail view is the same content in all classes; only its container
-   changes. This is the M3 "list-detail" canonical layout with a sheet
+   The inspector is the same content in all classes; only its container
+   changes. That is the M3 "supporting pane" canonical layout with a sheet
    fallback, not two separate designs.
    ============================================================================= */
 
@@ -50,9 +58,9 @@
   }
 }
 
-/* --- large and up: persistent detail pane (list-detail canonical layout) --- */
+/* --- large and up: persistent inspector ----------------------------------- */
 @media (min-width: 1200px) {
-  .shell { grid-template-columns: auto minmax(0, 1fr) 420px; }
+  .shell { grid-template-columns: auto minmax(0, 1fr) 400px; }
   .shell__detail {
     display: block;
     position: sticky;
@@ -65,7 +73,7 @@
   }
 }
 @media (min-width: 1600px) {
-  .shell { grid-template-columns: auto minmax(0, 1fr) 480px; }
+  .shell { grid-template-columns: auto minmax(0, 1fr) 460px; }
 }
 
 /* =============================================================================
@@ -101,30 +109,76 @@
 }
 
 /* =============================================================================
-   Navigation bar — compact only
+   Floating navigation — compact only
+
+   M3 Expressive's floating toolbar rather than a docked navigation bar. On a
+   surface whose whole value is vertical room for media, a permanently docked
+   80px bar is the single most expensive piece of chrome on the page. This
+   one hides on scroll-down and returns on scroll-up, which is the pattern
+   every media app converged on for the same reason.
    ============================================================================= */
 .nav-bar {
   position: fixed;
-  inset: auto 0 0 0;
-  z-index: var(--md-sys-z-sticky);
+  inset: auto var(--md-sys-spacing-4) calc(var(--md-sys-spacing-4) + env(safe-area-inset-bottom, 0));
+  z-index: var(--md-sys-z-toolbar);
   display: none;
-  border-top: 1px solid var(--md-sys-color-outline-variant);
-  padding-bottom: env(safe-area-inset-bottom, 0);
+  align-items: center;
+  gap: var(--md-sys-spacing-1);
+  padding: var(--md-sys-spacing-2);
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-surface-container-high);
+  box-shadow: var(--md-sys-elevation-level3);
+  transition: translate var(--md-sys-motion-spring-default-spatial),
+              opacity var(--md-sys-motion-spring-default-effects);
 }
 @media (max-width: 599px) {
   .nav-bar { display: flex; }
-  /* Reserve room so neither the nav bar nor the FAB above it ever covers the
-     last card: 80px bar + 56px FAB + breathing room. */
-  .pane { padding-bottom: calc(168px + env(safe-area-inset-bottom, 0)); }
+  /* Only enough room for the pill itself: it floats over the feed, so the
+     feed does not have to end above it — just not underneath it at rest. */
+  .pane { padding-bottom: calc(104px + env(safe-area-inset-bottom, 0)); }
 }
+/* Hidden on scroll-down, returned on scroll-up, by bindScrollChrome. */
+.nav-bar[data-hidden="true"] {
+  translate: 0 calc(100% + var(--md-sys-spacing-6));
+  opacity: 0;
+  pointer-events: none;
+}
+.nav-bar .m3e-nav-bar__item {
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+  padding-block: var(--md-sys-spacing-1);
+}
+.nav-bar__fab { flex: none; margin-inline-start: var(--md-sys-spacing-1); }
 
 /* =============================================================================
    App bar
+
+   Glass, not a band. It sits over the feed rather than above it, so media
+   scrolls under it and the page never loses a fixed strip to chrome. The
+   blur is what keeps text legible over an arbitrary photograph — a flat
+   translucent fill is not enough over a high-frequency image.
    ============================================================================= */
 .app-bar {
+  position: sticky;
+  top: 0;
+  z-index: var(--md-sys-z-sticky);
   gap: var(--md-sys-spacing-3);
   padding-block: var(--md-sys-spacing-3);
   padding-inline: var(--md-sys-margin-compact);
+  background: color-mix(in srgb, var(--md-sys-color-surface) 78%, transparent);
+  backdrop-filter: blur(20px) saturate(1.4);
+  transition: background-color var(--md-sys-motion-spring-default-effects),
+              box-shadow var(--md-sys-motion-spring-default-effects);
+}
+/* Once content has passed underneath, commit to an opaque surface: a glass
+   bar over a scrolled page is where legibility actually fails. */
+.app-bar[data-scrolled="true"] {
+  background: color-mix(in srgb, var(--md-sys-color-surface-container) 94%, transparent);
+  box-shadow: var(--md-sys-elevation-level1);
+}
+@supports not (backdrop-filter: blur(1px)) {
+  .app-bar { background: var(--md-sys-color-surface); }
 }
 @media (min-width: 840px) {
   .app-bar { padding-inline: var(--md-sys-margin-expanded); }
@@ -140,9 +194,10 @@
   color: var(--md-sys-color-on-primary-container);
 }
 .app-bar__title { white-space: nowrap; }
-.app-bar__search { flex: 1; max-width: 640px; margin-inline: auto; }
+.app-bar__search { flex: 1; max-width: 560px; margin-inline: auto; }
 .app-bar__actions { display: flex; align-items: center; gap: var(--md-sys-spacing-2); flex: none; }
 .app-bar__overflow { display: none; }
+.app-bar__view { flex: none; }
 
 /* The rail owns the brand mark from medium up, so the app bar sheds it — but
    the <h1> stays. It names the current collection, which is the page's real
@@ -157,7 +212,6 @@
   .app-bar__search { order: 3; flex-basis: 100%; max-width: none; height: 48px; }
   .app-bar__actions { margin-inline-start: auto; }
   .app-bar__overflow { display: inline-grid; }
-  #importSplit { display: none; }
 }
 
 /* =============================================================================
@@ -167,14 +221,17 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: var(--md-sys-spacing-5);
+  gap: var(--md-sys-spacing-4);
   padding: var(--md-sys-spacing-4) var(--md-sys-margin-compact) var(--md-sys-spacing-16);
+  /* Rails read the bleed distance from here, so a full-bleed carousel runs
+     exactly to the window edge at every window class without hardcoding. */
+  --_bleed: var(--md-sys-margin-compact);
 }
 @media (min-width: 840px) {
-  .pane { padding-inline: var(--md-sys-margin-expanded); }
+  .pane { padding-inline: var(--md-sys-margin-expanded); --_bleed: var(--md-sys-margin-expanded); }
 }
 @media (min-width: 1600px) {
-  .pane { padding-inline: var(--md-sys-margin-large); }
+  .pane { padding-inline: var(--md-sys-margin-large); --_bleed: var(--md-sys-margin-large); }
 }
 .pane__summary { color: var(--md-sys-color-on-surface-variant); margin: 0; min-height: 1.25rem; }
 .pane__foot {
@@ -185,500 +242,389 @@
 }
 
 /* =============================================================================
-   Hero
-   The one place the display typescale is allowed. Its container carries the
-   extra-extra-large corner — the largest shape in the product — because it is
-   the largest, calmest surface. Shape scales with container size (M3 shape
-   guidance), so nothing else may borrow this radius.
-   ============================================================================= */
-.hero {
-  display: grid;
-  gap: var(--md-sys-spacing-4);
-  padding: var(--md-sys-spacing-5);
-  border-radius: var(--md-sys-shape-corner-extra-large-increased);
-  /* A restrained tertiary wash: enough to make the hero feel like a distinct
-     "place", not so much that it competes with the stat cards sitting on it. */
-  background:
-    radial-gradient(110% 130% at 100% 0%,
-      color-mix(in srgb, var(--md-sys-color-tertiary-container) 38%, transparent) 0%,
-      transparent 58%),
-    var(--md-sys-color-surface-container-low);
-  color: var(--md-sys-color-on-surface);
-}
-@media (min-width: 600px) {
-  .hero { gap: var(--md-sys-spacing-6); padding: var(--md-sys-spacing-6); }
-}
-@media (min-width: 840px) {
-  .hero {
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    padding: var(--md-sys-spacing-8);
-    border-radius: var(--md-sys-shape-corner-extra-extra-large);
-  }
-}
-
-.hero__eyebrow {
-  margin: 0 0 var(--md-sys-spacing-2);
-  color: var(--md-sys-color-on-surface-variant);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-.hero__count { display: flex; align-items: baseline; gap: var(--md-sys-spacing-3); margin: 0; flex-wrap: wrap; }
-.hero__count > span:first-child {
-  color: var(--md-sys-color-primary);
-  /* Optical size tracks the rendered size on a variable face. */
-  font-variation-settings: "opsz" 57;
-  line-height: 1;
-}
-.hero__unit { color: var(--md-sys-color-on-surface-variant); }
-.hero__caption { margin: var(--md-sys-spacing-3) 0 0; color: var(--md-sys-color-on-surface-variant); max-width: 48ch; }
-
-.hero__stats {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--md-sys-spacing-2);
-  margin: 0;
-}
-/* Four across as soon as there is room. A stat card holds a short label and a
-   number; stretching two of them across 760px wastes the fold for no gain. */
-@media (min-width: 600px) {
-  .hero__stats { grid-template-columns: repeat(4, minmax(88px, 1fr)); }
-}
-.hero__stat {
-  display: flex;
-  flex-direction: column;
-  gap: var(--md-sys-spacing-1);
-  padding: var(--md-sys-spacing-4);
-  border-radius: var(--md-sys-shape-corner-large-increased);
-  background: var(--md-sys-color-surface-container);
-  color: var(--md-sys-color-on-surface-variant);
-}
-.hero__stat dt { margin: 0; text-transform: uppercase; letter-spacing: 0.06em; }
-.hero__stat dd { margin: 0; color: var(--md-sys-color-on-surface); }
-/* Each statistic is assigned a distinct accent role rather than a distinct
-   hue, so the palette stays coherent under any seed. */
-.hero__stat--shown { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
-.hero__stat--shown dd { color: var(--md-sys-color-on-primary-container); }
-.hero__stat--authors { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
-.hero__stat--authors dd { color: var(--md-sys-color-on-secondary-container); }
-.hero__stat--tagged { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
-.hero__stat--tagged dd { color: var(--md-sys-color-on-tertiary-container); }
-
-/* On a phone the hero must not consume the fold. The user came for their
-   bookmarks; a summary that pushes every result below the viewport inverts the
-   information hierarchy. At compact the hero keeps its identity — display
-   numeral, tonal stat chips — but sheds the prose caption, drops to a single
-   row of scrollable stats, and shrinks the numeral, so at least one card is
-   visible without scrolling. */
-@media (max-width: 599px) {
-  .hero__caption { display: none; }
-  .hero__count > span:first-child {
-    font-size: var(--md-sys-typescale-display-small-size);
-    font-variation-settings: "opsz" 36;
-  }
-  .hero__stats {
-    display: flex;
-    gap: var(--md-sys-spacing-2);
-    overflow-x: auto;
-    scrollbar-width: none;
-    /* Bleed to the pane edge so the row reads as scrollable, not clipped. */
-    margin-inline: calc(-1 * var(--md-sys-spacing-5));
-    padding-inline: var(--md-sys-spacing-5);
-  }
-  .hero__stats::-webkit-scrollbar { display: none; }
-  .hero__stat { flex: 0 0 auto; min-width: 104px; padding: var(--md-sys-spacing-3); }
-}
-
-/* =============================================================================
    Filter bar
+
+   Horizontally scrollable chips. Selected chips change SHAPE as well as
+   colour — a selected chip is fully rounded, an unselected one is only
+   partly so — which is what keeps state legible in greyscale and for a
+   colour-blind reader (WCAG 1.4.1: colour is never the only channel).
    ============================================================================= */
 .filterbar {
   display: flex;
   align-items: center;
   gap: var(--md-sys-spacing-3);
-  position: sticky;
-  top: 64px;
-  z-index: calc(var(--md-sys-z-sticky) - 1);
-  padding-block: var(--md-sys-spacing-2);
-  background: var(--md-sys-color-surface);
+  min-width: 0;
 }
-@media (max-width: 599px) { .filterbar { top: 108px; } }
 .filterbar__scroll {
   display: flex;
-  align-items: center;
   gap: var(--md-sys-spacing-2);
   flex: 1;
   min-width: 0;
   overflow-x: auto;
-  scrollbar-width: none;
   padding-block: var(--md-sys-spacing-1);
+  scrollbar-width: none;
+  /* Fade the trailing edge so a clipped chip reads as "more this way"
+     rather than as a rendering bug. */
+  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%);
 }
 .filterbar__scroll::-webkit-scrollbar { display: none; }
-/* Fade the overflow edge instead of clipping abruptly — but only when the row
-   actually overflows, so a short chip row is never dimmed for no reason.
-   `animation-timeline: scroll()` degrades to "no mask" where unsupported. */
-@supports (animation-timeline: scroll(self inline)) {
-  .filterbar__scroll {
-    animation: filterbar-fade linear both;
-    animation-timeline: scroll(self inline);
-  }
-  @keyframes filterbar-fade {
-    from { mask-image: linear-gradient(90deg, #000 calc(100% - 40px), transparent); }
-    to   { mask-image: linear-gradient(90deg, transparent, #000 40px); }
-  }
-}
 .filterbar__chip { flex: none; }
-.filterbar__chip--reset { color: var(--md-sys-color-error); border-color: transparent; }
+.filterbar__chip[aria-pressed="true"] { border-radius: var(--md-sys-shape-corner-full); }
+.filterbar__chip--reset {
+  --_container: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+}
 .filterbar__divider {
   flex: none;
+  align-self: center;
   width: 1px;
   height: 24px;
   background: var(--md-sys-color-outline-variant);
 }
-.filterbar__trailing { flex: none; }
-/* The density toggle is a refinement, not a necessity; it appears once the
-   filter row has room to wrap so it never competes with the filters. */
-@media (max-width: 599px) { .filterbar__trailing { display: none; } }
-
-/* Horizontal scrolling is the right answer on a phone, where the row genuinely
-   cannot fit. On a wide window it is the wrong answer: it hides controls behind
-   a gesture for no reason. From `expanded` up the row wraps instead, so every
-   filter is visible and reachable by Tab without scrolling sideways. */
-@media (min-width: 600px) {
-  .filterbar { align-items: flex-start; }
-  .filterbar__scroll { flex-wrap: wrap; overflow-x: visible; mask-image: none; animation: none; }
-  .filterbar__trailing { padding-block: var(--md-sys-spacing-1); }
-}
 
 /* =============================================================================
-   Library grid
-   Measure-driven: cards are capped near 72ch so post text stays readable
-   (WCAG 1.4.8). Column count is a consequence of measure, not a magic number.
+   The feed
    ============================================================================= */
-.library { min-height: 40vh; }
-.library__grid { display: grid; gap: var(--m3e-row-gap); }
-@media (min-width: 840px) and (max-width: 1199px) {
-  .library__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-@media (min-width: 1600px) {
-  .library__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-.library__more { display: flex; justify-content: center; padding-block: var(--md-sys-spacing-6); }
+.feed { min-width: 0; }
+.feed:focus-visible { outline: none; }
+.feed__more { display: flex; justify-content: center; padding-block: var(--md-sys-spacing-4); }
 
-/* =============================================================================
-   Bookmark card
-   Shape carries meaning:
-     · default       large-increased (20)
-     · selected      extra-large (28) + primary outline
-     · archived      medium (12), de-saturated — visibly "filed away"
-   ============================================================================= */
-.bmk {
-  --_pad: var(--md-sys-spacing-5);
-  position: relative;
+/* -----------------------------------------------------------------------------
+   Rails view
+   -------------------------------------------------------------------------- */
+.feed[data-view="rails"] {
   display: flex;
   flex-direction: column;
-  gap: var(--md-sys-spacing-3);
-  width: 100%;
-  padding: var(--_pad);
-  border: 1px solid transparent;
-  border-radius: var(--md-sys-shape-corner-large-increased);
-  background: var(--md-sys-color-surface-container-low);
-  color: var(--md-sys-color-on-surface);
-  text-align: start;
-  cursor: pointer;
-  transition:
-    border-radius var(--md-sys-motion-spring-fast-spatial),
-    transform var(--md-sys-motion-spring-fast-spatial),
-    box-shadow var(--md-sys-motion-spring-default-effects),
-    background-color var(--md-sys-motion-spring-default-effects),
-    border-color var(--md-sys-motion-spring-default-effects);
+  gap: var(--md-sys-spacing-8);
 }
-[data-density="compact"] .bmk { --_pad: var(--md-sys-spacing-4); gap: var(--md-sys-spacing-2); }
-.bmk:hover { background: var(--md-sys-color-surface-container); box-shadow: var(--md-sys-elevation-level1); }
-.bmk:active { transform: scale(0.994); border-radius: var(--md-sys-shape-corner-extra-large); }
-.bmk[aria-selected="true"] {
-  border-color: var(--md-sys-color-primary);
-  border-radius: var(--md-sys-shape-corner-extra-large);
-  background: var(--md-sys-color-surface-container);
-}
-/* The selected card grows a primary spine on its leading edge — a second,
-   non-colour cue that survives greyscale. */
-.bmk[aria-selected="true"]::before {
-  content: "";
-  position: absolute;
-  inset-block: var(--md-sys-spacing-6);
-  inset-inline-start: -1px;
-  width: 4px;
-  border-radius: var(--md-sys-shape-corner-full);
-  background: var(--md-sys-color-primary);
-}
-.bmk--archived { background: var(--md-sys-color-surface); border-radius: var(--md-sys-shape-corner-medium); opacity: 0.72; }
-.bmk--archived:hover { opacity: 1; }
+.rail { min-width: 0; }
+.rail__scroll { outline-offset: 4px; }
+.rail__scroll:focus-visible { outline: 3px solid var(--md-sys-color-secondary); }
+.rail__progress { margin-block-start: var(--md-sys-spacing-2); margin-inline: 2px; }
 
-.bmk__head { display: flex; align-items: center; gap: var(--md-sys-spacing-3); }
-.bmk__avatar {
+.rail-head__avatar {
+  flex: none;
   display: grid;
   place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--md-sys-shape-corner-full);
+  object-fit: cover;
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+  font: 600 var(--md-sys-typescale-label-medium-size) / 1 var(--md-ref-typeface-plain);
+}
+
+/* A rail cell's HEIGHT is fixed and its width follows, which is the opposite
+   of the grid. Uniform height is what makes a horizontal strip read as a
+   strip rather than as a ragged skyline; the varying widths preserve each
+   item's real aspect ratio, so nothing is cropped to fit. */
+.rail__cell { block-size: 168px; }
+.m3e-carousel--multi .rail__cell {
+  inline-size: calc(168px * var(--_ar, 1.5));
+  min-inline-size: 96px;
+  max-inline-size: 320px;
+}
+.m3e-carousel--multi { grid-auto-columns: max-content; }
+.m3e-carousel--uncontained .rail__cell {
+  block-size: 132px;
+  inline-size: calc(132px * var(--_ar, 1.5));
+  min-inline-size: 80px;
+  max-inline-size: 260px;
+}
+
+/* Hero inverts the sizing: WIDTH is fixed at one item plus a peek of the
+   next — the peek is what makes it read as a carousel rather than a
+   slideshow — and the band height is uniform.
+
+   Uniform height means mixed ratios crop here, and that is the right call
+   for THIS rail specifically: letting each hero size itself leaves a ragged
+   column of dead space beside every landscape item, and the hero's job is to
+   invite a tap, not to be the final presentation. Nothing is cropped in the
+   viewer or in theater, which are where looking properly actually happens. */
+.m3e-carousel--hero .rail__cell {
+  block-size: clamp(200px, 38vh, 380px);
+  inline-size: min(84%, 560px);
+}
+.m3e-carousel--hero .rail__cell .tile { aspect-ratio: auto; }
+/* Everywhere else the cell owns the box and the tile fills it, so a strip of
+   mixed ratios still reads as one clean band. */
+.m3e-carousel--multi .rail__cell .tile,
+.m3e-carousel--uncontained .rail__cell .tile { aspect-ratio: auto; }
+
+@media (min-width: 840px) {
+  .rail__cell { block-size: 200px; }
+  .m3e-carousel--multi .rail__cell {
+    inline-size: calc(200px * var(--_ar, 1.5));
+    max-inline-size: 380px;
+  }
+  .m3e-carousel--hero .rail__cell {
+    block-size: clamp(280px, 46vh, 460px);
+    inline-size: min(72%, 620px);
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   Grid view
+
+   CSS columns, not a JS masonry. No measurement pass, no reflow storm on
+   resize, and it degrades to one column with no media query at all. The
+   tradeoff — reading order runs down each column rather than across — is the
+   right one for a browsing surface, where there is no sequence to lose.
+   -------------------------------------------------------------------------- */
+.grid {
+  columns: 3 var(--_col, 240px);
+  column-gap: var(--md-sys-spacing-3);
+}
+.grid[data-size="small"]  { --_col: 180px; }
+.grid[data-size="medium"] { --_col: 240px; }
+.grid[data-size="large"]  { --_col: 340px; }
+
+.grid > .tile,
+.grid > .tile-skeleton {
+  /* `break-inside: avoid` is what stops a tile being sliced across a column
+     boundary; without it the whole approach falls apart. */
+  break-inside: avoid;
+  margin-block-end: var(--md-sys-spacing-3);
+  /* An inline-block inside a multicol container is the reliable way to get
+     the element to participate in column flow across engines. */
+  display: inline-block;
+  inline-size: 100%;
+}
+
+@media (max-width: 599px) {
+  .grid { columns: 2 auto; column-gap: var(--md-sys-spacing-2); }
+  .grid > .tile { margin-block-end: var(--md-sys-spacing-2); }
+}
+
+/* =============================================================================
+   Media tile
+
+   `--_ar` comes from the media's real aspect ratio, so a portrait screenshot
+   stays portrait. Cropping everything to a square is how a media browser
+   turns into a contact sheet, and a contact sheet of text screenshots is
+   unreadable — which is a large fraction of what people actually save.
+   ============================================================================= */
+.tile {
+  aspect-ratio: var(--_ar, 16 / 9);
+  /* Nothing taller than a screenful: a 1:2 portrait would otherwise own an
+     entire column and push everything else off the page. */
+  max-block-size: 78vh;
+}
+.tile__missing {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--md-sys-color-on-surface-variant);
+  background: var(--md-sys-color-surface-container-highest);
+}
+.tile__veil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--md-sys-spacing-2);
+  padding: var(--md-sys-spacing-3);
+  color: #fff;
+  background: rgb(0 0 0 / 0.34);
+  text-align: center;
+  pointer-events: none;
+}
+.tile__play--dead { background: rgb(0 0 0 / 0.7); }
+
+.tile[data-selected="true"] {
+  outline: 3px solid var(--md-sys-color-primary);
+  outline-offset: 2px;
+}
+
+.tile-skeleton {
+  aspect-ratio: var(--_ar, 1);
+  border-radius: var(--md-sys-shape-corner-large-increased);
+}
+
+/* Reduced motion: the tile still responds, but by shape and outline rather
+   than by moving. State is never removed, only its travel. */
+@media (prefers-reduced-motion: reduce) {
+  .m3e-tile:hover,
+  .m3e-tile:active { scale: 1; }
+}
+
+/* =============================================================================
+   Theater view
+
+   One item per screen, paged horizontally — the X gesture applied to a whole
+   library rather than to the four photos inside a single post.
+
+   `scroll-snap-stop: always` is the load-bearing declaration: without it a
+   fast flick skids through six items and lands somewhere arbitrary, which
+   makes the view feel broken rather than fast.
+   ============================================================================= */
+.theater {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 100%;
+  gap: var(--md-sys-spacing-4);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+  border-radius: var(--md-sys-shape-corner-extra-large);
+}
+.theater::-webkit-scrollbar { display: none; }
+.theater:focus-visible { outline: 3px solid var(--md-sys-color-secondary); outline-offset: 4px; }
+@media (prefers-reduced-motion: reduce) { .theater { scroll-behavior: auto; } }
+
+/* On a phone the theater IS the page: it takes the room left under the app
+   bar and filter chips rather than being a band inside a scrolling column.
+   Two scroll axes on one screen — the page vertically and the rail
+   horizontally — is the fastest way to make a swipe feel unreliable. */
+@media (max-width: 839px) {
+  .feed[data-view="theater"] {
+    display: flex;
+    flex-direction: column;
+    /* Fill the room left under the app bar and chips, so the pane itself has
+       nothing left to scroll vertically. */
+    block-size: calc(100dvh - 300px);
+    min-block-size: 340px;
+  }
+  .theater { flex: 1; min-block-size: 0; }
+  .slide__stage { max-block-size: calc(100% - 64px); }
+  /* The gesture is the control on touch; the caption spends a line saying so
+     once, and the arrows it names do not exist here. */
+  .theater__hint { display: none; }
+}
+
+.slide {
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
+  display: flex;
+  flex-direction: column;
+  /* Centre the pair vertically so a short landscape item does not sit against
+     the top of a tall column with all the empty space beneath it. */
+  justify-content: center;
+  gap: var(--md-sys-spacing-3);
+  min-width: 0;
+}
+.slide__stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  /* Sized by the item's own ratio, then capped. A fixed-height stage leaves a
+     landscape photo floating in a tall grey box — which is what the phone
+     layout looked like before this, and it wastes the exact resource the
+     theater view exists to spend on the picture. */
+  aspect-ratio: var(--_ar, 16 / 9);
+  inline-size: 100%;
+  max-block-size: min(68vh, 720px);
+  block-size: auto;
+  border-radius: var(--md-sys-shape-corner-extra-large);
+  background: var(--md-sys-color-surface-container-low);
+  overflow: hidden;
+}
+.slide__media {
+  max-inline-size: 100%;
+  max-block-size: 100%;
+  inline-size: auto;
+  block-size: auto;
+  /* `contain`, not `cover`: this is the "look at it properly" surface, so
+     nothing may be cropped out of frame. */
+  object-fit: contain;
+  border-radius: var(--md-sys-shape-corner-large);
+}
+.slide__video { inline-size: auto; }
+.slide__missing { display: grid; place-items: center; color: var(--md-sys-color-on-surface-variant); }
+.slide__play {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: rgb(0 0 0 / 0.55);
+  color: #fff;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition: scale var(--md-sys-motion-spring-fast-spatial),
+              border-radius var(--md-sys-motion-spring-fast-spatial);
+}
+.slide__play > svg { margin-inline-start: 4px; }
+.slide__play:hover { scale: 1.08; }
+.slide__play:active { scale: 0.94; border-radius: var(--md-sys-shape-corner-extra-large); }
+.slide__play:focus-visible { outline: 3px solid var(--md-sys-color-secondary); outline-offset: 3px; }
+
+.slide__dead {
+  position: absolute;
+  inset: auto var(--md-sys-spacing-4) var(--md-sys-spacing-4);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--md-sys-spacing-3);
+  max-inline-size: 44ch;
+  margin-inline: auto;
+  padding: var(--md-sys-spacing-5);
+  border-radius: var(--md-sys-shape-corner-large-increased);
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface);
+  text-align: center;
+}
+.slide__dead p { margin: 0; }
+
+.slide__stage[data-sensitive="true"] .slide__media { filter: blur(36px) saturate(0.7); }
+.slide__veil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--md-sys-spacing-2);
+  border: none;
+  background: rgb(0 0 0 / 0.4);
+  color: #fff;
+  cursor: pointer;
+}
+
+.slide__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--md-sys-spacing-3);
+  padding-inline: var(--md-sys-spacing-2);
+}
+.slide__avatar {
   flex: none;
+  display: grid;
+  place-items: center;
   width: 40px;
   height: 40px;
   border-radius: var(--md-sys-shape-corner-full);
-  background: var(--md-sys-color-tertiary-container);
-  color: var(--md-sys-color-on-tertiary-container);
-  font: 700 var(--md-sys-typescale-label-large-size) / 1 var(--md-ref-typeface-plain);
   object-fit: cover;
-  overflow: hidden;
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  font: 600 var(--md-sys-typescale-label-large-size) / 1 var(--md-ref-typeface-plain);
 }
-.bmk__identity { display: flex; flex-direction: column; min-width: 0; flex: 1; }
-.bmk__name {
+.slide__who { flex: 1; min-width: 0; }
+.slide__who p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slide__sub { color: var(--md-sys-color-on-surface-variant); }
+.slide__acts { display: flex; gap: var(--md-sys-spacing-1); flex: none; }
+
+.theater__hint {
   display: flex;
-  align-items: center;
-  gap: var(--md-sys-spacing-2);
-  color: var(--md-sys-color-on-surface);
-  font: var(--md-sys-typescale-title-medium-emphasized-weight) var(--md-sys-typescale-title-medium-size) / 1.3 var(--md-ref-typeface-plain);
-}
-.bmk__name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bmk__handle {
-  color: var(--md-sys-color-on-surface-variant);
-  font: var(--md-sys-typescale-body-small-weight) var(--md-sys-typescale-body-small-size) / 1.3 var(--md-ref-typeface-plain);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.bmk__time {
-  flex: none;
-  color: var(--md-sys-color-on-surface-variant);
-  font: var(--md-sys-typescale-label-medium-weight) var(--md-sys-typescale-label-medium-size) / 1 var(--md-ref-typeface-plain);
-  font-variant-numeric: tabular-nums;
-}
-.bmk__text {
-  margin: 0;
-  color: var(--md-sys-color-on-surface);
-  font: var(--md-sys-typescale-body-large-weight) var(--md-sys-typescale-body-large-size) / 1.55 var(--md-ref-typeface-plain);
-  letter-spacing: var(--md-sys-typescale-body-large-tracking);
-  overflow-wrap: anywhere;
-  /* Clamp to keep the grid scannable; the detail pane holds the full text. */
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 6;
-  line-clamp: 6;
-  overflow: hidden;
-}
-[data-density="compact"] .bmk__text { -webkit-line-clamp: 3; line-clamp: 3; font-size: var(--md-sys-typescale-body-medium-size); }
-.bmk__text--unavailable { color: var(--md-sys-color-on-surface-variant); font-style: italic; }
-.bmk__text mark {
-  background: var(--md-sys-color-tertiary-container);
-  color: var(--md-sys-color-on-tertiary-container);
-  border-radius: var(--md-sys-shape-corner-extra-small);
-  padding-inline: 2px;
-}
-
-.bmk__quote {
-  padding: var(--md-sys-spacing-3) var(--md-sys-spacing-4);
-  border-radius: var(--md-sys-shape-corner-medium-increased);
-  border-inline-start: 3px solid var(--md-sys-color-outline-variant);
-  background: var(--md-sys-color-surface-container-high);
-}
-.bmk__quote-author {
-  color: var(--md-sys-color-on-surface-variant);
-  font: 600 var(--md-sys-typescale-label-medium-size) / 1.3 var(--md-ref-typeface-plain);
-}
-.bmk__quote-text {
-  margin: 4px 0 0;
-  color: var(--md-sys-color-on-surface-variant);
-  font: var(--md-sys-typescale-body-medium-weight) var(--md-sys-typescale-body-medium-size) / 1.45 var(--md-ref-typeface-plain);
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  overflow: hidden;
-}
-
-/* Media strip — asymmetric, organic. Sizes are ratios, not fixed pixels. */
-/* -----------------------------------------------------------------------------
-   Media grid — X's own 1 / 2 / 3 / 4 layout
-
-   The grid is sized by ASPECT RATIO, never by a fixed pixel height, and every
-   cell carries its intrinsic ratio from the capture. That is what stops the
-   list from reflowing as images stream in: the space is already correct before
-   a single byte of image arrives.
-   -------------------------------------------------------------------------- */
-.bmk__media {
-  display: grid;
-  gap: 3px;
-  margin-block-start: var(--md-sys-spacing-3);
-  border-radius: var(--md-sys-shape-corner-large);
-  overflow: hidden;
-  /* Isolate so the rounded corners clip video/img painting on every engine. */
-  isolation: isolate;
-}
-/* 1 — full width at the media's own ratio, capped so a tall portrait cannot
-   push the rest of the card off screen. */
-.bmk__media[data-count="1"] { grid-template-columns: 1fr; }
-.bmk__media[data-count="1"] .bmk__thumb { aspect-ratio: var(--_ar, 16 / 9); max-height: 62vh; }
-
-/* 2 — side by side, square-ish cells. */
-.bmk__media[data-count="2"] { grid-template-columns: 1fr 1fr; aspect-ratio: 16 / 9; }
-
-/* 3 — one tall leading cell, two stacked. */
-.bmk__media[data-count="3"] {
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
-  aspect-ratio: 16 / 9;
-}
-.bmk__media[data-count="3"] > :first-child { grid-row: span 2; }
-
-/* 4 — 2×2. */
-.bmk__media[data-count="4"] {
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
-  aspect-ratio: 16 / 9;
-}
-
-.bmk__thumb {
-  position: relative;
-  display: block;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  padding: 0;
-  border: none;
-  background: var(--md-sys-color-surface-container-highest);
-  color: var(--md-sys-color-on-surface-variant);
-  overflow: hidden;
-  cursor: pointer;
-}
-.bmk__thumb img,
-.bmk__thumb video {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  background: var(--md-sys-color-surface-container-highest);
-}
-/* A single item shows the whole frame rather than cropping to fill. */
-.bmk__media[data-count="1"] .bmk__thumb img,
-.bmk__media[data-count="1"] .bmk__thumb video { object-fit: contain; }
-
-/* Playing video takes over its cell completely. */
-.bmk__thumb[data-playing="true"] { cursor: default; }
-.bmk__thumb[data-playing="true"] .bmk__thumb-play,
-.bmk__thumb[data-playing="true"] .bmk__thumb-tag { display: none; }
-
-.bmk__thumb-tag {
-  position: absolute;
-  inset: auto var(--md-sys-spacing-2) var(--md-sys-spacing-2) auto;
-  padding: 2px 8px;
-  border-radius: var(--md-sys-shape-corner-full);
-  background: var(--md-sys-color-scrim-overlay);
-  color: #fff;
-  font: 600 var(--md-sys-typescale-label-small-size) / 1.4 var(--md-ref-typeface-plain);
-  font-variant-numeric: tabular-nums;
-  pointer-events: none;
-}
-/* "+2" on the last visible cell when a post carries more than four items. */
-.bmk__thumb-more {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  background: var(--md-sys-color-scrim-overlay);
-  color: #fff;
-  font: 600 var(--md-sys-typescale-title-medium-size) / 1 var(--md-ref-typeface-plain);
-  pointer-events: none;
-}
-.bmk__thumb-play {
-  position: absolute;
-  inset: 50% auto auto 50%;
-  translate: -50% -50%;
-  display: grid;
-  place-items: center;
-  width: 48px;
-  height: 48px;
-  border-radius: var(--md-sys-shape-corner-full);
-  background: var(--md-sys-color-scrim-overlay);
-  color: #fff;
-  pointer-events: none;
-  transition: scale var(--md-sys-motion-spring-fast-spatial),
-              background-color var(--md-sys-motion-spring-fast-effects);
-}
-.bmk__thumb:hover .bmk__thumb-play { scale: 1.08; }
-.bmk__thumb:active .bmk__thumb-play { scale: 0.94; }
-
-/* Sensitive media: blurred until asked for. Never autoplayed. */
-.bmk__thumb[data-sensitive="true"] img,
-.bmk__thumb[data-sensitive="true"] video { filter: blur(24px); transform: scale(1.06); }
-.bmk__thumb-warn {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: var(--md-sys-spacing-2);
-  padding: var(--md-sys-spacing-3);
-  background: color-mix(in srgb, var(--md-sys-color-scrim) 45%, transparent);
-  color: #fff;
-  text-align: center;
-  font: var(--md-sys-typescale-label-medium-weight) var(--md-sys-typescale-label-medium-size) / 1.35 var(--md-ref-typeface-plain);
-}
-
-/* Media we cannot play or load. Say so; don't show a dead frame. */
-.bmk__thumb-fallback {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--md-sys-spacing-1);
-  padding: var(--md-sys-spacing-3);
-  background: var(--md-sys-color-surface-container-highest);
+  padding-block-start: var(--md-sys-spacing-3);
   color: var(--md-sys-color-on-surface-variant);
-  text-align: center;
-  font: var(--md-sys-typescale-label-small-weight) var(--md-sys-typescale-label-small-size) / 1.35 var(--md-ref-typeface-plain);
 }
-/* When a poster exists, keep showing it — a scrim reads better than a grey
-   void, and the frame still tells you what the video is. */
-.bmk__thumb-fallback--over {
-  background: var(--md-sys-color-scrim-overlay);
-  color: #fff;
-}
-
-.bmk__meta { display: flex; align-items: center; gap: var(--md-sys-spacing-3); flex-wrap: wrap; }
-.bmk__metric {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--md-sys-color-on-surface-variant);
-  font: var(--md-sys-typescale-label-medium-weight) var(--md-sys-typescale-label-medium-size) / 1 var(--md-ref-typeface-plain);
-  font-variant-numeric: tabular-nums;
-}
-.bmk__metric > svg { width: 16px; height: 16px; }
-.bmk__metric--likes { color: var(--md-sys-color-tertiary); }
-.bmk__tags { display: flex; gap: var(--md-sys-spacing-2); flex-wrap: wrap; }
-.bmk__foot {
-  display: flex;
-  align-items: center;
-  gap: var(--md-sys-spacing-2);
-  margin-block-start: auto;
-  padding-block-start: var(--md-sys-spacing-1);
-}
-.bmk__foot-meta {
-  flex: 1;
-  color: var(--md-sys-color-on-surface-variant);
-  font: var(--md-sys-typescale-label-small-weight) var(--md-sys-typescale-label-small-size) / 1.3 var(--md-ref-typeface-plain);
-}
-/* Row actions stay in the DOM (keyboard + screen reader reachable) but only
-   become visible on hover/focus so the grid keeps a calm resting state. */
-.bmk__actions { display: flex; gap: 2px; opacity: 0; transition: opacity var(--md-sys-motion-spring-fast-effects); }
-.bmk:hover .bmk__actions,
-.bmk:focus-within .bmk__actions,
-.bmk[aria-selected="true"] .bmk__actions { opacity: 1; }
-@media (hover: none) { .bmk__actions { opacity: 1; } }
+@media (hover: none) { .theater__hint span { content: "Swipe"; } }
 
 /* =============================================================================
-   Detail
+   Inspector (the post behind the media)
    ============================================================================= */
 .detail-empty {
   display: flex;
@@ -696,173 +642,148 @@
   place-items: center;
   width: 80px;
   height: 80px;
-  border-radius: 42% 58% 60% 40% / 50% 44% 56% 50%;
+  border-radius: var(--md-sys-shape-corner-full);
   background: var(--md-sys-color-surface-container-high);
   color: var(--md-sys-color-on-surface-variant);
 }
 .detail-empty__body { max-width: 30ch; }
 
-.detail { display: flex; flex-direction: column; gap: var(--md-sys-spacing-5); padding: var(--md-sys-spacing-5); }
-.detail__top { display: flex; align-items: flex-start; gap: var(--md-sys-spacing-3); }
+.detail { padding: var(--md-sys-spacing-5); }
+.detail__body { display: flex; flex-direction: column; gap: var(--md-sys-spacing-4); }
+.detail__head { display: flex; align-items: center; gap: var(--md-sys-spacing-3); }
 .detail__avatar {
+  flex: none;
   display: grid;
   place-items: center;
-  flex: none;
-  width: 48px;
-  height: 48px;
+  width: 44px;
+  height: 44px;
   border-radius: var(--md-sys-shape-corner-full);
-  background: var(--md-sys-color-tertiary-container);
-  color: var(--md-sys-color-on-tertiary-container);
-  font: 700 var(--md-sys-typescale-title-medium-size) / 1 var(--md-ref-typeface-plain);
   object-fit: cover;
-  overflow: hidden;
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  font: 600 var(--md-sys-typescale-title-small-size) / 1 var(--md-ref-typeface-plain);
 }
-.detail__identity { flex: 1; min-width: 0; }
-.detail__name { color: var(--md-sys-color-on-surface); }
+.detail__who { flex: 1; min-width: 0; }
+.detail__who p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .detail__handle { color: var(--md-sys-color-on-surface-variant); }
-.detail__text {
-  margin: 0;
-  color: var(--md-sys-color-on-surface);
-  font: var(--md-sys-typescale-body-large-weight) var(--md-sys-typescale-body-large-size) / 1.6 var(--md-ref-typeface-plain);
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-.detail__section { display: flex; flex-direction: column; gap: var(--md-sys-spacing-3); }
-.detail__section-title {
-  color: var(--md-sys-color-on-surface-variant);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-.detail__metrics {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--md-sys-spacing-2);
-}
-.detail__metric {
+.detail__repost {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--md-sys-spacing-3);
-  border-radius: var(--md-sys-shape-corner-medium-increased);
+  align-items: center;
+  gap: var(--md-sys-spacing-1);
+  color: var(--md-sys-color-on-surface-variant);
+}
+.detail__text { text-wrap: pretty; overflow-wrap: anywhere; }
+.detail__text a { color: var(--md-sys-color-primary); }
+.detail__quote {
+  margin: 0;
+  padding: var(--md-sys-spacing-3) var(--md-sys-spacing-4);
+  border-inline-start: 3px solid var(--md-sys-color-outline);
+  border-radius: var(--md-sys-shape-corner-medium);
   background: var(--md-sys-color-surface-container);
 }
-.detail__metric dt {
-  margin: 0;
-  color: var(--md-sys-color-on-surface-variant);
-  font: var(--md-sys-typescale-label-small-weight) var(--md-sys-typescale-label-small-size) / 1.2 var(--md-ref-typeface-plain);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-.detail__metric dd {
-  margin: 0;
-  color: var(--md-sys-color-on-surface);
-  font: 700 var(--md-sys-typescale-title-medium-size) / 1.2 var(--md-ref-typeface-plain);
-  font-variant-numeric: tabular-nums;
-}
-.detail__media { display: flex; flex-direction: column; gap: var(--md-sys-spacing-3); }
-.detail__media figure { margin: 0; }
-.detail__media img,
-.detail__media video {
-  width: 100%;
-  border-radius: var(--md-sys-shape-corner-large);
-  background: var(--md-sys-color-surface-container-highest);
-  display: block;
-}
-.detail__media-img { cursor: zoom-in; }
-.detail__media figure[data-sensitive="true"] img,
-.detail__media figure[data-sensitive="true"] video { filter: blur(28px); }
-.detail__media-fallback {
+.detail__quote-who { color: var(--md-sys-color-on-surface-variant); margin-block-end: 2px; }
+.detail__metrics {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--md-sys-spacing-3);
-  padding: var(--md-sys-spacing-6);
-  border-radius: var(--md-sys-shape-corner-large);
-  background: var(--md-sys-color-surface-container-highest);
+  flex-wrap: wrap;
+  gap: var(--md-sys-spacing-4);
   color: var(--md-sys-color-on-surface-variant);
-  text-align: center;
 }
-.detail__media-fallback--over {
-  background-size: cover;
-  background-position: center;
-  box-shadow: inset 0 0 0 100vmax var(--md-sys-color-scrim-overlay);
+.detail__metric { display: inline-flex; align-items: center; gap: 5px; }
+
+.detail__more { display: flex; flex-direction: column; gap: var(--md-sys-spacing-2); }
+.detail__more-label { color: var(--md-sys-color-on-surface-variant); }
+.detail__strip {
+  display: flex;
+  gap: var(--md-sys-spacing-2);
+  overflow-x: auto;
+  padding-block: 2px;
+  scrollbar-width: thin;
+}
+.detail__thumb {
+  position: relative;
+  flex: none;
+  width: 72px;
+  height: 72px;
+  padding: 0;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-medium);
+  background: var(--md-sys-color-surface-container-highest);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-radius var(--md-sys-motion-spring-fast-spatial),
+              scale var(--md-sys-motion-spring-fast-spatial);
+}
+.detail__thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.detail__thumb:hover { scale: 1.04; }
+.detail__thumb:active { border-radius: var(--md-sys-shape-corner-small); scale: 0.96; }
+.detail__thumb:focus-visible { outline: 3px solid var(--md-sys-color-secondary); outline-offset: 2px; }
+.detail__thumb-play {
+  position: absolute;
+  inset-block-end: 4px;
+  inset-inline-end: 4px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: rgb(0 0 0 / 0.6);
   color: #fff;
 }
-.detail__media-fallback p {
-  margin: 0;
-  max-width: 42ch;
-  font: var(--md-sys-typescale-body-medium-weight) var(--md-sys-typescale-body-medium-size) / var(--md-sys-typescale-body-medium-line-height) var(--md-ref-typeface-plain);
-}
-.detail__media figcaption {
-  margin-block-start: var(--md-sys-spacing-2);
-  color: var(--md-sys-color-on-surface-variant);
-  font: var(--md-sys-typescale-body-small-weight) var(--md-sys-typescale-body-small-size) / 1.4 var(--md-ref-typeface-plain);
-}
-.detail__links { display: flex; flex-direction: column; gap: var(--md-sys-spacing-2); }
-.detail__link {
-  display: flex;
-  align-items: center;
-  gap: var(--md-sys-spacing-3);
-  padding: var(--md-sys-spacing-3) var(--md-sys-spacing-4);
-  border-radius: var(--md-sys-shape-corner-medium-increased);
-  background: var(--md-sys-color-surface-container);
-  color: var(--md-sys-color-on-surface);
-  text-decoration: none;
-  overflow-wrap: anywhere;
-  font: var(--md-sys-typescale-body-medium-weight) var(--md-sys-typescale-body-medium-size) / 1.4 var(--md-ref-typeface-plain);
-  transition: background-color var(--md-sys-motion-spring-fast-effects),
-              border-radius var(--md-sys-motion-spring-fast-spatial);
-}
-.detail__link:hover { background: var(--md-sys-color-surface-container-high); border-radius: var(--md-sys-shape-corner-large); }
-.detail__link > svg { flex: none; width: 18px; height: 18px; color: var(--md-sys-color-on-surface-variant); }
-.detail__tags { display: flex; flex-wrap: wrap; gap: var(--md-sys-spacing-2); }
-.detail__ids { display: flex; flex-direction: column; gap: var(--md-sys-spacing-1); }
-.detail__id {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--md-sys-spacing-3);
-  padding: var(--md-sys-spacing-2) var(--md-sys-spacing-3);
-  border-radius: var(--md-sys-shape-corner-small);
-  background: var(--md-sys-color-surface-container);
-  font-family: var(--md-ref-typeface-mono);
-  font-size: var(--md-sys-typescale-label-medium-size);
-  color: var(--md-sys-color-on-surface-variant);
-}
-.detail__id b { color: var(--md-sys-color-on-surface); font-weight: 500; overflow-wrap: anywhere; }
 .detail__actions { display: flex; flex-wrap: wrap; gap: var(--md-sys-spacing-2); }
 
-/* Detail rendered inside the sheet (medium and below) drops its own padding. */
-.m3e-sheet__content .detail { padding: 0; }
+/* In the bottom sheet the header already names the author, so the inspector
+   contributes only its body. */
+.m3e-sheet__content .detail__head > .m3e-icon-button { display: none; }
 
-/* =============================================================================
-   Sheet — becomes a side sheet from medium up
-   ============================================================================= */
-@media (min-width: 600px) {
+/* The sheet becomes a side sheet from medium up — same content, different
+   container, which is the whole point of the adaptive layout. */
+@media (min-width: 600px) and (max-width: 1199px) {
   .sheet {
     inset: 0 0 0 auto;
-    width: min(480px, 100vw);
-    max-height: none;
-    border-radius: 0;
-    border-start-start-radius: var(--md-sys-shape-corner-extra-large-increased);
-    border-end-start-radius: var(--md-sys-shape-corner-extra-large-increased);
-    transform: translateX(100%);
+    width: min(420px, 92vw);
+    height: 100dvh;
+    border-radius: var(--md-sys-shape-corner-extra-large) 0 0 var(--md-sys-shape-corner-extra-large);
+    translate: 100% 0;
   }
+  .sheet[data-open="true"] { translate: 0 0; }
   .sheet .m3e-sheet__handle { display: none; }
-  .sheet[data-open="true"] { transform: none; }
 }
+
+/* Author picker rows */
+.authorlist { max-height: 60vh; overflow-y: auto; }
+.authorlist .m3e-list-item[aria-selected="true"] {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  border-radius: var(--md-sys-shape-corner-large-increased);
+}
+
+/* Refine sheet */
+.refine { display: flex; flex-direction: column; gap: var(--md-sys-spacing-5); }
+.refine__help { margin: 0; color: var(--md-sys-color-on-surface-variant); }
+.refine__row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--md-sys-spacing-3);
+}
+.refine__actions { display: flex; justify-content: flex-end; gap: var(--md-sys-spacing-2); }
 
 /* =============================================================================
-   FAB menu placement
+   Print — the library as a readable contact sheet
    ============================================================================= */
-.fab-menu {
-  inset: auto var(--md-sys-margin-compact) calc(var(--md-sys-spacing-6) + env(safe-area-inset-bottom, 0)) auto;
+@media print {
+  .shell__rail,
+  .shell__detail,
+  .nav-bar,
+  .filterbar,
+  .app-bar__actions,
+  .m3e-snackbar,
+  .m3e-scrim { display: none !important; }
+  .shell { grid-template-columns: 1fr; }
+  .app-bar { position: static; background: none; backdrop-filter: none; }
+  .grid { columns: 3 auto; }
+  .tile { break-inside: avoid; }
+  .m3e-tile__scrim { position: static; background: none; color: #000; }
 }
-@media (max-width: 599px) { .fab-menu { bottom: calc(96px + env(safe-area-inset-bottom, 0)); } }
-/* From medium up the rail's FAB is the primary action; hide the floating one. */
-@media (min-width: 600px) { .fab-menu { display: none; } }
-
 /* =============================================================================
    Settings dialog internals
    ============================================================================= */
@@ -933,98 +854,6 @@
   font: 600 var(--md-sys-typescale-label-small-size) / 1 var(--md-ref-typeface-plain);
 }
 
-/* =============================================================================
-   Sheet list rows (author picker, sort, saved views)
-   ============================================================================= */
-.pickrow {
-  display: flex;
-  align-items: center;
-  gap: var(--md-sys-spacing-3);
-  width: 100%;
-  min-height: 56px;
-  padding: var(--md-sys-spacing-3) var(--md-sys-spacing-4);
-  border: none;
-  border-radius: var(--md-sys-shape-corner-medium-increased);
-  background: transparent;
-  color: var(--md-sys-color-on-surface);
-  text-align: start;
-  cursor: pointer;
-  transition: background-color var(--md-sys-motion-spring-fast-effects),
-              border-radius var(--md-sys-motion-spring-fast-spatial);
-}
-.pickrow:hover { background: var(--md-sys-color-surface-container); }
-.pickrow[aria-checked="true"],
-.pickrow[aria-selected="true"] {
-  background: var(--md-sys-color-secondary-container);
-  color: var(--md-sys-color-on-secondary-container);
-  border-radius: var(--md-sys-shape-corner-large-increased);
-}
-.pickrow__check { flex: none; width: 24px; opacity: 0; }
-.pickrow[aria-checked="true"] .pickrow__check,
-.pickrow[aria-selected="true"] .pickrow__check { opacity: 1; }
-.pickrow__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.pickrow__title { font: var(--md-sys-typescale-body-large-weight) var(--md-sys-typescale-body-large-size) / 1.3 var(--md-ref-typeface-plain); }
-.pickrow__support {
-  color: var(--md-sys-color-on-surface-variant);
-  font: var(--md-sys-typescale-body-small-weight) var(--md-sys-typescale-body-small-size) / 1.3 var(--md-ref-typeface-plain);
-}
-.pickrow[aria-checked="true"] .pickrow__support,
-.pickrow[aria-selected="true"] .pickrow__support { color: inherit; opacity: 0.8; }
-.pickrow__count {
-  flex: none;
-  color: var(--md-sys-color-on-surface-variant);
-  font-variant-numeric: tabular-nums;
-  font: var(--md-sys-typescale-label-medium-weight) var(--md-sys-typescale-label-medium-size) / 1 var(--md-ref-typeface-plain);
-}
-
-.refine { display: flex; flex-direction: column; gap: var(--md-sys-spacing-5); }
-.refine__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--md-sys-spacing-3); }
-.refine__actions {
-  position: sticky;
-  bottom: 0;
-  display: flex;
-  gap: var(--md-sys-spacing-2);
-  padding-block: var(--md-sys-spacing-4);
-  background: linear-gradient(transparent, var(--md-sys-color-surface-container-low) 24%);
-}
-
-/* =============================================================================
-   Skeleton card
-   ============================================================================= */
-.skel-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--md-sys-spacing-3);
-  padding: var(--md-sys-spacing-5);
-  border-radius: var(--md-sys-shape-corner-large-increased);
-  background: var(--md-sys-color-surface-container-low);
-}
-.skel-card__head { display: flex; align-items: center; gap: var(--md-sys-spacing-3); }
-
-/* =============================================================================
-   Print — the library as a readable document
-   ============================================================================= */
-@media print {
-  .shell__rail,
-  .shell__detail,
-  .nav-bar,
-  .fab-menu,
-  .filterbar,
-  .app-bar__actions,
-  .m3e-snackbar,
-  .m3e-scrim { display: none !important; }
-  .shell { grid-template-columns: 1fr; }
-  .bmk { break-inside: avoid; border: 1px solid #ccc; }
-  .bmk__text { -webkit-line-clamp: unset; line-clamp: unset; display: block; }
-}
-
-/* In the bottom sheet the title bar already names the author, so the detail
-   body contributes only the handle + date line. */
-.detail__handle--standalone {
-  margin: 0 0 var(--md-sys-spacing-1);
-  color: var(--md-sys-color-on-surface-variant);
-}
-
 /* -----------------------------------------------------------------------------
    Lightbox
 
@@ -1063,9 +892,12 @@
   color: #fff;
 }
 .lb__bar--top { grid-area: top; }
-.lb__bar--bottom { grid-area: bottom; flex-direction: column; gap: var(--md-sys-spacing-2); }
-.lb__counter { flex: 1; margin: 0; font-variant-numeric: tabular-nums; opacity: 0.9; }
-.lb__bar-actions { display: flex; gap: var(--md-sys-spacing-1); }
+.lb__bar--bottom { grid-area: bottom; flex-direction: column; gap: var(--md-sys-spacing-3); }
+.lb__who { flex: 1; min-width: 0; }
+.lb__who p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; }
+.lb__subtitle { opacity: 0.75; }
+.lb__counter { flex: none; margin: 0; font-variant-numeric: tabular-nums; opacity: 0.9; }
+.lb__bar-actions { display: flex; gap: var(--md-sys-spacing-1); flex: none; }
 
 .lb__btn {
   display: grid;
@@ -1143,20 +975,58 @@
   text-align: center;
   text-wrap: pretty;
 }
-.lb__dots { display: flex; gap: var(--md-sys-spacing-2); }
-.lb__dot {
-  width: 8px;
-  height: 8px;
-  padding: 0;
-  border: none;
-  border-radius: var(--md-sys-shape-corner-full);
-  background: color-mix(in srgb, #fff 45%, transparent);
-  cursor: pointer;
-  transition: width var(--md-sys-motion-spring-fast-spatial),
-              background-color var(--md-sys-motion-spring-fast-effects);
+/* Filmstrip. Replaces the old dot row, which did not survive contact with a
+   viewer that traverses an entire library rather than one post's four
+   photos: forty dots is a texture, not a control. The strip is also a
+   preview of what is coming, which dots never were. */
+.lb__strip {
+  display: flex;
+  gap: var(--md-sys-spacing-2);
+  max-inline-size: min(100%, 900px);
+  padding-block: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  scroll-behavior: smooth;
+  overscroll-behavior-x: contain;
+  mask-image: linear-gradient(to right, transparent 0, #000 32px, #000 calc(100% - 32px), transparent 100%);
 }
-.lb__dot[data-active="true"] { width: 24px; background: #fff; }
-.lb__dot:focus-visible { outline: 2px solid var(--md-sys-color-secondary); outline-offset: 3px; }
+.lb__strip::-webkit-scrollbar { display: none; }
+@media (prefers-reduced-motion: reduce) { .lb__strip { scroll-behavior: auto; } }
+
+.lb__frame {
+  position: relative;
+  flex: none;
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: var(--md-sys-shape-corner-small);
+  background: rgb(255 255 255 / 0.12);
+  overflow: hidden;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity var(--md-sys-motion-spring-fast-effects),
+              scale var(--md-sys-motion-spring-fast-spatial),
+              border-color var(--md-sys-motion-spring-fast-effects);
+}
+.lb__frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lb__frame:hover { opacity: 0.85; }
+/* Selection is opacity + border + scale — three channels, so it reads at a
+   glance and survives greyscale. */
+.lb__frame[data-active="true"] { opacity: 1; border-color: #fff; scale: 1.08; }
+.lb__frame:focus-visible { outline: 2px solid var(--md-sys-color-secondary); outline-offset: 2px; }
+.lb__frame-motion {
+  position: absolute;
+  inset-block-end: 2px;
+  inset-inline-end: 2px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: rgb(0 0 0 / 0.65);
+  color: #fff;
+}
 
 .lb__unplayable {
   display: flex;

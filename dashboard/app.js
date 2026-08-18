@@ -1,15 +1,37 @@
 /* =============================================================================
    Dashboard · Application
-   The library surface, rendered with the M3E design system.
+
+   This is a media browser. That sentence is the whole architecture.
+
+   The previous build was a list of posts that happened to contain pictures.
+   Everything followed from that: a card was a text block with a thumbnail
+   strip stapled underneath, the loudest thing on screen was a count of how
+   many bookmarks existed, and looking at a photo took two clicks. But nobody
+   opens a bookmark archive to read a count. They open it to look at the
+   things they saved.
+
+   So the unit of this app is not a post, it is a MEDIA ITEM. `mediaIndex()`
+   flattens every post into its individual photos and videos and that flat
+   list is what every view renders. A post with four photos is four things to
+   browse, not one row with a 2×2 grid squeezed into it. The post itself is
+   still there — one tap away, in the inspector — because you do want to know
+   who said what. It is context, not the main event.
+
+   Three views over the same index, because "browse" means different things
+   at different moments:
+
+     rails    horizontal carousels, grouped. Grazing.
+     grid     everything at once, justified. Searching.
+     theater  one item per screen, horizontal paging. Watching.
 
    Structure
      1  constants & tiny helpers
      2  state, persistence
      3  data normalisation
-     4  filter / sort / search
+     4  the media index: filter / sort / group
      5  URL sync
-     6  chrome: nav, hero, filter bar
-     7  rendering: cards, detail
+     6  chrome: nav, filter bar
+     7  rendering: tiles, rails, grid, theater, inspector
      8  overlays: sheets, dialogs, menus
      9  import / export
     10  bindings & init
@@ -22,31 +44,39 @@
   /* ===========================================================================
      1 · Constants
      =========================================================================== */
-  const CHUNK = 60;
+
+  /* How many media items a grid renders before "Show more". Media is far
+     cheaper per item than the old post cards were — a tile is one <img> with
+     a fixed aspect box, no text layout, no metrics row — so the chunk is
+     bigger than the old 60 and still paints faster. */
+  const CHUNK = 120;
+
   const KEYS = {
     items: "xbm.items",
     meta: "xbm.meta",
-    views: "xbm.views",
     settings: "xbm.settings",
   };
 
   const DEFAULT_SETTINGS = Object.assign({}, M3ETheme.DEFAULTS, {
     density: "comfortable",
     lastCollection: "all",
+    view: "rails",
+    autoplay: true,
+    tileSize: "medium",
   });
 
-  /** Left-rail destinations. Each is a saved lens over the same dataset. */
+  /** Destinations. Each is a lens over the same media index. */
   const COLLECTIONS = [
-    { id: "all", label: "All", icon: "layers", describe: "Everything you've captured" },
-    { id: "unread", label: "Unread", icon: "circle", describe: "No tag and no note yet" },
-    { id: "tagged", label: "Tagged", icon: "tag", describe: "Anything you've filed" },
-    { id: "media", label: "Media", icon: "image", describe: "Posts with photos or video" },
+    { id: "all", label: "All", icon: "grid", describe: "Everything you've saved" },
+    { id: "video", label: "Video", icon: "play", describe: "Video and GIFs" },
+    { id: "photos", label: "Photos", icon: "image", describe: "Still images" },
+    { id: "recent", label: "Recent", icon: "clock", describe: "What you looked at last" },
     { id: "archived", label: "Archive", icon: "archive", describe: "Removed from your active set" },
   ];
 
-  /* Sorts are grouped, because a flat list of fifteen is a wall rather than a
-     menu. M3E's November 2025 menu guidance allows one or two gaps to
-     categorise related actions, which is exactly this case. */
+  /* Sorts are grouped, because a flat list of seventeen is a wall rather than
+     a menu. M3E's menu guidance allows gaps and headers to categorise related
+     actions, which is exactly this case. */
   const SORTS = [
     // -- Time -----------------------------------------------------------
     { key: "newest", group: "Time", label: "Newest", describe: "Most recently posted first" },
@@ -67,31 +97,36 @@
 
     // -- Content --------------------------------------------------------
     { key: "author", group: "Content", label: "Author A–Z", describe: "Grouped by who posted it" },
-    { key: "longest", group: "Content", label: "Longest", describe: "Most text first" },
-    { key: "shortest", group: "Content", label: "Shortest", describe: "Least text first" },
+    { key: "longest", group: "Content", label: "Most text", describe: "Longest captions first" },
+    { key: "shortest", group: "Content", label: "Least text", describe: "Media with the least to read" },
 
-    // -- Yours ----------------------------------------------------------
-    { key: "tagged", group: "Yours", label: "Recently tagged", describe: "What you filed most recently" },
-    { key: "untouched", group: "Yours", label: "Least touched", describe: "No tag, no note, oldest first" },
+    /* -- Media ---------------------------------------------------------
+       Sorts that only make sense once the unit is a media item rather than
+       a post. These are the ones this product needs and a post list could
+       not express. */
+    { key: "motion", group: "Media", label: "Motion first", describe: "Video and GIFs before stills" },
+    { key: "duration", group: "Media", label: "Longest video", describe: "By running time" },
+    { key: "widest", group: "Media", label: "Widest first", describe: "Panoramas and screenshots" },
 
     /* -- Chance -------------------------------------------------------
-       Shuffle is the reason people rediscover things. A bookmark library is
-       a pile sorted by recency forever, so the oldest 90% is never seen
+       Shuffle is the reason people rediscover things. A media library is a
+       pile sorted by recency forever, so the oldest 90% is never seen
        again; randomising is the cheapest possible fix for that. */
     { key: "random", group: "Chance", label: "Shuffle", describe: "A new order every time", reshuffle: true },
     { key: "surprise", group: "Chance", label: "Forgotten first", describe: "Random, weighted to what you never revisit", reshuffle: true },
   ];
 
-  const SORT_GROUPS = ["Time", "Reach", "Content", "Yours", "Chance"];
+  const SORT_GROUPS = ["Time", "Reach", "Content", "Media", "Chance"];
+
+  const VIEWS = ["rails", "grid", "theater"];
 
   const MONTHS = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
 
   const ICONS = {
-    layers: '<path d="M12 3 2 8.5 12 14l10-5.5L12 3Zm0 12.8L4.2 11.5 2 12.7l10 5.5 10-5.5-2.2-1.2L12 15.8Z"/>',
-    circle: '<path d="M12 4a8 8 0 1 0 8 8 8 8 0 0 0-8-8Zm0 2a6 6 0 1 1-6 6 6 6 0 0 1 6-6Z"/>',
-    tag: '<path d="M10.5 3H4a1 1 0 0 0-1 1v6.5a1 1 0 0 0 .3.7l9 9a1 1 0 0 0 1.4 0l6.5-6.5a1 1 0 0 0 0-1.4l-9-9a1 1 0 0 0-.7-.3ZM7 8.5A1.5 1.5 0 1 1 8.5 7 1.5 1.5 0 0 1 7 8.5Z"/>',
+    grid: '<path d="M3 3h5v7H3V3Zm7 0h5v5h-5V3Zm7 0h4v9h-4V3ZM3 12h5v9H3v-9Zm7 7h5v2h-5v-2Zm0-9h5v7h-5v-7Zm7 4h4v7h-4v-7Z"/>',
     image: '<path d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm1 13h14v-2.2l-3.5-3.5-2.6 2.6-3.4-4.2L5 15.4V17Zm10.5-6a1.8 1.8 0 1 0-1.8-1.8A1.8 1.8 0 0 0 15.5 11Z"/>',
     archive: '<path d="M4 4h16v4H4V4Zm1 6h14v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9Zm4 3v2h6v-2H9Z"/>',
+    clock: '<path d="M12 3a9 9 0 1 0 9 9 9 9 0 0 0-9-9Zm1 9.4 3.5 2.1-.9 1.5L11 13.2V7h2Z"/>',
     heart: '<path d="M12 21S3 15 3 9.2A4.2 4.2 0 0 1 7.2 5c1.9 0 3.5 1 4.8 2.7C13.3 6 14.9 5 16.8 5A4.2 4.2 0 0 1 21 9.2C21 15 12 21 12 21Z"/>',
     repost: '<path d="M7 7h9l-2-2 1.4-1.4L19.8 8l-4.4 4.4L14 11l2-2H7v3H5V9a2 2 0 0 1 2-2Zm10 10H8l2 2-1.4 1.4L4.2 16l4.4-4.4L10 13l-2 2h9v-3h2v3a2 2 0 0 1-2 2Z"/>',
     reply: '<path d="M12 4a8 8 0 0 0-8 8 7.8 7.8 0 0 0 1 3.8L4 21l5.4-1a8 8 0 1 0 2.6-16Z"/>',
@@ -106,10 +141,13 @@
     upload: '<path d="M13 10.8V21h-2V10.8l-3.6 3.6L6 13l6-6 6 6-1.4 1.4L13 10.8ZM5 3h14v2H5V3Z"/>',
     plus: '<path d="M11 11V5h2v6h6v2h-6v6h-2v-6H5v-2h6Z"/>',
     close: '<path d="M18.3 7.1 16.9 5.7 12 10.6 7.1 5.7 5.7 7.1l4.9 4.9-4.9 4.9 1.4 1.4 4.9-4.9 4.9 4.9 1.4-1.4-4.9-4.9 4.9-4.9Z"/>',
-    note: '<path d="M5 3h9l5 5v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm3 8h8V9H8v2Zm0 4h8v-2H8v2Z"/>',
     moon: '<path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/>',
     sun: '<path d="M12 7a5 5 0 1 0 5 5 5 5 0 0 0-5-5Zm0-6h0v3h0V1Zm0 19h0v3h0v-3ZM1 11v2h3v-2Zm19 0v2h3v-2ZM4.2 2.8 2.8 4.2l2.1 2.1 1.4-1.4Zm13.5 13.5-1.4 1.4 2.1 2.1 1.4-1.4ZM6.3 17.7l-1.4-1.4-2.1 2.1 1.4 1.4Zm13.5-13.5-1.4-1.4-2.1 2.1 1.4 1.4Z"/>',
-    star: '<path d="m12 17.3-6.2 3.7 1.6-7L2 9.2l7.2-.6L12 2l2.8 6.6 7.2.6-5.4 4.8 1.6 7-6.2-3.7Z"/>',
+    prev: '<path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6 4.6-4.6Z"/>',
+    next: '<path d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6-4.6 4.6Z"/>',
+    expand: '<path d="M4 4h6v2H6v4H4V4Zm10 0h6v6h-2V6h-4V4ZM4 14h2v4h4v2H4v-6Zm14 0h2v6h-6v-2h4v-4Z"/>',
+    shuffle: '<path d="M17 4.5 21.5 9 17 13.5V10.4h-2.1c-1 0-1.6.4-2.4 1.6l-.6 1-1.4-2.3.4-.6C12 8.3 13.2 7.6 15 7.6H17V4.5ZM3 8h3.2c1.6 0 2.8.6 3.9 2.2l3 4.6c.7 1 1.2 1.3 2 1.3H17v-3.1L21.5 17 17 21.5v-3.1h-1.9c-1.7 0-2.9-.7-4-2.4l-3-4.6C7.4 10.3 6.9 10 6.2 10H3V8Zm0 8h3.2c.6 0 1-.2 1.5-.8l.4-.6 1.4 2.3-.2.3c-.9 1.2-1.9 1.8-3.1 1.8H3v-3Z"/>',
+    eyeoff: '<path d="M2.1 3.5 3.5 2.1l18.4 18.4-1.4 1.4-3.3-3.3A11.6 11.6 0 0 1 12 19c-5 0-9.3-3-11-7a12.3 12.3 0 0 1 4.3-5.1L2.1 3.5ZM12 5c5 0 9.3 3 11 7a12.4 12.4 0 0 1-3 4l-3-3a5 5 0 0 0-6-6L8.8 5.3A11.8 11.8 0 0 1 12 5Z"/>',
   };
 
   const svg = (name, size) =>
@@ -150,12 +188,12 @@
   const state = {
     items: [],
     meta: {},
-    views: [],
     settings: Object.assign({}, DEFAULT_SETTINGS),
     collection: "all",
+    view: "rails",
     sort: "newest",
     shuffleSeed: String(Date.now() % 2147483647),
-    selectedId: null,
+    selectedId: null,      // "<tweet_id>:<position>" — a media item, not a post
     rendered: 0,
     lastList: [],
     fullSync: false,
@@ -164,10 +202,9 @@
   const filters = {
     search: "",
     author: "all",
-    hasMedia: false,
-    hasLinks: false,
-    tagged: false,
-    noted: false,
+    video: false,
+    photos: false,
+    gif: false,
     minLikes: 0,
     minReposts: 0,
     from: "",
@@ -178,6 +215,8 @@
   let snack = null;
   let sheet = null;
   let dialog = null;
+  let autoplayer = null;
+  const carousels = [];
 
   const readJSON = (key, fallback) => {
     try {
@@ -190,14 +229,20 @@
     catch { return false; }
   };
 
+  /**
+   * Per-post local state.
+   *
+   * Tags and notes are gone: this is a browsing tool, and a filing cabinet
+   * grafted onto a browsing tool is two half-products. What remains is the
+   * minimum a browser genuinely needs — whether an item is still in the
+   * active set, and when it was last looked at, which is what makes
+   * "Continue browsing" and "Forgotten first" possible.
+   */
   function getMeta(id) {
-    if (!state.meta[id]) state.meta[id] = { tags: [], note: "", active: true, removedAt: null, taggedAt: null };
-    const m = state.meta[id];
-    if (!Array.isArray(m.tags)) m.tags = [];
-    return m;
+    if (!state.meta[id]) state.meta[id] = { active: true, removedAt: null, openedAt: null };
+    return state.meta[id];
   }
   const saveMeta = () => writeJSON(KEYS.meta, state.meta);
-  const saveViews = () => writeJSON(KEYS.views, state.views);
   const saveSettings = () => writeJSON(KEYS.settings, state.settings);
   const saveItems = () => {
     if (!writeJSON(KEYS.items, state.items.map(strip))) {
@@ -263,19 +308,6 @@
     };
   }
 
-  /**
-   * Normalise one media item.
-   *
-   * This used to keep only {type,url,mp4,alt,aspect,duration} and silently drop
-   * everything else the scraper had already captured. Two real consequences:
-   *   · `hls` was discarded, so any X video served only as an HLS playlist
-   *     could never play — the detail view built a <video> with an mp4 source
-   *     that was null;
-   *   · `width`/`height` were discarded, so every image had to be laid out
-   *     without an intrinsic size, guaranteeing layout shift on load.
-   * Both are preserved now. Field names accept the scraper's shape and the
-   * longer names used by X's own JSON, so hand-edited exports also import.
-   */
   function normalizeMedia(list) {
     return (Array.isArray(list) ? list : [])
       .filter((m) => m && typeof m === "object")
@@ -292,7 +324,11 @@
           ? width / height
           : 16 / 9;
 
-        const variants = (Array.isArray(m.mp4_variants) ? m.mp4_variants : [])
+        /* The full mp4 ladder, best first. The player picks a rung by rendered
+           size, so a 168px carousel tile does not download a 1080p file. This
+           is the single biggest bandwidth decision in the app and it is only
+           possible because the whole ladder survives normalisation. */
+        const variants = (Array.isArray(m.mp4_variants) ? m.mp4_variants : Array.isArray(m.mp4Variants) ? m.mp4Variants : [])
           .map((v) => ({ url: safeMediaUrl(v && v.url), bitrate: Number(v && v.bitrate) || 0 }))
           .filter((v) => v.url)
           .sort((a, b) => b.bitrate - a.bitrate);
@@ -349,27 +385,22 @@
         author_name: name,
         author_profile_image_url: safeUrl(b.author_profile_image_url),
         retweeted_by_username: b.retweeted_by_username || null,
-        tweet_created_at: b.tweet_created_at || null,
         url,
-        likes: num(b.like_count_at_capture, b.like_count),
-        reposts: num(b.retweet_count_at_capture, b.retweet_count),
-        replies: num(b.reply_count_at_capture, b.reply_count),
-        views: num(b.view_count_at_capture, b.view_count),
-        has_media: Boolean(b.has_media) || media.length > 0,
-        has_links: Boolean(b.has_links) || (Array.isArray(b.urls_expanded) && b.urls_expanded.length > 0),
-        media,
-        links: (Array.isArray(b.urls_expanded) ? b.urls_expanded : []).map(safeUrl).filter(Boolean),
-        conversation_id: b.conversation_id || null,
-        in_reply_to_status_id: b.in_reply_to_status_id || null,
-        original_tweet_id: b.original_tweet_id || null,
-        quoted_tweet_id: b.quoted_tweet_id || null,
-        quoted_tweet: quoted,
+        posted,
+        capture_order: num(b.capture_order, 0),
         first_seen_at: b.first_seen_at || null,
         last_seen_at: b.last_seen_at || null,
-        capture_order: Number(b.capture_order) || 0,
-        source_type: b.source_type || null,
-        // derived
-        _search: searchable(text + " " + (quoted ? quoted.text : "") + " " + (name || "") + " " + (username || "")),
+        likes: num(b.like_count_at_capture, b.likes, 0),
+        reposts: num(b.retweet_count_at_capture, b.reposts, 0),
+        replies: num(b.reply_count_at_capture, b.replies, 0),
+        views: num(b.view_count_at_capture, b.views, 0),
+        has_media: media.length > 0,
+        has_links: Boolean(b.has_links || (b.urls_expanded && b.urls_expanded.length)),
+        urls: Array.isArray(b.urls_expanded) ? b.urls_expanded.filter(safeUrl) : [],
+        media,
+        quoted_tweet: quoted,
+        _search: searchable(text + " " + (username || "") + " " + (name || "") +
+          " " + media.map((m) => m.alt || "").join(" ")),
         _ts: posted ? posted.getTime() : 0,
         _seen: b.first_seen_at ? new Date(b.first_seen_at).getTime() || 0 : 0,
       });
@@ -378,8 +409,14 @@
   }
 
   function strip(item) {
-    const { _search, _ts, _seen, ...rest } = item;
-    return rest;
+    const { _search, _ts, _seen, posted, ...rest } = item;
+    return Object.assign(rest, {
+      tweet_created_at: posted ? posted.toUTCString() : null,
+      like_count_at_capture: item.likes,
+      retweet_count_at_capture: item.reposts,
+      reply_count_at_capture: item.replies,
+      view_count_at_capture: item.views,
+    });
   }
 
   function merge(incoming) {
@@ -408,35 +445,32 @@
   }
 
   /* ===========================================================================
-     4 · Filter / sort
+     4 · The media index
+
+     Everything the UI renders comes from here. An "entry" is one photo or one
+     video, carrying a back-reference to the post it belongs to:
+
+       { id, item, media, index }
+
+     `id` is `<tweet_id>:<position>` — stable across renders, sorts and
+     filters, which is what lets selection survive a reshuffle and lets the
+     URL address a single photo inside a four-photo post.
      =========================================================================== */
+
   function matchesCollection(item) {
     const m = getMeta(item.tweet_id);
-    switch (state.collection) {
-      case "archived": return m.active === false;
-      case "tagged": return m.active !== false && m.tags.length > 0;
-      case "unread": return m.active !== false && m.tags.length === 0 && !m.note;
-      case "media": return m.active !== false && item.has_media;
-      default: return m.active !== false;
-    }
+    if (state.collection === "archived") return m.active === false;
+    return m.active !== false;
   }
 
-  function matches(item) {
+  function matchesPost(item) {
     if (!matchesCollection(item)) return false;
-    const m = getMeta(item.tweet_id);
 
     if (filters.search) {
       const needle = searchable(filters.search);
-      if (needle) {
-        const hay = item._search + " " + searchable(m.tags.join(" ") + " " + m.note);
-        if (!hay.includes(needle)) return false;
-      }
+      if (needle && !item._search.includes(needle)) return false;
     }
     if (filters.author !== "all" && item.author_username !== filters.author) return false;
-    if (filters.hasMedia && !item.has_media) return false;
-    if (filters.hasLinks && !item.has_links) return false;
-    if (filters.tagged && !m.tags.length) return false;
-    if (filters.noted && !m.note) return false;
     if (item.likes < filters.minLikes) return false;
     if (item.reposts < filters.minReposts) return false;
     if (filters.from && item._ts && item._ts < new Date(filters.from).getTime()) return false;
@@ -444,12 +478,57 @@
     return true;
   }
 
+  const isVideo = (m) => m.type === "video";
+  const isGif = (m) => m.type === "animated_gif";
+  const isPhoto = (m) => !isVideo(m) && !isGif(m);
+
+  function matchesMedia(media, item) {
+    // Collection is a media-level question now: "Video" means video items,
+    // not posts that happen to contain one alongside three photos.
+    if (state.collection === "video" && isPhoto(media)) return false;
+    if (state.collection === "photos" && !isPhoto(media)) return false;
+    if (state.collection === "recent" && !getMeta(item.tweet_id).openedAt) return false;
+
+    /* The three type chips are a union, not an intersection: ticking Video
+       and GIF means "motion of either kind", which is what everyone expects
+       and what an intersection would render as an empty screen. */
+    const anyType = filters.video || filters.photos || filters.gif;
+    if (anyType) {
+      const ok =
+        (filters.video && isVideo(media)) ||
+        (filters.photos && isPhoto(media)) ||
+        (filters.gif && isGif(media));
+      if (!ok) return false;
+    }
+    return true;
+  }
+
+  /** The flat, filtered, sorted list of media entries the views render. */
+  function mediaIndex() {
+    const out = [];
+    for (const item of state.items) {
+      if (!matchesPost(item)) continue;
+      for (const media of item.media) {
+        if (!matchesMedia(media, item)) continue;
+        out.push({
+          id: item.tweet_id + ":" + media.position,
+          item,
+          media,
+          index: media.position - 1,
+        });
+      }
+    }
+    return sortList(out);
+  }
+
+  const entryById = (list, id) => list.find((e) => e.id === id) || null;
+
   /* ---------------------------------------------------------------------------
      Shuffling
 
      A shuffle has to be *stable within a viewing session*. If the order were
-     redrawn on every render, tagging a post or loading the next chunk would
-     reshuffle the list under the reader's cursor — the card they were aiming
+     redrawn on every render, opening an item or loading the next chunk would
+     reshuffle the list under the reader's cursor — the tile they were aiming
      at moves as they click. So the order is a pure function of a seed, and
      the seed only changes when the user asks for a new one.
 
@@ -467,7 +546,7 @@
     return (h ^= h >>> 16) >>> 0;
   }
 
-  /** mulberry32 — tiny, fast, good enough for shuffling a reading list. */
+  /** mulberry32 — tiny, fast, good enough for shuffling a media library. */
   function rng(seed) {
     let a = seed >>> 0;
     return function () {
@@ -479,34 +558,34 @@
   }
 
   /**
-   * A per-item score in [0,1), derived from the item id AND the session seed.
-   * Hashing the pair rather than walking a Fisher-Yates over the array means
-   * the order doesn't depend on the array's current contents — filtering the
-   * list keeps the survivors in the same relative order, instead of
-   * re-dealing them.
+   * A per-entry score in [0,1), derived from the entry id AND the session
+   * seed. Hashing the pair rather than walking a Fisher-Yates over the array
+   * means the order doesn't depend on the array's current contents —
+   * filtering the list keeps the survivors in the same relative order,
+   * instead of re-dealing them.
    */
-  function shuffleScore(item) {
-    return rng(hashSeed(item.tweet_id + ":" + state.shuffleSeed))();
+  function shuffleScore(entry) {
+    return rng(hashSeed(entry.id + ":" + state.shuffleSeed))();
   }
 
   /**
-   * "Forgotten first": a weighted shuffle that favours posts you have never
+   * "Forgotten first": a weighted shuffle that favours media you have never
    * come back to. Still random — two runs differ — but it biases the draw
-   * towards the untouched and the old, which is where the value in a
-   * bookmark archive is actually buried.
+   * towards the untouched and the old, which is where the value in an
+   * archive is actually buried.
    */
-  function forgottenScore(item) {
-    const meta = state.meta[item.tweet_id];
-    const touched = meta && (meta.tags.length || meta.note);
-    const age = item._ts ? (Date.now() - item._ts) / 31557600000 : 0; // years
+  function forgottenScore(entry) {
+    const meta = state.meta[entry.item.tweet_id];
+    const touched = meta && meta.openedAt;
+    const age = entry.item._ts ? (Date.now() - entry.item._ts) / 31557600000 : 0; // years
     // Weight, then jitter: the randomness must still dominate, or this stops
     // being a shuffle and becomes just another deterministic sort.
     const weight = (touched ? 0.35 : 1) * (1 + Math.min(age, 5) / 5);
-    return shuffleScore(item) * weight;
+    return shuffleScore(entry) * weight;
   }
 
   function sortList(list) {
-    const byId = (a, b) => (a.tweet_id < b.tweet_id ? 1 : a.tweet_id > b.tweet_id ? -1 : 0);
+    const byId = (a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
     const copy = list.slice();
 
     // Precompute anything costlier than a field read, so the comparator stays
@@ -514,47 +593,42 @@
     let score = null;
     if (state.sort === "random" || state.sort === "surprise") {
       const fn = state.sort === "random" ? shuffleScore : forgottenScore;
-      score = new Map(copy.map((i) => [i.tweet_id, fn(i)]));
+      score = new Map(copy.map((e) => [e.id, fn(e)]));
     }
 
-    const metaTs = (item) => {
-      const m = state.meta[item.tweet_id];
-      if (!m || !m.taggedAt) return 0;
-      return new Date(m.taggedAt).getTime() || 0;
-    };
-    const len = (item) => (item.text || "").trim().length;
-    const rate = (item) => {
+    const len = (e) => (e.item.text || "").trim().length;
+    const rate = (e) => {
       // Views are only present on some captures; without them, fall back to
       // the raw like count so the post still ranks somewhere sensible.
-      if (!item.views) return item.likes;
-      return ((item.likes + item.replies * 2) / item.views) * 1000;
+      const i = e.item;
+      if (!i.views) return i.likes;
+      return ((i.likes + i.replies * 2) / i.views) * 1000;
     };
+    // Motion outranks stills; within motion, video outranks a looping GIF.
+    const motion = (e) => (isVideo(e.media) ? 2 : isGif(e.media) ? 1 : 0);
+    const ratio = (e) => Number(M3EMedia.aspectRatio(e.media)) || 0;
 
     const cmp = {
-      oldest: (a, b) => a._ts - b._ts || byId(b, a),
-      captured: (a, b) => b._seen - a._seen || byId(a, b),
-      likes: (a, b) => b.likes - a.likes || b._ts - a._ts,
-      retweets: (a, b) => b.reposts - a.reposts || b._ts - a._ts,
-      replies: (a, b) => b.replies - a.replies || b._ts - a._ts,
-      views: (a, b) => b.views - a.views || b.likes - a.likes,
-      engagement: (a, b) => rate(b) - rate(a) || b.likes - a.likes,
-      order: (a, b) => a.capture_order - b.capture_order || byId(b, a),
+      oldest: (a, b) => a.item._ts - b.item._ts || byId(b, a),
+      captured: (a, b) => b.item._seen - a.item._seen || byId(a, b),
+      likes: (a, b) => b.item.likes - a.item.likes || b.item._ts - a.item._ts,
+      retweets: (a, b) => b.item.reposts - a.item.reposts || b.item._ts - a.item._ts,
+      replies: (a, b) => b.item.replies - a.item.replies || b.item._ts - a.item._ts,
+      views: (a, b) => b.item.views - a.item.views || b.item.likes - a.item.likes,
+      engagement: (a, b) => rate(b) - rate(a) || b.item.likes - a.item.likes,
+      order: (a, b) => a.item.capture_order - b.item.capture_order || byId(b, a),
       author: (a, b) =>
-        (a.author_username || "\uffff").localeCompare(b.author_username || "\uffff", undefined, { sensitivity: "base" }) ||
-        b._ts - a._ts,
-      longest: (a, b) => len(b) - len(a) || b._ts - a._ts,
-      shortest: (a, b) => len(a) - len(b) || b._ts - a._ts,
-      tagged: (a, b) => metaTs(b) - metaTs(a) || b._ts - a._ts,
-      untouched: (a, b) => {
-        const at = state.meta[a.tweet_id], bt = state.meta[b.tweet_id];
-        const aTouched = at && (at.tags.length || at.note) ? 1 : 0;
-        const bTouched = bt && (bt.tags.length || bt.note) ? 1 : 0;
-        return aTouched - bTouched || a._ts - b._ts;
-      },
-      random: (a, b) => score.get(a.tweet_id) - score.get(b.tweet_id),
-      surprise: (a, b) => score.get(a.tweet_id) - score.get(b.tweet_id),
-      newest: (a, b) => b._ts - a._ts || b._seen - a._seen || byId(a, b),
-    }[state.sort] || ((a, b) => b._ts - a._ts);
+        (a.item.author_username || "\uffff").localeCompare(b.item.author_username || "\uffff", undefined, { sensitivity: "base" }) ||
+        b.item._ts - a.item._ts,
+      longest: (a, b) => len(b) - len(a) || b.item._ts - a.item._ts,
+      shortest: (a, b) => len(a) - len(b) || b.item._ts - a.item._ts,
+      motion: (a, b) => motion(b) - motion(a) || b.item._ts - a.item._ts,
+      duration: (a, b) => (b.media.duration || 0) - (a.media.duration || 0) || b.item._ts - a.item._ts,
+      widest: (a, b) => ratio(b) - ratio(a) || b.item._ts - a.item._ts,
+      random: (a, b) => score.get(a.id) - score.get(b.id),
+      surprise: (a, b) => score.get(a.id) - score.get(b.id),
+      newest: (a, b) => b.item._ts - a.item._ts || b.item._seen - a.item._seen || byId(a, b),
+    }[state.sort] || ((a, b) => b.item._ts - a.item._ts);
 
     copy.sort(cmp);
     return copy;
@@ -570,13 +644,11 @@
     state.shuffleSeed = String(Date.now() % 2147483647);
   }
 
-  const visible = () => sortList(state.items.filter(matches));
-
   function authorList() {
     const counts = new Map();
     for (const item of state.items) {
-      if (!item.author_username) continue;
-      counts.set(item.author_username, (counts.get(item.author_username) || 0) + 1);
+      if (!item.author_username || !item.media.length) continue;
+      counts.set(item.author_username, (counts.get(item.author_username) || 0) + item.media.length);
     }
     return Array.from(counts.entries())
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
@@ -587,10 +659,9 @@
     let n = 0;
     if (filters.search) n++;
     if (filters.author !== "all") n++;
-    if (filters.hasMedia) n++;
-    if (filters.hasLinks) n++;
-    if (filters.tagged) n++;
-    if (filters.noted) n++;
+    if (filters.video) n++;
+    if (filters.photos) n++;
+    if (filters.gif) n++;
     if (filters.minLikes > 0) n++;
     if (filters.minReposts > 0) n++;
     if (filters.from) n++;
@@ -600,8 +671,8 @@
 
   function resetFilters() {
     Object.assign(filters, {
-      search: "", author: "all", hasMedia: false, hasLinks: false,
-      tagged: false, noted: false, minLikes: 0, minReposts: 0, from: "", to: "",
+      search: "", author: "all", video: false, photos: false, gif: false,
+      minLikes: 0, minReposts: 0, from: "", to: "",
     });
     if ($("search")) $("search").value = "";
     render();
@@ -613,15 +684,15 @@
   function syncUrl() {
     const p = new URLSearchParams();
     if (state.collection !== "all") p.set("c", state.collection);
+    if (state.view !== "rails") p.set("v", state.view);
     if (state.sort !== "newest") p.set("sort", state.sort);
     // The seed only matters for a shuffle; carrying it otherwise is noise.
     if (isShuffle()) p.set("seed", state.shuffleSeed);
     if (filters.search) p.set("q", filters.search);
     if (filters.author !== "all") p.set("author", filters.author);
-    if (filters.hasMedia) p.set("media", "1");
-    if (filters.hasLinks) p.set("links", "1");
-    if (filters.tagged) p.set("tagged", "1");
-    if (filters.noted) p.set("noted", "1");
+    if (filters.video) p.set("video", "1");
+    if (filters.photos) p.set("photos", "1");
+    if (filters.gif) p.set("gif", "1");
     if (filters.minLikes) p.set("likes", String(filters.minLikes));
     if (filters.minReposts) p.set("reposts", String(filters.minReposts));
     if (filters.from) p.set("from", filters.from);
@@ -634,16 +705,17 @@
     const p = new URLSearchParams(location.search);
     const c = p.get("c");
     if (c && COLLECTIONS.some((x) => x.id === c)) state.collection = c;
+    const v = p.get("v");
+    if (v && VIEWS.includes(v)) state.view = v;
     const s = p.get("sort");
     if (s && SORTS.some((x) => x.key === s)) state.sort = s;
     const seed = p.get("seed");
     if (seed && /^[0-9]{1,10}$/.test(seed)) state.shuffleSeed = seed;
     if (p.get("q")) filters.search = p.get("q");
     if (p.get("author")) filters.author = p.get("author");
-    filters.hasMedia = p.get("media") === "1";
-    filters.hasLinks = p.get("links") === "1";
-    filters.tagged = p.get("tagged") === "1";
-    filters.noted = p.get("noted") === "1";
+    filters.video = p.get("video") === "1";
+    filters.photos = p.get("photos") === "1";
+    filters.gif = p.get("gif") === "1";
     filters.minLikes = parseInt(p.get("likes"), 10) || 0;
     filters.minReposts = parseInt(p.get("reposts"), 10) || 0;
     filters.from = p.get("from") || "";
@@ -655,10 +727,14 @@
      6 · Chrome
      =========================================================================== */
   function collectionCount(id) {
-    const prev = state.collection;
+    const prevC = state.collection;
     state.collection = id;
-    const n = state.items.filter(matchesCollection).length;
-    state.collection = prev;
+    let n = 0;
+    for (const item of state.items) {
+      if (!matchesCollection(item)) continue;
+      for (const media of item.media) if (matchesMedia(media, item)) n++;
+    }
+    state.collection = prevC;
     return n;
   }
 
@@ -667,7 +743,7 @@
     const bar = $("navBar");
     if (!rail || !bar) return;
 
-    const railHtml = COLLECTIONS.map((c) => {
+    rail.innerHTML = COLLECTIONS.map((c) => {
       const selected = c.id === state.collection;
       return (
         '<button class="m3e-rail__item m3e-state" role="tab" data-collection="' + c.id + '"' +
@@ -678,25 +754,31 @@
         "</button>"
       );
     }).join("");
-    rail.innerHTML = railHtml;
 
-    // Compact gets the four most useful destinations; Archive lives in settings.
-    bar.innerHTML = COLLECTIONS.slice(0, 4).map((c) => {
-      const selected = c.id === state.collection;
-      return (
-        '<button class="m3e-nav-bar__item m3e-state" role="tab" data-collection="' + c.id + '"' +
-        ' aria-selected="' + selected + '">' +
-        '<span class="m3e-rail__indicator">' + svg(c.icon, 24) + "</span>" +
-        "<span>" + esc(c.label) + "</span></button>"
-      );
-    }).join("");
+    /* The floating bar carries the four browsing destinations plus Import as
+       a trailing filled action. Archive lives in the rail and in settings —
+       it is a recovery surface, not a place you browse. */
+    bar.innerHTML =
+      COLLECTIONS.slice(0, 4).map((c) => {
+        const selected = c.id === state.collection;
+        return (
+          '<button class="m3e-nav-bar__item m3e-state" role="tab" data-collection="' + c.id + '"' +
+          ' aria-selected="' + selected + '" title="' + esc(c.describe) + '">' +
+          '<span class="m3e-rail__indicator">' + svg(c.icon, 24) + "</span>" +
+          "<span>" + esc(c.label) + "</span></button>"
+        );
+      }).join("") +
+      '<button class="m3e-fab m3e-fab--primary m3e-fab--small m3e-state nav-bar__fab" id="navFab"' +
+      ' aria-label="Import bookmarks">' + svg("download", 22) + "</button>";
 
     document.querySelectorAll("[data-collection]").forEach((btn) => {
       btn.addEventListener("click", () => selectCollection(btn.dataset.collection));
     });
+    const navFab = $("navFab");
+    if (navFab) navFab.addEventListener("click", () => $("fileImport").click());
 
     const title = COLLECTIONS.find((c) => c.id === state.collection);
-    if ($("paneTitle")) $("paneTitle").textContent = title ? title.label : "Library";
+    if ($("paneTitle")) $("paneTitle").textContent = title ? title.label : "Browse";
   }
 
   function selectCollection(id) {
@@ -706,773 +788,921 @@
     saveSettings();
     renderNav();
     render();
-    const lib = $("library");
-    if (lib) lib.scrollIntoView({ behavior: M3E.reducedMotion() ? "auto" : "smooth", block: "start" });
+    const pane = $("pane");
+    if (pane) pane.scrollTo({ top: 0, behavior: M3E.reducedMotion() ? "auto" : "smooth" });
   }
 
-  function renderHero(list) {
-    const total = state.items.length;
-    const archived = Object.values(state.meta).filter((m) => m.active === false).length;
-    const tagged = Object.values(state.meta).filter((m) => m.tags && m.tags.length).length;
-    const authors = new Set(state.items.map((i) => i.author_username).filter(Boolean)).size;
+  function setView(view) {
+    if (!VIEWS.includes(view) || view === state.view) return;
+    state.view = view;
+    state.settings.view = view;
+    saveSettings();
+    syncViewSeg();
+    render();
+  }
 
-    const set = (id, value) => {
-      const el = $(id);
-      if (!el || el.textContent === String(value)) return;
-      el.textContent = value;
-      pulse(el);
-    };
-
-    set("heroCount", fmtCount(total));
-    set("statShown", fmtCount(list.length));
-    set("statAuthors", fmtCount(authors));
-    set("statTagged", fmtCount(tagged));
-    set("statArchived", fmtCount(archived));
-
-    if ($("heroUnit")) $("heroUnit").textContent = total === 1 ? "bookmark" : "bookmarks";
-
-    if ($("heroCaption")) {
-      let caption;
-      if (!total) {
-        // Inside the extension there is no file to hunt for — the capture is
-        // one click away, and the banner right below says so.
-        caption = window.XBridge && XBridge.available
-          ? "Capture your bookmarks from the extension, then bring them in here."
-          : "Import a JSON export from the capture extension to fill your library.";
-      } else {
-        const newest = state.items.reduce((acc, i) => Math.max(acc, i._ts || 0), 0);
-        const oldest = state.items.reduce((acc, i) => (i._ts ? Math.min(acc, i._ts) : acc), Infinity);
-        caption =
-          "Spanning " + fmtDate(oldest === Infinity ? null : new Date(oldest)) +
-          " to " + fmtDate(newest ? new Date(newest) : null) +
-          " · " + plural(authors, "author") + " · " + plural(tagged, "tagged post");
-      }
-      $("heroCaption").textContent = caption;
-    }
+  function syncViewSeg() {
+    document.querySelectorAll("#viewSeg [data-view]").forEach((btn) => {
+      btn.setAttribute("aria-pressed", String(btn.dataset.view === state.view));
+    });
   }
 
   function renderFilterBar() {
-    const set = (id, on) => {
+    const setChip = (id, on) => {
       const el = $(id);
       if (el) el.setAttribute("aria-pressed", String(!!on));
     };
-    set("chipMedia", filters.hasMedia);
-    set("chipLinks", filters.hasLinks);
-    set("chipTagged", filters.tagged);
-    set("chipNoted", filters.noted);
+    setChip("chipVideo", filters.video);
+    setChip("chipPhotos", filters.photos);
+    setChip("chipGif", filters.gif);
 
-    if ($("chipAuthorLabel")) {
-      $("chipAuthorLabel").textContent = filters.author === "all" ? "All authors" : "@" + filters.author;
-    }
-    if ($("chipAuthor")) $("chipAuthor").setAttribute("aria-pressed", String(filters.author !== "all"));
+    const authorLabel = $("chipAuthorLabel");
+    if (authorLabel) authorLabel.textContent = filters.author === "all" ? "All authors" : "@" + filters.author;
+    const authorChip = $("chipAuthor");
+    if (authorChip) authorChip.setAttribute("aria-pressed", String(filters.author !== "all"));
 
-    const sortOption = SORTS.find((s) => s.key === state.sort) || SORTS[0];
-    if ($("chipSortLabel")) $("chipSortLabel").textContent = sortOption.label;
-    if ($("chipShuffle")) $("chipShuffle").hidden = !isShuffle();
-
-    // "Refine" holds the filters that don't fit as chips; its badge counts them.
-    const refineCount =
-      (filters.minLikes > 0 ? 1 : 0) + (filters.minReposts > 0 ? 1 : 0) +
+    const refine = (filters.minLikes ? 1 : 0) + (filters.minReposts ? 1 : 0) +
       (filters.from ? 1 : 0) + (filters.to ? 1 : 0);
     const badge = $("refineBadge");
-    if (badge) { badge.hidden = refineCount === 0; badge.textContent = String(refineCount); }
-    if ($("chipRefine")) $("chipRefine").setAttribute("aria-pressed", String(refineCount > 0));
+    if (badge) { badge.hidden = !refine; badge.textContent = String(refine); }
+    const refineChip = $("chipRefine");
+    if (refineChip) refineChip.setAttribute("aria-pressed", String(refine > 0));
 
+    const sortDef = SORTS.find((s) => s.key === state.sort);
+    if ($("chipSortLabel")) $("chipSortLabel").textContent = sortDef ? sortDef.label : "Newest";
+    if ($("chipShuffle")) $("chipShuffle").hidden = !isShuffle();
     if ($("chipReset")) $("chipReset").hidden = activeFilterCount() === 0;
-
-    if ($("searchClear")) $("searchClear").hidden = !filters.search;
-
-    document.querySelectorAll("#densitySeg [data-density]").forEach((btn) => {
-      btn.setAttribute("aria-pressed", String(btn.dataset.density === state.settings.density));
-    });
   }
 
   function renderSummary(list) {
     const el = $("resultSummary");
     if (!el) return;
-    const n = activeFilterCount();
     if (!state.items.length) { el.textContent = ""; return; }
-    const parts = [plural(list.length, "post")];
-    if (filters.search) parts.push('matching "' + filters.search + '"');
-    if (filters.author !== "all") parts.push("by @" + filters.author);
-    if (n && !filters.search && filters.author === "all") parts.push("after " + plural(n, "filter"));
-    el.textContent = parts.join(" ") + ".";
+
+    const posts = new Set(list.map((e) => e.item.tweet_id)).size;
+    const motion = list.filter((e) => M3EMedia.isMotion(e.media)).length;
+    const bits = [plural(list.length, "item") + " from " + plural(posts, "post")];
+    if (motion) bits.push(plural(motion, "video"));
+    if (activeFilterCount()) bits.push(plural(activeFilterCount(), "filter") + " on");
+    el.textContent = bits.join(" · ") + ".";
   }
 
   /* ===========================================================================
      7 · Rendering
      =========================================================================== */
+
   function initials(item) {
-    const name = item.author_name || item.author_username || "?";
-    const parts = String(name).trim().split(/\s+/).filter(Boolean);
-    return ((parts[0] || "?")[0] + (parts[1] ? parts[1][0] : "")).toUpperCase();
+    const source = item.author_name || item.author_username || "?";
+    return source.trim().slice(0, 2).toUpperCase();
   }
 
-  function typeBadge(item) {
-    if (item.state === "unavailable") return '<span class="m3e-badge m3e-badge--error">Unavailable</span>';
-    if (item.type === "retweet") return '<span class="m3e-badge m3e-badge--secondary">Repost</span>';
-    if (item.type === "quote") return '<span class="m3e-badge m3e-badge--tertiary">Quote</span>';
-    if (item.type === "reply") return '<span class="m3e-badge m3e-badge--outline">Reply</span>';
-    return "";
-  }
-
-  function metricsHtml(item) {
-    const rows = [
-      ["likes", "heart", item.likes, "likes"],
-      ["reposts", "repost", item.reposts, "reposts"],
-      ["replies", "reply", item.replies, "replies"],
-      ["views", "eye", item.views, "views"],
-    ];
-    return rows
-      .filter((r) => r[2] > 0)
-      .map((r) =>
-        '<span class="bmk__metric bmk__metric--' + r[0] + '">' + svg(r[1], 16) +
-        '<span aria-hidden="true">' + fmtCount(r[2]) + "</span>" +
-        '<span class="m3e-visually-hidden">' + r[2].toLocaleString() + " " + r[3] + "</span></span>"
-      )
-      .join("");
-  }
-
-  /** Highlight the search term inside already-escaped text. */
-  function highlight(escaped, term) {
-    if (!term) return escaped;
-    const needle = term.trim();
-    if (needle.length < 2) return escaped;
-    const safe = esc(needle).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    try {
-      return escaped.replace(new RegExp("(" + safe + ")", "gi"), "<mark>$1</mark>");
-    } catch { return escaped; }
+  function avatarHtml(item, cls) {
+    const url = item.author_profile_image_url;
+    if (url) {
+      return '<img class="' + cls + '" src="' + esc(url) + '" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" />';
+    }
+    return '<span class="' + cls + '">' + esc(initials(item)) + "</span>";
   }
 
   /**
-   * The media grid on a card: X's own 1 / 2 / 3 / 4 arrangement.
+   * One media tile.
    *
-   * Nothing here mounts a <video>. A list of two hundred bookmarks that are
-   * mostly video would mean two hundred media elements, each with its own
-   * decode pipeline and network activity — the page would crawl. Every cell
-   * renders as a poster image, and a real player is swapped in only when the
-   * user asks for one (see `playThumb`). This is the single most important
-   * performance decision on this surface.
+   * Posters only — no `<video>` element is created until something asks for
+   * playback. A rail of forty videos would otherwise mean forty media
+   * pipelines, forty network connections and a tab that stalls on open. The
+   * `<img>` costs a decode; a `<video preload=metadata>` costs a request per
+   * item before anyone has expressed any interest at all.
+   *
+   * `opts.sizes` is the rendered width hint, used to pick a CDN size and, on
+   * playback, an mp4 rung.
    */
-  function mediaStrip(item) {
-    const all = item.media;
-    if (!all.length) return "";
+  function tileHtml(entry, opts) {
+    const options = opts || {};
+    const m = entry.media;
+    const item = entry.item;
+    const ar = M3EMedia.aspectRatio(m);
+    const badge = M3EMedia.badgeFor(m);
+    const motion = M3EMedia.isMotion(m);
+    const unplayable = M3EMedia.hlsOnly(m);
+    const still = M3EMedia.sizedImage(m.poster || m.url, options.size || "small");
+    const count = item.media.length;
+    const selected = state.selectedId === entry.id;
 
-    const shown = all.slice(0, 4);
-    const overflow = all.length - shown.length;
+    /* Alt text is the caption when there is one. Where there isn't, the post's
+       own text is a far better description than "image" — it is usually what
+       the picture is of. Truncated, because alt is spoken, not read. */
+    const alt = m.alt || (item.text ? item.text.trim().slice(0, 140) : "") ||
+      (motion ? "Video" : "Photo") + " from " + (item.author_name || "@" + (item.author_username || "unknown"));
+
+    /* The label states the ACTION, then the subject, then the source — in
+       that order, because a screen-reader user hears the first words while
+       deciding whether to keep listening. Alt text is quoted rather than
+       spliced into the sentence: captured captions are arbitrary prose and
+       reliably produce nonsense when treated as a noun phrase. */
+    const who = item.author_name || "@" + (item.author_username || "unknown");
+    const what = motion ? (isGif(m) ? "GIF" : "video") : "photo";
+    const label = (motion ? "Play " : "Open ") + what + " by " + who +
+      (m.alt ? ": " + m.alt.slice(0, 100) : "");
 
     return (
-      '<div class="bmk__media" data-count="' + shown.length + '">' +
-      shown.map((m, i) => {
-        const motion = M3EMedia.isMotion(m);
-        const badge = M3EMedia.badgeFor(m);
-        const unplayable = motion && M3EMedia.hlsOnly(m);
-        // Cards ask the CDN for a small WebP; the full-size original is only
-        // fetched if the user opens the post.
-        const poster = M3EMedia.sizedImage(m.poster || m.url, "small");
-        const last = i === shown.length - 1;
+      '<button type="button" class="m3e-tile tile" data-entry="' + esc(entry.id) + '"' +
+      ' data-motion="' + motion + '"' +
+      (m.sensitive ? ' data-sensitive="true"' : "") +
+      (selected ? ' data-selected="true"' : "") +
+      ' style="--_ar:' + ar + '"' +
+      ' aria-label="' + esc(label) + '"' +
+      /* `tileHint` lives in the shell, not in a view, so this reference is
+         never dangling. An aria-describedby pointing at an id that only
+         exists in one of three views is silently dropped by the two others,
+         which is worse than not having it. */
+      ' aria-describedby="tileHint"' +
+      ">" +
+        '<span class="m3e-tile__media">' +
+          (still
+            ? '<img src="' + esc(still) + '" alt="' + esc(alt) + '" loading="lazy" decoding="async"' +
+              ' referrerpolicy="no-referrer" data-media' +
+              (m.width ? ' width="' + m.width + '"' : "") + (m.height ? ' height="' + m.height + '"' : "") + " />"
+            : '<span class="tile__missing">' + svg("image", 28) + "</span>") +
+        "</span>" +
 
-        /* Every cell does something now: motion plays inline, stills open the
-           lightbox, and unplayable video opens the lightbox too so the user
-           still gets the poster full size and a route to X. */
-        const interactive = true;
-        const label = motion && !unplayable
-          ? (m.type === "animated_gif" ? "Play GIF" : "Play video" + (badge ? " (" + badge + ")" : ""))
-          : all.length > 1
-          ? "View item " + (i + 1) + " of " + all.length + (m.alt ? ": " + m.alt : "")
-          : "View media" + (m.alt ? ": " + m.alt : "");
+        (m.sensitive ? '<span class="tile__veil">' + svg("eyeoff", 20) +
+          '<span class="m3e-label-small">Sensitive · tap to show</span></span>' : "") +
 
-        return (
-          '<button class="bmk__thumb" type="button" data-play="' + i + '"' +
-            ' aria-label="' + esc(label) + '"' +
-            (m.sensitive ? ' data-sensitive="true"' : "") +
-            ' style="--_ar:' + esc(M3EMedia.aspectRatio(m)) + '">' +
+        (motion && !unplayable ? '<span class="m3e-tile__play">' + svg("play", 28) + "</span>" : "") +
+        (unplayable ? '<span class="m3e-tile__play tile__play--dead" title="Not playable here">' + svg("external", 24) + "</span>" : "") +
 
-            (poster
-              ? '<img src="' + esc(poster) + '" alt="' + esc(m.alt || "") + '"' +
-                (m.width && m.height ? ' width="' + m.width + '" height="' + m.height + '"' : "") +
-                ' loading="lazy" decoding="async" referrerpolicy="no-referrer" data-media="1">'
-              : "") +
+        (badge ? '<span class="m3e-tile__badge">' + esc(badge) + "</span>" : "") +
+        (count > 1 && !badge
+          ? '<span class="m3e-tile__badge">' + entry.media.position + "/" + count + "</span>"
+          : "") +
 
-            (unplayable
-              ? '<span class="bmk__thumb-fallback' + (poster ? " bmk__thumb-fallback--over" : "") + '">' +
-                svg("play", 20) + "<span>Open on X to watch</span></span>"
-              : interactive
-              ? '<span class="bmk__thumb-play">' + svg("play", 24) + "</span>"
-              : "") +
-
-            (badge && !unplayable ? '<span class="bmk__thumb-tag">' + esc(badge) + "</span>" : "") +
-            (m.sensitive
-              ? '<span class="bmk__thumb-warn">' + svg("eye", 20) + "<span>Sensitive — tap to view</span></span>"
-              : "") +
-            (last && overflow > 0 ? '<span class="bmk__thumb-more">+' + overflow + "</span>" : "") +
-          "</button>"
-        );
-      }).join("") + "</div>"
+        '<span class="m3e-tile__scrim">' +
+          '<span class="m3e-tile__meta">' +
+            '<span class="m3e-tile__author m3e-label-large">' +
+              esc(item.author_name || "@" + (item.author_username || "unknown")) + "</span>" +
+            '<span class="m3e-tile__sub m3e-body-small">' +
+              esc(fmtRelative(item.posted)) +
+              (item.likes ? " · " + fmtCount(item.likes) + " likes" : "") +
+            "</span>" +
+          "</span>" +
+        "</span>" +
+      "</button>"
     );
   }
 
-  /** Open the full-screen viewer on a post's media. */
-  function openLightbox(item, start) {
-    if (!item || !item.media.length || !window.XLightbox) return;
-    M3EMedia.stopAll();
-    XLightbox.open(item.media, start, {
-      url: item.url,
-      onCopy: (href) => copyText(href, "Media link copied."),
+  /* ---------------------------------------------------------------------------
+     Rails view
+
+     The default, and the reason the product exists. A rail answers "what kind
+     of thing is this?" before you have looked at anything: motion, this week,
+     this author, this size. Grazing rather than searching.
+
+     Rails are computed, never stored. There is no "create a collection" step
+     because a bookmark archive that asks you to file things is a bookmark
+     archive nobody uses — that is the exact failure the tag system was.
+     --------------------------------------------------------------------------- */
+  /* A rail is only worth its vertical space if it shows the reader something
+     they would not otherwise have found. Below this many items the whole
+     library fits in one screen of grid, and a stack of rails that each
+     contain the same twelve things is worse than no rails at all. */
+  const RAILS_MIN_ITEMS = 10;
+
+  function buildRails(list) {
+    /* Under the threshold, the grouping is dropped but the horizontal gesture
+       is not — it is the product. What replaces six near-identical rails is
+       ONE hero carousel: big items, one and a bit per screen, swiped through.
+       For a small library that is strictly better than a grid, because there
+       is no searching to do and every item can be shown properly. */
+    if (list.length < RAILS_MIN_ITEMS) {
+      const here = COLLECTIONS.find((c) => c.id === state.collection);
+      return [{
+        id: "all",
+        title: here ? here.label : "Everything",
+        icon: "grid",
+        entries: list,
+        layout: "hero",
+      }];
+    }
+
+    const rails = [];
+    /* Every rail after the first few draws from what is left, so the page
+       is a tour of the library rather than the same items six times. The
+       big anchor rails deliberately do NOT consume from the pool — they are
+       meant to overlap, because "newest" and "video" are different questions
+       about the same items. The discovery rails at the end do. */
+    const spent = new Set();
+    const spend = (entries) => { entries.forEach((e) => spent.add(e.id)); return entries; };
+
+    const take = (source, predicate, limit) => {
+      const out = [];
+      for (const e of source) {
+        if (out.length >= limit) break;
+        if (predicate(e)) out.push(e);
+      }
+      return out;
+    };
+
+    // 1 · Continue browsing — only when there is a history to continue.
+    const recent = list
+      .filter((e) => getMeta(e.item.tweet_id).openedAt)
+      .sort((a, b) =>
+        new Date(getMeta(b.item.tweet_id).openedAt) - new Date(getMeta(a.item.tweet_id).openedAt))
+      .slice(0, 16);
+    if (recent.length >= 3) {
+      rails.push({ id: "recent", title: "Pick up where you left off", icon: "clock", entries: recent, layout: "multi" });
+    }
+
+    // 2 · Motion. The most likely thing someone came here to watch, and the
+    //     hardest thing to find in a wall of stills. Hero layout, because a
+    //     video thumbnail at tile size tells you almost nothing.
+    const motion = take(list, (e) => M3EMedia.isMotion(e.media), 20);
+    if (motion.length >= 2) {
+      rails.push({ id: "motion", title: "Video & GIFs", icon: "play", entries: motion, layout: "hero" });
+    }
+
+    // 3 · The newest things, whatever the active sort is. A rail is a lens,
+    //     and "latest" is the one lens that should never be sorted away.
+    const newest = list.slice().sort((a, b) => b.item._ts - a.item._ts).slice(0, 20);
+    if (newest.length) {
+      rails.push({ id: "newest", title: "Recently posted", icon: "clock", entries: spend(newest), layout: "multi" });
+    }
+
+    // 4 · Per-author rails for whoever you save most. This is the strongest
+    //     natural grouping in the data and it costs the user nothing — no
+    //     filing, no tagging, no decision at save time.
+    const byAuthor = new Map();
+    for (const e of list) {
+      const u = e.item.author_username;
+      if (!u) continue;
+      if (!byAuthor.has(u)) byAuthor.set(u, []);
+      byAuthor.get(u).push(e);
+    }
+    Array.from(byAuthor.entries())
+      .filter(([, entries]) => entries.length >= 4)
+      .sort((a, b) => b[1].length - a[1].length)
+      .slice(0, 4)
+      .forEach(([username, entries]) => {
+        rails.push({
+          id: "author:" + username,
+          title: entries[0].item.author_name || "@" + username,
+          avatar: entries[0].item,
+          entries: spend(entries.slice(0, 20)),
+          layout: "multi",
+          author: username,
+        });
+      });
+
+    // 5 · Rediscover. Drawn from what NOTHING above surfaced, ordered by the
+    //     session seed — so the same library genuinely looks different on
+    //     different days rather than reprinting the top of the list.
+    const surprise = list
+      .filter((e) => !spent.has(e.id))
+      .sort((a, b) => shuffleScore(a) - shuffleScore(b))
+      .slice(0, 20);
+    if (surprise.length >= 4) {
+      rails.push({ id: "surprise", title: "Rediscover", icon: "shuffle", entries: spend(surprise), layout: "multi" });
+    }
+
+    // 6 · Everything, so nothing is unreachable from this view.
+    rails.push({
+      id: "all",
+      title: "Everything",
+      icon: "grid",
+      entries: list.slice(0, 60),
+      layout: "uncontained",
+      more: list.length > 60,
+    });
+
+    return rails;
+  }
+
+  function railHtml(rail) {
+    const head =
+      '<div class="m3e-rail-head">' +
+        (rail.avatar ? avatarHtml(rail.avatar, "rail-head__avatar") : "") +
+        '<h2 class="m3e-title-large m3e-title-large--emphasized m3e-rail-head__title" id="rail-' +
+          esc(rail.id) + '">' + esc(rail.title) + "</h2>" +
+        '<span class="m3e-label-medium m3e-rail-head__count">' + rail.entries.length + "</span>" +
+        '<span class="m3e-rail-head__spacer"></span>' +
+        (rail.author
+          ? '<button class="m3e-button m3e-button--text m3e-button--xs m3e-state" data-rail-author="' +
+            esc(rail.author) + '">See all</button>'
+          : "") +
+        (rail.more
+          ? '<button class="m3e-button m3e-button--text m3e-button--xs m3e-state" data-rail-grid="1">See all</button>'
+          : "") +
+        '<div class="m3e-rail-head__nav">' +
+          '<button class="m3e-carousel-arrow m3e-state" data-scroll="-1" aria-label="Scroll ' +
+            esc(rail.title) + ' left">' + svg("prev", 20) + "</button>" +
+          '<button class="m3e-carousel-arrow m3e-state" data-scroll="1" aria-label="Scroll ' +
+            esc(rail.title) + ' right">' + svg("next", 20) + "</button>" +
+        "</div>" +
+      "</div>";
+
+    const size = rail.layout === "hero" ? "medium" : "small";
+    /* The ratio is set on the CELL, not only on the tile: in a multi-browse
+       rail the height is fixed and the cell's WIDTH is derived from the
+       ratio, which is what keeps a strip of mixed portrait and landscape
+       media reading as one clean band instead of a ragged skyline. */
+    const tiles = rail.entries.map((e) =>
+      '<div class="m3e-carousel__item rail__cell" style="--_ar:' +
+      M3EMedia.aspectRatio(e.media) + '">' + tileHtml(e, { size }) + "</div>"
+    ).join("");
+
+    return (
+      '<section class="rail" data-rail="' + esc(rail.id) + '" aria-labelledby="rail-' + esc(rail.id) + '">' +
+        head +
+        '<div class="m3e-carousel m3e-carousel--' + rail.layout + ' m3e-carousel--bleed rail__scroll"' +
+        ' tabindex="0" role="group" aria-labelledby="rail-' + esc(rail.id) + '">' + tiles + "</div>" +
+        '<div class="m3e-scroll-progress rail__progress" aria-hidden="true">' +
+          '<span class="m3e-scroll-progress__bar"></span>' +
+        "</div>" +
+      "</section>"
+    );
+  }
+
+  function renderRails(list) {
+    const feed = $("feed");
+    feed.dataset.view = "rails";
+    if (!list.length) { feed.innerHTML = emptyStateHtml(); return; }
+
+    feed.innerHTML = buildRails(list).map(railHtml).join("");
+
+    // Wire each rail's carousel controller: arrows, keyboard, extent bar.
+    feed.querySelectorAll(".rail").forEach((section) => {
+      const scroller = section.querySelector(".rail__scroll");
+      const nav = section.querySelectorAll("[data-scroll]");
+      carousels.push(
+        M3E.bindCarousel(scroller, {
+          prev: nav[0],
+          next: nav[1],
+          progress: section.querySelector(".m3e-scroll-progress__bar"),
+        })
+      );
+    });
+
+    feed.querySelectorAll("[data-rail-author]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        filters.author = btn.dataset.railAuthor;
+        setViewAndRender("grid");
+      });
+    });
+    feed.querySelectorAll("[data-rail-grid]").forEach((btn) => {
+      btn.addEventListener("click", () => setViewAndRender("grid"));
     });
   }
 
-  /**
-   * Swap a poster cell for a real player, in place.
-   * Called from the card click handler; nothing else mounts video on this view.
-   */
-  function playThumb(thumb, media) {
-    if (!thumb || thumb.dataset.playing === "true") return;
-
-    // First tap on sensitive media only un-blurs it. Watching is a second,
-    // deliberate action.
-    if (thumb.dataset.sensitive === "true") {
-      delete thumb.dataset.sensitive;
-      const warn = thumb.querySelector(".bmk__thumb-warn");
-      if (warn) warn.remove();
-      return;
-    }
-
-    /* Stills, and video this browser can't play, open full screen instead.
-       The `+N` cell opens at the first hidden item, because that is what the
-       badge is pointing at. */
-    const item = state.items.find((i) => i.tweet_id === thumb.closest(".bmk").dataset.id);
-    const index = Number(thumb.dataset.play);
-    if (!M3EMedia.isMotion(media) || M3EMedia.hlsOnly(media)) {
-      openLightbox(item, index);
-      return;
-    }
-
-    const video = M3EMedia.createVideo(media, { autoplay: true, preload: "auto" });
-    if (!video) return;
-
-    thumb.dataset.playing = "true";
-    const poster = thumb.querySelector("img");
-    if (poster) poster.remove();
-    thumb.prepend(video);
-
-    // If the source turns out to be unplayable, restore an honest fallback
-    // rather than leaving a black rectangle.
-    video.addEventListener("error", () => {
-      thumb.innerHTML =
-        '<span class="bmk__thumb-fallback">' + svg("play", 20) +
-        "<span>Media unavailable</span></span>";
-    }, { once: true });
+  function setViewAndRender(view) {
+    state.view = view;
+    state.settings.view = view;
+    saveSettings();
+    syncViewSeg();
+    render();
   }
 
-  function fmtDuration(ms) {
-    const total = Math.round((Number(ms) || 0) / 1000);
-    const m = Math.floor(total / 60);
-    const s = total % 60;
-    return m + ":" + String(s).padStart(2, "0");
+  /* ---------------------------------------------------------------------------
+     Grid view
+
+     A justified, aspect-respecting grid. Media keeps its own shape — a
+     portrait screenshot stays portrait — because cropping everything to a
+     square is how a media browser turns into a contact sheet, and a contact
+     sheet of screenshots is unreadable.
+
+     Implemented as CSS columns rather than a JS masonry: no measurement pass,
+     no reflow storm on resize, and it degrades to a single column with no
+     media query. The tradeoff is reading order runs down each column rather
+     than across, which is the right tradeoff for a browsing surface where
+     there is no order to lose.
+     --------------------------------------------------------------------------- */
+  function renderGrid(list, append) {
+    const feed = $("feed");
+    feed.dataset.view = "grid";
+
+    if (!list.length) { feed.innerHTML = emptyStateHtml(); return; }
+
+    const from = append ? state.rendered : 0;
+    const slice = list.slice(from, from + CHUNK);
+    const html = slice.map((e) => tileHtml(e, { size: "small" })).join("");
+
+    if (append) {
+      const host = feed.querySelector(".grid");
+      if (host) host.insertAdjacentHTML("beforeend", html);
+    } else {
+      feed.innerHTML =
+        '<div class="grid" data-size="' + esc(state.settings.tileSize) + '">' + html + "</div>";
+    }
+    state.rendered = from + slice.length;
+
+    renderLoadMore(list);
   }
 
-  function cardHtml(item, index) {
-    const meta = getMeta(item.tweet_id);
-    const posted = parseTweetDate(item.tweet_created_at);
-    const selected = state.selectedId === item.tweet_id;
-    const archived = meta.active === false;
+  function renderLoadMore(list) {
+    const host = $("loadMoreHost");
+    if (!host) return;
+    const remaining = list.length - state.rendered;
+    if (state.view !== "grid" || remaining <= 0) { host.innerHTML = ""; return; }
 
-    const avatar = item.author_profile_image_url
-      ? '<img class="bmk__avatar" src="' + esc(item.author_profile_image_url) + '" alt="" loading="lazy" referrerpolicy="no-referrer" data-media="1">'
-      : '<span class="bmk__avatar" aria-hidden="true">' + esc(initials(item)) + "</span>";
+    host.innerHTML =
+      '<button class="m3e-button m3e-button--tonal m3e-button--m m3e-state" id="loadMore">' +
+      "<span>Show " + Math.min(CHUNK, remaining).toLocaleString() + " more</span></button>";
+    $("loadMore").addEventListener("click", () => {
+      renderGrid(list, true);
+      if (autoplayer && autoplayer.rescan) autoplayer.rescan();
+    });
+  }
 
-    const body = item.state === "unavailable"
-      ? '<p class="bmk__text bmk__text--unavailable">This post is no longer available on X. Your captured metadata is kept.</p>'
-      : '<p class="bmk__text">' + highlight(esc(item.text), filters.search) + "</p>";
+  /* ---------------------------------------------------------------------------
+     Theater view
 
-    const quote = item.quoted_tweet && item.quoted_tweet.tweet_id
-      ? '<div class="bmk__quote"><span class="bmk__quote-author">' +
-        esc(item.quoted_tweet.author_name || item.quoted_tweet.author_username || "Unknown") +
-        (item.quoted_tweet.author_username ? " @" + esc(item.quoted_tweet.author_username) : "") +
-        '</span><p class="bmk__quote-text">' + esc(item.quoted_tweet.text || "No text") + "</p></div>"
-      : "";
+     One item per screen, paged horizontally. This is the X-style gesture
+     applied to a whole library rather than to the four photos inside one
+     post: swipe (or arrow, or scroll) and the next thing you saved is
+     already there, full size, playing.
 
-    const tags = meta.tags.length
-      ? '<div class="bmk__tags">' + meta.tags.map((t) =>
-          '<span class="m3e-badge m3e-badge--primary">#' + esc(t) + "</span>").join("") + "</div>"
-      : "";
+     Built on scroll-snap with `scroll-snap-stop: always`, so a fast flick
+     advances exactly one item rather than skidding through six. Videos mount
+     lazily and autoplay only while centred, which is what `autoplayInView`
+     is for.
+     --------------------------------------------------------------------------- */
+  function renderTheater(list) {
+    const feed = $("feed");
+    feed.dataset.view = "theater";
+    if (!list.length) { feed.innerHTML = emptyStateHtml(); return; }
 
-    const noteMark = meta.note ? '<span class="m3e-badge m3e-badge--outline">' + svg("note", 12) + " Note</span>" : "";
-    const captured = item.first_seen_at ? fmtDate(new Date(item.first_seen_at)) : "—";
+    const slice = list.slice(0, CHUNK);
+    state.rendered = slice.length;
+
+    feed.innerHTML =
+      '<div class="theater" id="theater" tabindex="0" role="group" aria-label="Media, one at a time">' +
+        slice.map((e) => theaterSlideHtml(e)).join("") +
+      "</div>" +
+      '<div class="theater__hint m3e-label-medium" aria-hidden="true">' +
+        svg("prev", 16) + "<span>Swipe or use arrow keys</span>" + svg("next", 16) +
+      "</div>";
+
+    const rail = $("theater");
+    carousels.push(M3E.bindCarousel(rail, {}));
+
+    /* Mount the real player for whichever slide is centred, and tear down the
+       ones that are not. A hundred <video> elements on one page is how a tab
+       runs out of memory; one is how a feed feels instant. */
+    mountTheaterPlayers(rail, slice);
+  }
+
+  function theaterSlideHtml(entry) {
+    const m = entry.media;
+    const item = entry.item;
+    const motion = M3EMedia.isMotion(m);
+    const unplayable = M3EMedia.hlsOnly(m);
+    const still = M3EMedia.sizedImage(m.poster || m.url, "large");
+    const ar = M3EMedia.aspectRatio(m);
 
     return (
-      '<article class="bmk m3e-enter' + (archived ? " bmk--archived" : "") + '"' +
-      ' style="--m3e-index:' + Math.min(index, 12) + '"' +
-      ' data-id="' + esc(item.tweet_id) + '" role="button" tabindex="0"' +
-      ' aria-selected="' + selected + '"' +
-      ' aria-label="Open details for post by ' + esc(item.author_name || item.author_username || "unknown author") + '">' +
-
-        '<header class="bmk__head">' + avatar +
-          '<span class="bmk__identity">' +
-            '<span class="bmk__name"><span>' + esc(item.author_name || item.author_username || "Unknown") + "</span>" +
-              typeBadge(item) + (archived ? '<span class="m3e-badge">Archived</span>' : "") + "</span>" +
-            '<span class="bmk__handle">' +
-              (item.author_username ? "@" + esc(item.author_username) : "unknown") +
-              (item.type === "retweet" && item.retweeted_by_username ? " · reposted by @" + esc(item.retweeted_by_username) : "") +
-            "</span>" +
-          "</span>" +
-          '<time class="bmk__time"' + (posted ? ' datetime="' + posted.toISOString() + '"' : "") + '>' +
-            esc(fmtRelative(posted)) + "</time>" +
-        "</header>" +
-
-        body + mediaStrip(item) + quote +
-
-        '<div class="bmk__meta">' + metricsHtml(item) +
-          (item.has_media ? '<span class="m3e-badge">Media</span>' : "") +
-          (item.has_links ? '<span class="m3e-badge">Link</span>' : "") + noteMark +
+      '<article class="slide" data-entry="' + esc(entry.id) + '" style="--_ar:' + ar + '">' +
+        '<div class="slide__stage"' + (m.sensitive ? ' data-sensitive="true"' : "") + '>' +
+          (still
+            ? '<img class="slide__media" src="' + esc(still) + '" alt="' + esc(m.alt || item.text.slice(0, 140) || "Saved media") +
+              '" loading="lazy" decoding="async" referrerpolicy="no-referrer" data-media />'
+            : '<div class="slide__missing">' + svg("image", 40) + "</div>") +
+          (motion && !unplayable
+            ? '<button type="button" class="slide__play" data-play-slide aria-label="Play video">' + svg("play", 34) + "</button>"
+            : "") +
+          (unplayable
+            ? '<div class="slide__dead">' + svg("play", 28) +
+              '<p class="m3e-body-medium">This video is published only as an adaptive stream, which this browser can\'t play without extra software.</p>' +
+              (item.url ? '<a class="m3e-button m3e-button--filled m3e-state" href="' + esc(item.url) +
+                '" target="_blank" rel="noopener noreferrer">' + svg("external", 18) + "<span>Watch on X</span></a>" : "") +
+              "</div>"
+            : "") +
+          (m.sensitive
+            ? '<button type="button" class="slide__veil" data-reveal>' + svg("eyeoff", 28) +
+              '<span class="m3e-title-medium">Sensitive media</span>' +
+              '<span class="m3e-body-medium">Tap to show</span></button>'
+            : "") +
         "</div>" +
-        tags +
 
-        '<footer class="bmk__foot">' +
-          '<span class="bmk__foot-meta">Captured ' + esc(captured) + "</span>" +
-          '<span class="bmk__actions">' +
-            '<button class="m3e-icon-button m3e-icon-button--s m3e-state" data-act="tag" data-stop="1"' +
-              ' aria-label="Add a tag">' + svg("tag", 18) + "</button>" +
-            '<button class="m3e-icon-button m3e-icon-button--s m3e-state" data-act="archive" data-stop="1"' +
-              ' aria-label="' + (archived ? "Restore from archive" : "Archive this post") + '">' +
-              svg(archived ? "check" : "archive", 18) + "</button>" +
+        '<footer class="slide__bar">' +
+          avatarHtml(item, "slide__avatar") +
+          '<div class="slide__who">' +
+            '<p class="m3e-title-small m3e-title-small--emphasized">' +
+              esc(item.author_name || "@" + (item.author_username || "unknown")) + "</p>" +
+            '<p class="m3e-body-small slide__sub">' +
+              (item.author_username ? "@" + esc(item.author_username) + " · " : "") +
+              esc(fmtDate(item.posted)) + "</p>" +
+          "</div>" +
+          '<div class="slide__acts">' +
+            '<button class="m3e-icon-button m3e-state" data-slide-info aria-label="Show the post">' + svg("expand", 22) + "</button>" +
             (item.url
-              ? '<a class="m3e-icon-button m3e-icon-button--s m3e-state" href="' + esc(item.url) +
-                '" target="_blank" rel="noopener noreferrer" data-stop="1" aria-label="Open on X in a new tab">' +
-                svg("external", 18) + "</a>"
+              ? '<a class="m3e-icon-button m3e-state" href="' + esc(item.url) + '" target="_blank" rel="noopener noreferrer"' +
+                ' aria-label="Open on X">' + svg("external", 22) + "</a>"
               : "") +
-          "</span>" +
+          "</div>" +
         "</footer>" +
       "</article>"
     );
   }
 
-  function renderChunk(list, append) {
-    const host = $("results");
-    if (!host) return;
+  function mountTheaterPlayers(rail, entries) {
+    if (typeof IntersectionObserver === "undefined") return;
+    const byId = new Map(entries.map((e) => [e.id, e]));
 
-    if (!append) { host.innerHTML = ""; state.rendered = 0; }
+    const observer = new IntersectionObserver(
+      (records) => {
+        for (const record of records) {
+          const slide = record.target;
+          const entry = byId.get(slide.dataset.entry);
+          if (!entry) continue;
+          const centred = record.isIntersecting && record.intersectionRatio > 0.7;
 
-    const end = Math.min(state.rendered + CHUNK, list.length);
-    const html = [];
-    for (let i = state.rendered; i < end; i++) html.push(cardHtml(list[i], i - state.rendered));
-    host.insertAdjacentHTML("beforeend", html.join(""));
-    state.rendered = end;
+          if (centred) {
+            slide.dataset.active = "true";
+            if (M3EMedia.isMotion(entry.media) && !slide.querySelector("video")) {
+              mountSlideVideo(slide, entry);
+            }
+          } else {
+            slide.dataset.active = "false";
+            const video = slide.querySelector("video");
+            // Tear the element down rather than just pausing it: a paused
+            // <video> still holds a decoder and a buffer, and fifty of them
+            // is a memory leak with extra steps.
+            if (video) { try { video.pause(); } catch (_) {} video.remove(); }
+          }
+        }
+      },
+      { root: rail, threshold: [0, 0.7, 1] }
+    );
 
-    const more = $("loadMoreHost");
-    if (more) {
-      const remaining = list.length - state.rendered;
-      more.innerHTML = remaining > 0
-        ? '<button class="m3e-button m3e-button--tonal m3e-state" id="loadMore">' +
-          "Show " + Math.min(CHUNK, remaining) + " more · " + plural(remaining, "post") + " left</button>"
-        : "";
-      const btn = $("loadMore");
-      if (btn) btn.addEventListener("click", () => renderChunk(list, true));
-    }
+    rail.querySelectorAll(".slide").forEach((s) => observer.observe(s));
   }
 
+  function mountSlideVideo(slide, entry) {
+    const stage = slide.querySelector(".slide__stage");
+    if (!stage) return;
+    const video = M3EMedia.createVideo(entry.media, {
+      autoplay: state.settings.autoplay && !M3E.reducedMotion(),
+      preload: "auto",
+      width: stage.clientWidth || 900,
+      onFail: () => {
+        stage.insertAdjacentHTML(
+          "beforeend",
+          '<div class="slide__dead"><p class="m3e-body-medium">This video could not be loaded.</p></div>'
+        );
+      },
+    });
+    if (!video) return;
+    video.classList.add("slide__media", "slide__video");
+    stage.appendChild(video);
+    const play = stage.querySelector(".slide__play");
+    if (play) play.remove();
+  }
+
+  /* ---------------------------------------------------------------------------
+     Empty states
+     --------------------------------------------------------------------------- */
   function emptyStateHtml() {
     const filtered = activeFilterCount() > 0 || state.collection !== "all";
+
     if (!state.items.length) {
       return (
         '<div class="m3e-empty">' +
-          '<div class="m3e-empty__glyph">' + svg("download", 40) + "</div>" +
-          '<h2 class="m3e-headline-small m3e-headline-small--emphasized m3e-empty__title">Your library is waiting</h2>' +
-          '<p class="m3e-body-large m3e-empty__body">Capture your bookmarks with the extension, then import the JSON here. Everything stays on this device.</p>' +
-          '<button class="m3e-button m3e-button--filled m3e-state" data-empty-action="import">' +
-            svg("download") + "<span>Import a file</span></button>" +
+          '<div class="m3e-empty__glyph">' + svg("image", 40) + "</div>" +
+          '<h2 class="m3e-headline-small m3e-headline-small--emphasized">Nothing here yet</h2>' +
+          '<p class="m3e-body-large">Capture your bookmarks with the extension, or import a file you exported earlier.</p>' +
+          '<div class="m3e-empty__actions">' +
+            '<button class="m3e-button m3e-button--filled m3e-button--m m3e-state" data-empty="import">' +
+              svg("download") + "<span>Import a file</span></button>" +
+          "</div>" +
         "</div>"
       );
     }
-    if (filtered) {
-      return (
-        '<div class="m3e-empty">' +
-          '<div class="m3e-empty__glyph">' + svg("layers", 40) + "</div>" +
-          '<h2 class="m3e-headline-small m3e-headline-small--emphasized m3e-empty__title">No posts match</h2>' +
-          '<p class="m3e-body-large m3e-empty__body">Nothing in <b>' +
-            esc((COLLECTIONS.find((c) => c.id === state.collection) || {}).label || "this view") +
-            "</b> fits the current filters. Loosen one, or clear them all.</p>" +
-          '<button class="m3e-button m3e-button--tonal m3e-state" data-empty-action="reset">' +
-            svg("close") + "<span>Clear filters</span></button>" +
-        "</div>"
-      );
-    }
+
+    /* An empty state that only reports absence is a dead end. Each one names
+       what is missing in the terms of THIS destination and offers the single
+       action most likely to be what the reader wanted — which is different
+       per collection, so a generic string cannot do it. */
+    const EMPTY = {
+      recent: {
+        icon: "clock",
+        title: "Nothing opened yet",
+        body: "Anything you look at comes back here, so you can pick up where you stopped.",
+        action: activeFilterCount() ? null : { id: "all", label: "Browse everything" },
+      },
+      archived: {
+        icon: "archive",
+        title: "Nothing archived",
+        body: "Archiving hides something from your other collections without deleting it. It stays here.",
+        action: null,
+      },
+      video: {
+        icon: "play",
+        title: "No video here",
+        body: "Nothing in this library has a video or a GIF attached — or the filters have excluded them all.",
+        action: activeFilterCount() ? { id: "clear", label: "Clear filters" } : { id: "all", label: "See everything" },
+      },
+      photos: {
+        icon: "image",
+        title: "No photos here",
+        body: "Nothing in this library has a still image — or the filters have excluded them all.",
+        action: activeFilterCount() ? { id: "clear", label: "Clear filters" } : { id: "all", label: "See everything" },
+      },
+    };
+
+    const spec = EMPTY[state.collection] || {
+      icon: "image",
+      title: filters.search ? "Nothing matches “" + filters.search.slice(0, 40) + "”" : "No media matches",
+      body: filtered
+        ? "Try removing a filter, or search for something else."
+        : "This collection is empty.",
+      action: filtered ? { id: "clear", label: "Clear filters" } : null,
+    };
+
     return (
       '<div class="m3e-empty">' +
-        '<div class="m3e-empty__glyph">' + svg("check", 40) + "</div>" +
-        '<h2 class="m3e-headline-small m3e-headline-small--emphasized m3e-empty__title">All clear</h2>' +
-        '<p class="m3e-body-large m3e-empty__body">Nothing left in this collection.</p>' +
+        '<div class="m3e-empty__glyph">' + svg(spec.icon, 40) + "</div>" +
+        '<h2 class="m3e-headline-small m3e-headline-small--emphasized">' + esc(spec.title) + "</h2>" +
+        '<p class="m3e-body-large">' + esc(spec.body) + "</p>" +
+        (spec.action
+          ? '<div class="m3e-empty__actions">' +
+            '<button class="m3e-button m3e-button--tonal m3e-button--m m3e-state" data-empty="' +
+              esc(spec.action.id) + '"><span>' + esc(spec.action.label) + "</span></button></div>"
+          : "") +
       "</div>"
     );
   }
 
+  /* ---------------------------------------------------------------------------
+     The render entry point
+     --------------------------------------------------------------------------- */
   function render() {
     syncUrl();
-    const list = visible();
+
+    // Tear down anything the previous render owned, or its observers keep
+    // firing against detached nodes for the life of the page.
+    while (carousels.length) { const c = carousels.pop(); if (c && c.destroy) c.destroy(); }
+    if (autoplayer && autoplayer.disconnect) { autoplayer.disconnect(); autoplayer = null; }
+    M3EMedia.stopAll();
+
+    const list = mediaIndex();
     state.lastList = list;
+    state.rendered = 0;
 
     renderFilterBar();
-    renderHero(list);
     renderSummary(list);
 
-    const host = $("results");
-    const more = $("loadMoreHost");
-    if (!host) return;
+    if (state.view === "rails") renderRails(list);
+    else if (state.view === "theater") renderTheater(list);
+    else renderGrid(list, false);
 
-    if (!list.length) {
-      host.innerHTML = emptyStateHtml();
-      if (more) more.innerHTML = "";
-      host.querySelectorAll("[data-empty-action]").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          if (btn.dataset.emptyAction === "import") $("fileImport").click();
-          else resetFilters();
-        });
-      });
-      return;
-    }
+    renderLoadMore(list);
 
-    renderChunk(list, false);
-
-    // Keep the detail pane honest if the selection fell out of the view.
-    if (state.selectedId && !list.some((i) => i.tweet_id === state.selectedId)) {
-      if (!state.items.some((i) => i.tweet_id === state.selectedId)) clearDetail();
+    // GIFs autoplay in place wherever they are visible: a still frame of a
+    // looping GIF is an unreadable object, and the loop IS the content.
+    if (state.view !== "theater" && state.settings.autoplay) {
+      autoplayer = M3EMedia.autoplayInView($("feed"), { threshold: 0.5 });
     }
   }
 
   function showSkeletons(n) {
-    const host = $("results");
-    if (!host) return;
-    host.innerHTML = Array.from({ length: n }, () =>
-      '<div class="skel-card" aria-hidden="true">' +
-        '<div class="skel-card__head">' +
-          '<div class="m3e-skeleton" style="width:40px;height:40px;border-radius:var(--md-sys-shape-corner-full)"></div>' +
-          '<div style="flex:1"><div class="m3e-skeleton" style="width:40%;height:14px"></div>' +
-          '<div class="m3e-skeleton" style="width:24%;height:10px;margin-top:8px"></div></div>' +
-        "</div>" +
-        '<div class="m3e-skeleton" style="width:96%;height:12px"></div>' +
-        '<div class="m3e-skeleton" style="width:88%;height:12px"></div>' +
-        '<div class="m3e-skeleton" style="width:62%;height:12px"></div>' +
-      "</div>"
-    ).join("");
+    const feed = $("feed");
+    if (!feed) return;
+    feed.dataset.view = "grid";
+    feed.innerHTML =
+      '<div class="grid">' +
+      Array.from({ length: n || 8 }, () =>
+        '<div class="m3e-skeleton tile-skeleton" style="--_ar:' + (0.8 + Math.random() * 0.9).toFixed(2) + '"></div>'
+      ).join("") +
+      "</div>";
   }
 
   /* ---------------------------------------------------------------------------
-     Detail
+     The inspector — the post behind the media
      --------------------------------------------------------------------------- */
-  /**
-   * @param {object} item
-   * @param {{ownHeader?: boolean}} [opts] `ownHeader` false when the host
-   *   surface already shows the author and a close button (the bottom sheet),
-   *   true for the persistent detail pane, which has no chrome of its own.
-   */
-  function detailHtml(item, opts) {
-    const ownHeader = !opts || opts.ownHeader !== false;
+  function detailHtml(entry) {
+    const item = entry.item;
     const meta = getMeta(item.tweet_id);
-    const posted = parseTweetDate(item.tweet_created_at);
     const archived = meta.active === false;
 
-    const avatar = item.author_profile_image_url
-      ? '<img class="detail__avatar" src="' + esc(item.author_profile_image_url) + '" alt="" referrerpolicy="no-referrer" data-media="1">'
-      : '<span class="detail__avatar" aria-hidden="true">' + esc(initials(item)) + "</span>";
+    const others = item.media.filter((m) => m.position !== entry.media.position);
 
     const metrics = [
-      ["Likes", item.likes], ["Reposts", item.reposts],
-      ["Replies", item.replies], ["Views", item.views],
-    ].filter((m) => m[1] > 0);
-
-    /* The detail view is a single post, so mounting players eagerly is fine
-       here — the count is bounded at four. Cards are the opposite case and
-       stay poster-only until asked. */
-    const media = item.media.map((m, i) => {
-      const source = M3EMedia.playableSource(m);
-      const gif = m.type === "animated_gif";
-      const label = gif ? "GIF" : m.type === "video"
-        ? "Video" + (M3EMedia.formatDuration(m.duration) ? " · " + M3EMedia.formatDuration(m.duration) : "")
-        : "Photo";
-      const ratio = M3EMedia.aspectRatio(m);
-
-      let frame;
-      if (source) {
-        frame =
-          '<video class="m3e-video" data-detail-media="' + i + '"' +
-          ' preload="metadata" playsinline' +
-          (gif ? " loop muted autoplay" : " controls") +
-          (m.poster ? ' poster="' + esc(M3EMedia.sizedImage(m.poster, "medium")) + '"' : "") +
-          ' style="aspect-ratio:' + esc(ratio) + '"' +
-          (m.alt ? ' aria-label="' + esc(m.alt) + '"' : "") +
-          ' src="' + esc(source.src) + '"></video>';
-      } else if (M3EMedia.isMotion(m)) {
-        // Video we genuinely cannot play in this browser. Say so and point at
-        // the original rather than rendering a control bar that does nothing.
-        const still = m.poster || m.url;
-        frame =
-          '<div class="detail__media-fallback' + (still ? " detail__media-fallback--over" : "") + '"' +
-          ' style="aspect-ratio:' + esc(ratio) + ";" +
-          (still ? "background-image:url(" + esc(encodeURI(M3EMedia.sizedImage(still, "medium"))) + ")" : "") +
-          '">' +
-          svg("play", 24) +
-          "<p>This video is only published as an adaptive stream, which this browser " +
-          "can't play without extra software.</p>" +
-          (item.url
-            ? '<a class="m3e-button m3e-button--tonal m3e-button--xs m3e-state" href="' + esc(item.url) +
-              '" target="_blank" rel="noopener noreferrer">' + svg("external", 16) + "<span>Watch on X</span></a>"
-            : "") +
-          "</div>";
-      } else {
-        frame =
-          '<img class="detail__media-img" data-lightbox="' + i + '"' +
-          ' src="' + esc(M3EMedia.sizedImage(m.url, "medium")) + '" alt="' + esc(m.alt || "") + '"' +
-          (m.width && m.height ? ' width="' + m.width + '" height="' + m.height + '"' : "") +
-          ' style="aspect-ratio:' + esc(ratio) + '"' +
-          ' loading="lazy" decoding="async" referrerpolicy="no-referrer" data-media="1">';
-      }
-
-      return (
-        '<figure' + (m.sensitive ? ' data-sensitive="true"' : "") + ">" + frame +
-        "<figcaption>" + esc(label) + (m.alt ? " · " + esc(m.alt) : "") + "</figcaption></figure>"
-      );
-    }).join("");
-
-    const ids = [
-      ["Post", item.tweet_id],
-      ["Conversation", item.conversation_id],
-      ["In reply to", item.in_reply_to_status_id],
-      ["Original", item.original_tweet_id],
-      ["Quoted", item.quoted_tweet_id],
-    ].filter((r) => r[1]);
+      ["heart", item.likes, "likes"],
+      ["repost", item.reposts, "reposts"],
+      ["reply", item.replies, "replies"],
+      ["eye", item.views, "views"],
+    ].filter(([, n]) => n > 0)
+      .map(([icon, n, label]) =>
+        '<span class="detail__metric" title="' + fmtCount(n) + " " + label + '">' +
+        svg(icon, 16) + '<span class="m3e-tabular">' + fmtCount(n) + "</span></span>")
+      .join("");
 
     return (
-      '<div class="detail">' +
-        (ownHeader
-          ? '<div class="detail__top">' + avatar +
-              '<div class="detail__identity">' +
-                '<p class="m3e-title-medium m3e-title-medium--emphasized detail__name">' +
-                  esc(item.author_name || item.author_username || "Unknown") + "</p>" +
-                '<p class="m3e-body-small detail__handle">' +
-                  (item.author_username ? "@" + esc(item.author_username) : "unknown") +
-                  (posted ? " · " + esc(fmtDate(posted)) : "") + "</p>" +
+      '<article class="detail__body">' +
+        '<header class="detail__head">' +
+          avatarHtml(item, "detail__avatar") +
+          '<div class="detail__who">' +
+            '<p class="m3e-title-medium m3e-title-medium--emphasized">' +
+              esc(item.author_name || "@" + (item.author_username || "unknown")) + "</p>" +
+            '<p class="m3e-body-small detail__handle">' +
+              (item.author_username ? "@" + esc(item.author_username) + " · " : "") +
+              esc(fmtDate(item.posted)) + "</p>" +
+          "</div>" +
+          '<button class="m3e-icon-button m3e-state" data-detail="close" aria-label="Close details">' +
+            svg("close", 20) + "</button>" +
+        "</header>" +
+
+        (item.retweeted_by_username
+          ? '<p class="m3e-label-medium detail__repost">' + svg("repost", 14) +
+            " Reposted by @" + esc(item.retweeted_by_username) + "</p>"
+          : "") +
+
+        (item.text
+          ? '<p class="m3e-body-large detail__text">' + linkify(esc(item.text)) + "</p>"
+          : "") +
+
+        (item.quoted_tweet
+          ? '<blockquote class="detail__quote">' +
+              '<p class="m3e-label-medium detail__quote-who">' +
+                esc(item.quoted_tweet.author_name || "@" + (item.quoted_tweet.author_username || "")) + "</p>" +
+              '<p class="m3e-body-medium">' + esc(item.quoted_tweet.text) + "</p>" +
+            "</blockquote>"
+          : "") +
+
+        (metrics ? '<div class="detail__metrics m3e-label-medium">' + metrics + "</div>" : "") +
+
+        (others.length
+          ? '<div class="detail__more">' +
+              '<p class="m3e-label-medium detail__more-label">' + plural(others.length, "more item") + " in this post</p>" +
+              '<div class="detail__strip">' +
+                others.map((m) =>
+                  '<button type="button" class="detail__thumb" data-sibling="' + item.tweet_id + ":" + m.position + '"' +
+                  ' aria-label="View item ' + m.position + '">' +
+                  '<img src="' + esc(M3EMedia.sizedImage(m.poster || m.url, "small")) + '" alt="" loading="lazy" data-media />' +
+                  (M3EMedia.isMotion(m) ? '<span class="detail__thumb-play">' + svg("play", 16) + "</span>" : "") +
+                  "</button>").join("") +
               "</div>" +
-              '<button class="m3e-icon-button m3e-state" data-detail="close" aria-label="Close details">' +
-                svg("close", 20) + "</button>" +
             "</div>"
-          /* In the sheet the title bar already names the author, so repeat only
-             the handle and date, which it does not carry. */
-          : '<p class="m3e-body-small detail__handle detail__handle--standalone">' +
-              (item.author_username ? "@" + esc(item.author_username) : "unknown") +
-              (posted ? " · " + esc(fmtDate(posted)) : "") + "</p>") +
-
-        '<div class="m3e-toolbar" role="group" aria-label="Post actions" style="width:100%">' +
-          '<button class="m3e-icon-button m3e-state" data-detail="archive" aria-label="' +
-            (archived ? "Restore from archive" : "Archive this post") + '" aria-pressed="' + archived + '">' +
-            svg(archived ? "check" : "archive", 20) + "</button>" +
-          '<button class="m3e-icon-button m3e-state" data-detail="tag" aria-label="Add a tag">' + svg("tag", 20) + "</button>" +
-          '<button class="m3e-icon-button m3e-state" data-detail="copy" aria-label="Copy link to this post">' + svg("copy", 20) + "</button>" +
-          '<span class="m3e-toolbar__divider" aria-hidden="true"></span>' +
-          (item.url
-            ? '<a class="m3e-button m3e-button--filled m3e-button--xs m3e-state" href="' + esc(item.url) +
-              '" target="_blank" rel="noopener noreferrer">' + svg("external", 16) + "<span>Open on X</span></a>"
-            : "") +
-        "</div>" +
-
-        (item.state === "unavailable"
-          ? '<p class="detail__text" style="color:var(--md-sys-color-on-surface-variant);font-style:italic">' +
-            "This post is no longer available on X. Your captured copy of its metadata is preserved below.</p>"
-          : '<p class="detail__text">' + esc(item.text || "No text captured.") + "</p>") +
-
-        (item.quoted_tweet && item.quoted_tweet.tweet_id
-          ? '<div class="bmk__quote"><span class="bmk__quote-author">' +
-            esc(item.quoted_tweet.author_name || item.quoted_tweet.author_username || "Unknown") +
-            '</span><p class="bmk__quote-text" style="-webkit-line-clamp:unset;line-clamp:unset">' +
-            esc(item.quoted_tweet.text || "No text") + "</p></div>"
           : "") +
-
-        (media
-          ? '<section class="detail__section"><h3 class="m3e-label-medium detail__section-title">Media</h3>' +
-            '<div class="detail__media">' + media + "</div></section>"
-          : "") +
-
-        (metrics.length
-          ? '<section class="detail__section"><h3 class="m3e-label-medium detail__section-title">Engagement at capture</h3>' +
-            '<dl class="detail__metrics">' + metrics.map((m) =>
-              '<div class="detail__metric"><dt>' + esc(m[0]) + "</dt><dd>" + fmtCount(m[1]) + "</dd></div>").join("") +
-            "</dl></section>"
-          : "") +
-
-        (item.links.length
-          ? '<section class="detail__section"><h3 class="m3e-label-medium detail__section-title">Links</h3>' +
-            '<div class="detail__links">' + item.links.map((u) =>
-              '<a class="detail__link m3e-state" href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' +
-              svg("link", 18) + "<span>" + esc(hostOf(u)) + "</span></a>").join("") +
-            "</div></section>"
-          : "") +
-
-        '<section class="detail__section"><h3 class="m3e-label-medium detail__section-title">Tags</h3>' +
-          '<div class="detail__tags">' +
-            meta.tags.map((t) =>
-              '<span class="m3e-chip m3e-chip--input is-selected">#' + esc(t) +
-              '<button class="m3e-chip__remove" data-untag="' + esc(t) + '" aria-label="Remove tag ' + esc(t) + '">' +
-              svg("close", 16) + "</button></span>").join("") +
-            '<button class="m3e-chip m3e-state" data-detail="tag">' + svg("plus", 18) + "<span>Add tag</span></button>" +
-          "</div>" +
-        "</section>" +
-
-        '<section class="detail__section">' +
-          '<label class="m3e-label-medium detail__section-title" for="detailNote">Private note</label>' +
-          '<textarea class="m3e-field__textarea" id="detailNote" rows="4"' +
-            ' placeholder="Why did you save this? What did you want to do with it?">' + esc(meta.note || "") + "</textarea>" +
-          '<p class="m3e-body-small" style="margin:0;color:var(--md-sys-color-on-surface-variant)" id="noteStatus">Saved automatically.</p>' +
-        "</section>" +
-
-        (ids.length
-          ? '<section class="detail__section"><h3 class="m3e-label-medium detail__section-title">Identifiers</h3>' +
-            '<div class="detail__ids">' + ids.map((r) =>
-              '<div class="detail__id"><span>' + esc(r[0]) + "</span><b>" + esc(r[1]) + "</b></div>").join("") +
-            "</div></section>"
-          : "") +
-
-        '<section class="detail__section"><h3 class="m3e-label-medium detail__section-title">Provenance</h3>' +
-          '<div class="detail__ids">' +
-            '<div class="detail__id"><span>First captured</span><b>' +
-              esc(item.first_seen_at ? fmtDate(new Date(item.first_seen_at)) : "—") + "</b></div>" +
-            '<div class="detail__id"><span>Last seen</span><b>' +
-              esc(item.last_seen_at ? fmtDate(new Date(item.last_seen_at)) : "—") + "</b></div>" +
-            (item.source_type ? '<div class="detail__id"><span>Source</span><b>' + esc(item.source_type) + "</b></div>" : "") +
-          "</div>" +
-        "</section>" +
 
         '<div class="detail__actions">' +
-          '<button class="m3e-button m3e-button--error m3e-state" data-detail="remove">' +
-            svg("trash") + "<span>Remove from library</span></button>" +
+          '<button class="m3e-button m3e-button--filled m3e-button--s m3e-state" data-detail="view">' +
+            svg("expand", 18) + "<span>View full size</span></button>" +
+          (item.url
+            ? '<a class="m3e-button m3e-button--outlined m3e-button--s m3e-state" href="' + esc(item.url) +
+              '" target="_blank" rel="noopener noreferrer">' + svg("external", 18) + "<span>Open on X</span></a>"
+            : "") +
+          '<button class="m3e-button m3e-button--text m3e-button--s m3e-state" data-detail="copy">' +
+            svg("copy", 18) + "<span>Copy link</span></button>" +
+          '<button class="m3e-button m3e-button--text m3e-button--s m3e-state" data-detail="archive">' +
+            svg("archive", 18) + "<span>" + (archived ? "Restore" : "Archive") + "</span></button>" +
         "</div>" +
-      "</div>"
+      "</article>"
     );
   }
 
-  function isLargeWindow() {
-    return window.matchMedia("(min-width: 1200px)").matches;
+  /** Turn bare URLs in already-escaped text into links. */
+  function linkify(escaped) {
+    return escaped.replace(/https?:\/\/[^\s<]+/g, (url) =>
+      '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + hostOf(url) + "</a>");
   }
 
-  function openDetail(id) {
-    const item = state.items.find((i) => i.tweet_id === id);
-    if (!item) return;
-    state.selectedId = id;
-    // Anything playing in the list is about to be covered or replaced.
-    M3EMedia.stopAll();
+  const isLargeWindow = () => window.innerWidth >= 1200;
 
-    document.querySelectorAll(".bmk").forEach((el) => {
-      el.setAttribute("aria-selected", String(el.dataset.id === id));
+  function openDetail(entryId) {
+    const entry = entryById(state.lastList, entryId);
+    if (!entry) return;
+
+    state.selectedId = entryId;
+    markOpened(entry.item.tweet_id);
+
+    document.querySelectorAll(".tile[data-entry]").forEach((t) => {
+      if (t.dataset.entry === entryId) t.setAttribute("data-selected", "true");
+      else t.removeAttribute("data-selected");
     });
 
+    const html = detailHtml(entry);
+
     if (isLargeWindow()) {
-      // List-detail: the pane is always present, so no focus trap and no scrim.
       const body = $("detailBody");
       const placeholder = $("detailPlaceholder");
-      if (body) {
-        body.hidden = false;
-        body.innerHTML = detailHtml(item, { ownHeader: true });
-        bindDetail(body, item);
-      }
+      if (!body) return;
+      body.innerHTML = html;
+      body.hidden = false;
       if (placeholder) placeholder.hidden = true;
-      const pane = $("detailPane");
-      if (pane) pane.scrollTop = 0;
+      bindDetail(body, entry);
     } else {
-      // Below large the same markup is presented as a modal sheet.
-      openSheet(
-        item.author_name || item.author_username || "Post",
-        detailHtml(item, { ownHeader: false }),
-        (host) => bindDetail(host, item)
-      );
+      openSheet(entry.item.author_name || "Post", html, (host) => bindDetail(host, entry));
     }
   }
 
   function clearDetail() {
     state.selectedId = null;
-    M3EMedia.stopAll();
+    document.querySelectorAll('.tile[data-selected="true"]').forEach((t) => t.removeAttribute("data-selected"));
+    clearDetailPaneOnly();
+    if (sheet && sheet.isOpen) sheet.close();
+  }
+
+  function bindDetail(host, entry) {
+    host.querySelectorAll("[data-detail]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const action = btn.dataset.detail;
+        if (action === "close") clearDetail();
+        else if (action === "view") openViewer(entry);
+        else if (action === "copy") copyText(entry.item.url || location.href, "Post link copied.");
+        else if (action === "archive") toggleArchive(entry.item.tweet_id);
+      });
+    });
+    host.querySelectorAll("[data-sibling]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const sibling = entryById(state.lastList, btn.dataset.sibling);
+        if (sibling) openViewer(sibling);
+        else {
+          // The sibling may be filtered out of the current index — open it
+          // in the viewer directly rather than pretending the click did
+          // nothing, which is what a silent no-op reads as.
+          const [id, pos] = btn.dataset.sibling.split(":");
+          const item = state.items.find((i) => i.tweet_id === id);
+          const media = item && item.media.find((m) => String(m.position) === pos);
+          if (media) XLightbox.open(item.media, item.media.indexOf(media), viewerContext(item));
+        }
+      });
+    });
+  }
+
+  function clearDetailPaneOnly() {
     const body = $("detailBody");
     const placeholder = $("detailPlaceholder");
     if (body) { body.hidden = true; body.innerHTML = ""; }
     if (placeholder) placeholder.hidden = false;
-    document.querySelectorAll(".bmk").forEach((el) => el.setAttribute("aria-selected", "false"));
   }
 
-  function bindDetail(host, item) {
-    const meta = getMeta(item.tweet_id);
+  function markOpened(tweetId) {
+    const meta = getMeta(tweetId);
+    meta.openedAt = new Date().toISOString();
+    saveMeta();
+  }
 
-    host.querySelectorAll("[data-lightbox]").forEach((img) => {
-      img.addEventListener("click", () => openLightbox(item, Number(img.dataset.lightbox)));
-    });
-
-    host.querySelectorAll("[data-detail]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        switch (btn.dataset.detail) {
-          case "close":
-            if (isLargeWindow()) clearDetail(); else sheet.close();
-            break;
-          case "archive": {
-            const nowArchived = meta.active !== false;
-            meta.active = !nowArchived;
-            meta.removedAt = nowArchived ? new Date().toISOString() : null;
-            saveMeta();
-            render();
-            openDetail(item.tweet_id);
-            snack.show(nowArchived ? "Archived." : "Restored to your active set.", {
-              action: "Undo",
-              onAction: () => {
-                meta.active = nowArchived;
-                meta.removedAt = nowArchived ? null : new Date().toISOString();
-                saveMeta(); render(); openDetail(item.tweet_id);
-              },
-            });
-            break;
-          }
-          case "tag":
-            promptTag(item.tweet_id, () => { render(); openDetail(item.tweet_id); });
-            break;
-          case "copy":
-            copyText(item.url || item.tweet_id, "Link copied.");
-            break;
-          case "remove":
-            confirmRemove(item);
-            break;
-          default: break;
-        }
-      });
-    });
-
-    host.querySelectorAll("[data-untag]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        meta.tags = meta.tags.filter((t) => t !== btn.dataset.untag);
+  function toggleArchive(tweetId) {
+    const meta = getMeta(tweetId);
+    const wasActive = meta.active !== false;
+    meta.active = !wasActive;
+    meta.removedAt = wasActive ? new Date().toISOString() : null;
+    saveMeta();
+    clearDetail();
+    render();
+    snack.show(wasActive ? "Archived." : "Restored.", {
+      action: "Undo",
+      onAction: () => {
+        meta.active = wasActive;
+        meta.removedAt = wasActive ? null : new Date().toISOString();
         saveMeta();
         render();
-        openDetail(item.tweet_id);
-      });
+      },
     });
-
-    // Notes autosave: debounced, with a visible confirmation.
-    const note = host.querySelector("#detailNote");
-    const status = host.querySelector("#noteStatus");
-    if (note) {
-      const commit = debounce(() => {
-        meta.note = note.value;
-        saveMeta();
-        if (status) status.textContent = "Saved " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + ".";
-        renderCardMeta(item.tweet_id);
-      }, 500);
-      note.addEventListener("input", () => {
-        if (status) status.textContent = "Saving…";
-        commit();
-      });
-    }
   }
 
-  /** Repaint one card in place — avoids a full re-render for tag/note edits. */
-  function renderCardMeta(id) {
-    const el = document.querySelector('.bmk[data-id="' + CSS.escape(id) + '"]');
-    const item = state.items.find((i) => i.tweet_id === id);
-    if (!el || !item) return;
-    const index = Array.prototype.indexOf.call(el.parentNode.children, el);
-    el.outerHTML = cardHtml(item, Math.min(index, 12));
+  /* ---------------------------------------------------------------------------
+     The viewer
+
+     The lightbox is handed the WHOLE current index, not just the four photos
+     inside one post. That is the single change that makes this a library
+     browser: open anything, then keep going with the arrow keys or a swipe
+     and you traverse everything you saved, in the order you are currently
+     sorted by — across posts, across authors, across years.
+     --------------------------------------------------------------------------- */
+  function viewerContext(item) {
+    return {
+      url: item && item.url,
+      onCopy: (link) => copyText(link, "Media link copied."),
+    };
+  }
+
+  function openViewer(entry) {
+    const list = state.lastList;
+    const start = list.indexOf(entry);
+    markOpened(entry.item.tweet_id);
+
+    XLightbox.open(
+      list.map((e) => e.media),
+      start < 0 ? 0 : start,
+      {
+        // The caption line changes as you move between posts, so the context
+        // has to be a function of the index rather than a fixed value.
+        contextAt: (i) => {
+          const e = list[i];
+          if (!e) return {};
+          return {
+            url: e.item.url,
+            title: e.item.author_name || "@" + (e.item.author_username || ""),
+            subtitle: fmtDate(e.item.posted),
+          };
+        },
+        onChange: (i) => {
+          const e = list[i];
+          if (e) { state.selectedId = e.id; markOpened(e.item.tweet_id); }
+        },
+        onCopy: (link) => copyText(link, "Media link copied."),
+      }
+    );
   }
 
   /* ===========================================================================
@@ -1481,8 +1711,8 @@
   function openSheet(title, html, onMount) {
     $("sheetTitle").textContent = title;
     $("sheetContent").innerHTML = html;
-    sheet.open();
     if (onMount) onMount($("sheetContent"));
+    sheet.open();
   }
 
   function openDialog(title, html, actions, onMount) {
@@ -1490,183 +1720,85 @@
     $("dialogContent").innerHTML = html;
     const host = $("dialogActions");
     host.innerHTML = "";
-    (actions || []).forEach((a) => {
+    (actions || []).forEach((action) => {
       const btn = document.createElement("button");
-      btn.className = "m3e-button m3e-state m3e-button--" + (a.variant || "text");
-      btn.textContent = a.label;
+      btn.className = "m3e-button m3e-button--" + (action.variant || "text") + " m3e-state";
+      btn.textContent = action.label;
       btn.addEventListener("click", () => {
-        if (a.onClick) a.onClick();
-        if (a.close !== false) dialog.close();
+        if (action.onClick) action.onClick();
+        if (action.keepOpen !== true) dialog.close();
       });
       host.appendChild(btn);
     });
-    dialog.open();
     if (onMount) onMount($("dialogContent"));
-  }
-
-  function promptTag(id, done) {
-    const meta = getMeta(id);
-    // Suggest tags already in use — turns free text into a controlled vocabulary.
-    const existing = new Set();
-    Object.values(state.meta).forEach((m) => (m.tags || []).forEach((t) => existing.add(t)));
-    meta.tags.forEach((t) => existing.delete(t));
-    const suggestions = Array.from(existing).sort().slice(0, 12);
-
-    openDialog(
-      "Add a tag",
-      '<div class="settings">' +
-        '<div class="m3e-field">' +
-          '<label class="m3e-field__label" for="tagInput">Tag name</label>' +
-          '<input class="m3e-field__input" id="tagInput" data-autofocus maxlength="32" placeholder="reading-list" autocomplete="off">' +
-          '<p class="m3e-field__support">Letters, numbers and dashes. Press Enter to add.</p>' +
-        "</div>" +
-        (suggestions.length
-          ? '<div class="settings__group"><span class="m3e-label-medium settings__label">Already in use</span>' +
-            '<div class="settings__row">' + suggestions.map((t) =>
-              '<button class="m3e-chip m3e-state" data-suggest="' + esc(t) + '">#' + esc(t) + "</button>").join("") +
-            "</div></div>"
-          : "") +
-      "</div>",
-      [{ label: "Cancel" }, { label: "Add tag", variant: "filled", onClick: () => commit() }],
-      (host) => {
-        const input = host.querySelector("#tagInput");
-        const add = (raw) => {
-          const tag = String(raw || "").trim().toLowerCase().replace(/^#/, "").replace(/\s+/g, "-").slice(0, 32);
-          if (!tag) return false;
-          if (!meta.tags.includes(tag)) meta.tags.push(tag);
-          // Timestamped so "Recently tagged" has something to sort on.
-          meta.taggedAt = new Date().toISOString();
-          saveMeta();
-          return true;
-        };
-        window.__commitTag = () => add(input.value);
-        input.addEventListener("keydown", (e) => {
-          if (e.key !== "Enter") return;
-          e.preventDefault();
-          if (add(input.value)) { dialog.close(); if (done) done(); snack.show("Tag added."); }
-        });
-        host.querySelectorAll("[data-suggest]").forEach((btn) => {
-          btn.addEventListener("click", () => {
-            add(btn.dataset.suggest);
-            dialog.close();
-            if (done) done();
-            snack.show("Tag added.");
-          });
-        });
-      }
-    );
-
-    function commit() {
-      if (window.__commitTag && window.__commitTag()) {
-        if (done) done();
-        snack.show("Tag added.");
-      }
-    }
-  }
-
-  function confirmRemove(item) {
-    openDialog(
-      "Remove this post?",
-      '<p class="m3e-body-large" style="margin:0">It will be deleted from this library along with its tags and note. ' +
-        "Your exported files are untouched, so you can always import it again.</p>",
-      [
-        { label: "Keep it" },
-        {
-          label: "Remove",
-          variant: "error-filled",
-          onClick: () => {
-            state.items = state.items.filter((i) => i.tweet_id !== item.tweet_id);
-            delete state.meta[item.tweet_id];
-            saveItems(); saveMeta();
-            clearDetail();
-            if (sheet.isOpen) sheet.close();
-            render();
-            snack.show("Removed from your library.");
-          },
-        },
-      ]
-    );
+    dialog.open();
   }
 
   function openAuthorPicker() {
     const authors = authorList();
     const rows =
-      '<button class="pickrow m3e-state" role="radio" data-author="all" aria-checked="' + (filters.author === "all") + '">' +
-        '<span class="pickrow__check">' + svg("check", 20) + "</span>" +
-        '<span class="pickrow__body"><span class="pickrow__title">All authors</span>' +
-        '<span class="pickrow__support">No author filter</span></span>' +
-        '<span class="pickrow__count">' + state.items.length + "</span></button>" +
+      '<button class="m3e-list-item m3e-state" data-author="all" aria-selected="' +
+        (filters.author === "all") + '">' +
+        '<span class="m3e-list-item__text"><span class="m3e-body-large">All authors</span></span>' +
+        '<span class="m3e-label-medium m3e-tabular">' + state.items.length + "</span></button>" +
       authors.map((a) =>
-        '<button class="pickrow m3e-state" role="radio" data-author="' + esc(a.username) + '"' +
-        ' aria-checked="' + (filters.author === a.username) + '">' +
-        '<span class="pickrow__check">' + svg("check", 20) + "</span>" +
-        '<span class="pickrow__body"><span class="pickrow__title">@' + esc(a.username) + "</span></span>" +
-        '<span class="pickrow__count">' + a.count + "</span></button>"
-      ).join("");
+        '<button class="m3e-list-item m3e-state" data-author="' + esc(a.username) + '" aria-selected="' +
+        (filters.author === a.username) + '">' +
+        '<span class="m3e-list-item__text"><span class="m3e-body-large">@' + esc(a.username) + "</span></span>" +
+        '<span class="m3e-label-medium m3e-tabular">' + a.count + "</span></button>").join("");
 
-    openSheet("Filter by author", '<div role="radiogroup" aria-label="Author">' + rows + "</div>", (host) => {
-      host.querySelectorAll("[data-author]").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          filters.author = btn.dataset.author;
-          sheet.close();
-          render();
+    openSheet("Filter by author",
+      '<div class="m3e-list authorlist">' + rows + "</div>",
+      (host) => {
+        host.querySelectorAll("[data-author]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            filters.author = btn.dataset.author;
+            sheet.close();
+            render();
+          });
         });
       });
-    });
   }
 
   let sortMenu = null;
-
   function openSortMenu(trigger) {
-    /* Clicking the trigger while the menu is open must CLOSE it, not stack a
-       second copy on top. `openMenu`'s outside-click handler deliberately
-       treats the trigger as "inside" — otherwise the click that opened the
-       menu would immediately close it — so the toggle has to live here.
-       Harmless-looking with 7 options; with 17 the menu scrolls and the
-       duplicates are unmissable. */
     if (sortMenu) { sortMenu.close(); return; }
 
     const menu = document.createElement("div");
     menu.className = "m3e-menu m3e-menu--sort";
     menu.setAttribute("role", "menu");
-    menu.setAttribute("aria-label", "Sort posts");
-    /* Grouped with headers rather than a flat list of seventeen. M3E's menu
-       guidance allows gaps to categorise related actions; past about eight
-       items an ungrouped menu stops being scannable. */
+    menu.setAttribute("aria-label", "Sort media");
+
     menu.innerHTML = SORT_GROUPS.map((group) => {
-      const items = SORTS.filter((s) => s.group === group);
-      if (!items.length) return "";
+      const inGroup = SORTS.filter((s) => s.group === group);
+      if (!inGroup.length) return "";
       return (
         '<p class="m3e-menu__header m3e-label-small" role="presentation">' + esc(group) + "</p>" +
-        items.map((s) => {
-          const on = state.sort === s.key;
-          return (
-            '<button class="m3e-menu__item m3e-state" role="menuitemradio" data-sort="' + s.key + '"' +
-            ' aria-selected="' + on + '" aria-checked="' + on + '" tabindex="-1">' +
-            '<span style="width:20px;flex:none;opacity:' + (on ? "1" : "0") + '">' + svg("check", 20) + "</span>" +
-            "<span><span>" + esc(s.label) +
-            (s.reshuffle ? ' <span class="sortchip">random</span>' : "") +
-            '</span><br><span class="m3e-body-small" style="color:var(--md-sys-color-on-surface-variant)">' +
-            esc(s.describe) + "</span></span></button>"
-          );
-        }).join("")
+        inGroup.map((s) =>
+          '<button class="m3e-menu__item m3e-state" role="menuitemradio" data-sort="' + s.key + '"' +
+          ' aria-checked="' + (s.key === state.sort) + '"' +
+          ' aria-selected="' + (s.key === state.sort) + '" tabindex="-1">' +
+          '<span class="m3e-menu__item-text">' +
+            '<span class="m3e-body-large">' + esc(s.label) +
+            (s.reshuffle ? '<span class="sortchip">random</span>' : "") + "</span>" +
+            '<span class="m3e-body-small">' + esc(s.describe) + "</span>" +
+          "</span>" +
+          (s.key === state.sort ? svg("check", 20) : "") +
+          "</button>").join("")
       );
     }).join("");
 
-    const handle = M3E.openMenu(trigger, menu, {
-      align: "end",
+    sortMenu = M3E.openMenu(trigger, menu, {
+      align: "start",
       onClose: () => { sortMenu = null; },
     });
-    sortMenu = handle;
+
     menu.querySelectorAll("[data-sort]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const key = btn.dataset.sort;
-        /* Re-picking the shuffle you're already on means "shuffle again" —
-           the obvious reading of tapping Shuffle twice. Switching to it fresh
-           also re-deals, so it never opens on a stale order. */
         if (isShuffle(key)) reshuffle();
         state.sort = key;
-        handle.close();
+        sortMenu.close();
         render();
       });
     });
@@ -1674,59 +1806,41 @@
 
   function openRefine() {
     const field = (id, label, value, type, extra) =>
-      '<div class="m3e-field"><label class="m3e-field__label" for="' + id + '">' + esc(label) + "</label>" +
-      '<input class="m3e-field__input" id="' + id + '" type="' + type + '" value="' + esc(value) + '"' +
-      (extra || "") + "></div>";
+      '<label class="m3e-field"><span class="m3e-label-medium">' + esc(label) + "</span>" +
+      '<input class="m3e-field__input" id="' + id + '" type="' + type + '" value="' + esc(String(value)) +
+      '" ' + (extra || "") + " /></label>";
 
-    openSheet(
-      "Refine",
+    openSheet("Refine",
       '<div class="refine">' +
-        '<div class="settings__group">' +
-          '<span class="m3e-label-medium settings__label">Engagement at capture</span>' +
-          '<div class="refine__grid">' +
-            field("rfLikes", "Min. likes", filters.minLikes || "", "number", ' min="0" step="1" placeholder="0" inputmode="numeric"') +
-            field("rfReposts", "Min. reposts", filters.minReposts || "", "number", ' min="0" step="1" placeholder="0" inputmode="numeric"') +
-          "</div>" +
+        '<p class="m3e-body-medium refine__help">Narrow by how the post performed, or when it was posted.</p>' +
+        '<div class="refine__row">' +
+          field("refLikes", "Minimum likes", filters.minLikes || "", "number", 'min="0" inputmode="numeric"') +
+          field("refReposts", "Minimum reposts", filters.minReposts || "", "number", 'min="0" inputmode="numeric"') +
         "</div>" +
-        '<div class="settings__group">' +
-          '<span class="m3e-label-medium settings__label">Posted between</span>' +
-          '<div class="refine__grid">' +
-            field("rfFrom", "From", filters.from, "date") +
-            field("rfTo", "To", filters.to, "date") +
-          "</div>" +
-        "</div>" +
-        '<div class="settings__group">' +
-          '<span class="m3e-label-medium settings__label">Import behaviour</span>' +
-          '<div class="m3e-switch-row"><span class="m3e-switch-row__text">' +
-            '<span class="m3e-switch-row__title">Treat next import as a full snapshot</span>' +
-            '<span class="m3e-switch-row__support">Archive anything missing from the imported file</span></span>' +
-            '<button class="m3e-switch m3e-state" id="rfSync" role="switch" aria-checked="' + state.fullSync + '">' +
-              '<span class="m3e-switch__handle">' + svg("check", 14) + "</span></button>" +
-          "</div>" +
+        '<div class="refine__row">' +
+          field("refFrom", "Posted after", filters.from, "date") +
+          field("refTo", "Posted before", filters.to, "date") +
         "</div>" +
         '<div class="refine__actions">' +
-          '<button class="m3e-button m3e-button--filled m3e-state" id="rfApply" style="flex:1">Apply</button>' +
-          '<button class="m3e-button m3e-button--text m3e-state" id="rfClear">Clear</button>' +
+          '<button class="m3e-button m3e-button--text m3e-state" data-refine="clear">Clear</button>' +
+          '<button class="m3e-button m3e-button--filled m3e-state" data-refine="apply">Apply</button>' +
         "</div>" +
       "</div>",
       (host) => {
-        M3E.bindSwitch(host.querySelector("#rfSync"), (on) => { state.fullSync = on; });
-        host.querySelector("#rfApply").addEventListener("click", () => {
-          filters.minLikes = clamp(parseInt(host.querySelector("#rfLikes").value, 10) || 0, 0, 1e9);
-          filters.minReposts = clamp(parseInt(host.querySelector("#rfReposts").value, 10) || 0, 0, 1e9);
-          filters.from = host.querySelector("#rfFrom").value;
-          filters.to = host.querySelector("#rfTo").value;
+        host.querySelector('[data-refine="apply"]').addEventListener("click", () => {
+          filters.minLikes = parseInt(host.querySelector("#refLikes").value, 10) || 0;
+          filters.minReposts = parseInt(host.querySelector("#refReposts").value, 10) || 0;
+          filters.from = host.querySelector("#refFrom").value || "";
+          filters.to = host.querySelector("#refTo").value || "";
           sheet.close();
           render();
         });
-        host.querySelector("#rfClear").addEventListener("click", () => {
-          Object.assign(filters, { minLikes: 0, minReposts: 0, from: "", to: "" });
-          state.fullSync = false;
+        host.querySelector('[data-refine="clear"]').addEventListener("click", () => {
+          filters.minLikes = 0; filters.minReposts = 0; filters.from = ""; filters.to = "";
           sheet.close();
           render();
         });
-      }
-    );
+      });
   }
 
   function openSettings() {
@@ -1779,6 +1893,7 @@
 
         '<div class="settings__group">' +
           '<span class="m3e-label-medium settings__label">Appearance</span>' +
+          '<p class="m3e-body-medium settings__help">Dark is the default for a media browser: a bright frame around a photo changes how the photo reads.</p>' +
           seg("segScheme", [
             { value: "system", label: "System" },
             { value: "light", label: "Light" },
@@ -1797,19 +1912,30 @@
         "</div>" +
 
         '<div class="settings__group">' +
-          '<span class="m3e-label-medium settings__label">Density</span>' +
-          seg("segDensity", [
-            { value: "comfortable", label: "Comfortable" },
-            { value: "compact", label: "Compact" },
-            { value: "spacious", label: "Spacious" },
-          ], s.density) +
+          '<span class="m3e-label-medium settings__label">Tile size</span>' +
+          '<p class="m3e-body-medium settings__help">How large media is in the grid.</p>' +
+          seg("segTile", [
+            { value: "small", label: "Dense" },
+            { value: "medium", label: "Medium" },
+            { value: "large", label: "Large" },
+          ], s.tileSize) +
+        "</div>" +
+
+        '<div class="settings__group">' +
+          '<span class="m3e-label-medium settings__label">Playback</span>' +
+          '<div class="m3e-switch-row"><span class="m3e-switch-row__text">' +
+            '<span class="m3e-switch-row__title">Autoplay in view</span>' +
+            '<span class="m3e-switch-row__support">GIFs and video start, muted, while they are on screen. Off saves bandwidth.</span>' +
+          "</span>" +
+          '<button class="m3e-switch m3e-state" id="setAutoplay" role="switch" aria-checked="' + !!s.autoplay + '">' +
+            '<span class="m3e-switch__handle">' + svg("check", 14) + "</span></button></div>" +
         "</div>" +
 
         '<div class="settings__group">' +
           '<span class="m3e-label-medium settings__label">Motion</span>' +
           '<div class="m3e-switch-row"><span class="m3e-switch-row__text">' +
             '<span class="m3e-switch-row__title">Reduce motion</span>' +
-            '<span class="m3e-switch-row__support">Removes springs and transitions. Your system setting is respected too.</span>' +
+            '<span class="m3e-switch-row__support">Removes springs and transitions, and stops media autoplaying. Your system setting is respected too.</span>' +
           "</span>" +
           '<button class="m3e-switch m3e-state" id="setMotion" role="switch" aria-checked="' + !!s.reducedMotion + '">' +
             '<span class="m3e-switch__handle">' + svg("check", 14) + "</span></button></div>" +
@@ -1819,7 +1945,8 @@
           '<span class="m3e-label-medium settings__label">Your data</span>' +
           '<p class="m3e-body-medium settings__help">Everything lives in this browser only. Back it up before clearing site data.</p>' +
           '<div class="settings__row">' +
-            '<button class="m3e-button m3e-button--tonal m3e-state" data-data="backup">' + svg("download") + "<span>Back up</span></button>" +
+            '<button class="m3e-button m3e-button--tonal m3e-state" data-data="import">' + svg("download") + "<span>Import</span></button>" +
+            '<button class="m3e-button m3e-button--tonal m3e-state" data-data="backup">' + svg("upload") + "<span>Back up</span></button>" +
             '<button class="m3e-button m3e-button--outlined m3e-state" data-data="restore">' + svg("upload") + "<span>Restore</span></button>" +
             '<button class="m3e-button m3e-button--text m3e-state" data-data="clear" style="color:var(--md-sys-color-error)">' +
               svg("trash") + "<span>Clear library</span></button>" +
@@ -1895,14 +2022,19 @@
         bindSeg("segVariant", "variant", repaintSeeds);
         bindSeg("segScheme", "scheme", repaintSeeds);
         bindSeg("segContrast", "contrast", repaintSeeds);
-        bindSeg("segDensity", "density", () => { renderFilterBar(); });
+        bindSeg("segTile", "tileSize", () => render());
 
+        M3E.bindSwitch(host.querySelector("#setAutoplay"), (on) => {
+          applySettings({ autoplay: on });
+          render();
+        });
         M3E.bindSwitch(host.querySelector("#setMotion"), (on) => applySettings({ reducedMotion: on }));
 
         host.querySelectorAll("[data-data]").forEach((btn) => {
           btn.addEventListener("click", () => {
             const action = btn.dataset.data;
-            if (action === "backup") backup();
+            if (action === "import") { dialog.close(); $("fileImport").click(); }
+            else if (action === "backup") backup();
             else if (action === "restore") $("fileRestore").click();
             else if (action === "clear") { dialog.close(); confirmClear(); }
           });
@@ -1915,15 +2047,15 @@
     openDialog(
       "Clear your whole library?",
       '<p class="m3e-body-large" style="margin:0">All ' + state.items.length +
-        " posts, plus every tag and note, will be deleted from this browser. This cannot be undone — back up first if you're unsure.</p>",
+        " posts and their media will be deleted from this browser. This cannot be undone — back up first if you're unsure.</p>",
       [
         { label: "Cancel" },
         {
           label: "Delete everything",
           variant: "error-filled",
           onClick: () => {
-            state.items = []; state.meta = {}; state.views = [];
-            saveItems(); saveMeta(); saveViews();
+            state.items = []; state.meta = {};
+            saveItems(); saveMeta();
             clearDetail();
             render();
             snack.show("Library cleared.");
@@ -1940,7 +2072,7 @@
     const file = input.files && input.files[0];
     if (!file) return;
     const opts = options || {};
-    showSkeletons(4);
+    showSkeletons(10);
 
     let parsed;
     try {
@@ -1974,10 +2106,9 @@
     if (fileMeta && typeof fileMeta === "object") {
       for (const [id, fm] of Object.entries(fileMeta)) {
         const m = getMeta(id);
-        if (Array.isArray(fm.tags)) m.tags = Array.from(new Set(m.tags.concat(fm.tags)));
-        if (fm.note) m.note = fm.note;
         if (typeof fm.active === "boolean") m.active = fm.active;
         if (fm.removed_at || fm.removedAt) m.removedAt = fm.removed_at || fm.removedAt;
+        if (fm.opened_at || fm.openedAt) m.openedAt = fm.opened_at || fm.openedAt;
       }
     }
 
@@ -1996,7 +2127,9 @@
     saveItems(); saveMeta();
     render();
 
+    const withMedia = items.reduce((n, i) => n + i.media.length, 0);
     const bits = [(opts.restore ? "Restored " : "Imported ") + plural(added, "new post")];
+    if (withMedia) bits.push(plural(withMedia, "media item"));
     if (updated) bits.push(plural(updated, "update"));
     if (duplicates) bits.push(duplicates + " duplicate skipped");
     if (invalid) bits.push(invalid + " unreadable row dropped");
@@ -2024,21 +2157,18 @@
       bookmarks: state.items.map(strip),
       meta: state.meta,
     }, null, 2));
-    snack.show("Backup downloaded: " + plural(state.items.length, "post") + ", with tags and notes.");
+    snack.show("Backup downloaded: " + plural(state.items.length, "post") + ".");
   }
 
   function exportVisible() {
-    const list = state.lastList;
-    if (!list.length) { snack.show("Nothing in view to export.", { error: true }); return; }
+    const ids = new Set(state.lastList.map((e) => e.item.tweet_id));
+    if (!ids.size) { snack.show("Nothing in view to export.", { error: true }); return; }
     download("x-bookmarks-view.json", JSON.stringify({
       export_version: 1,
       exported_at: new Date().toISOString(),
-      bookmarks: list.map((item) => {
-        const m = getMeta(item.tweet_id);
-        return Object.assign(strip(item), { tags: m.tags, note: m.note, active: m.active !== false });
-      }),
+      bookmarks: state.items.filter((i) => ids.has(i.tweet_id)).map(strip),
     }, null, 2));
-    snack.show("Exported " + plural(list.length, "post") + " from the current view.");
+    snack.show("Exported " + plural(ids.size, "post") + " from the current view.");
   }
 
   async function copyText(text, message) {
@@ -2068,9 +2198,8 @@
     idle:             { title: "Extension connected", tone: "idle" },
   };
 
-  /** How many captured posts aren't in the library yet. */
   function pendingCount(captured) {
-    return Math.max(0, captured - state.items.length);
+    return Math.max(0, (Number(captured) || 0) - state.items.length);
   }
 
   function renderCaptureBanner(info) {
@@ -2085,7 +2214,7 @@
     const live = status === "capturing";
 
     // Nothing running and nothing waiting: say nothing. A permanent "connected"
-    // banner is noise, and this sits above the library.
+    // banner is noise, and this sits above the feed.
     if (!live && !pending && !info.dead) { host.hidden = true; return; }
 
     host.hidden = false;
@@ -2202,166 +2331,98 @@
   /* ===========================================================================
      10 · Bindings & init
      =========================================================================== */
-  function fabActions() {
-    return [
-      { id: "import", label: "Import file", icon: "download", run: () => $("fileImport").click() },
-      { id: "export", label: "Export this view", icon: "upload", run: exportVisible },
-      { id: "backup", label: "Back up everything", icon: "archive", run: backup },
-    ];
-  }
 
-  function bindFabMenu() {
-    const trigger = $("fabTrigger");
-    const list = $("fabMenuList");
-    if (!trigger || !list) return;
+  /**
+   * One delegated listener for the whole feed.
+   *
+   * Tiles are recreated on every render and there can be several hundred of
+   * them; attaching handlers per tile would mean a thousand closures per
+   * render and a measurable pause on every filter keystroke.
+   */
+  function bindFeed() {
+    const feed = $("feed");
+    if (!feed) return;
 
-    const actions = fabActions();
-    list.innerHTML = actions.map((a, i) =>
-      '<li role="none"><button class="m3e-fab-menu__item m3e-state" role="menuitem" data-fab="' + a.id +
-      '" style="--m3e-index:' + (actions.length - i) + '">' + svg(a.icon, 24) + "<span>" + esc(a.label) + "</span></button></li>"
-    ).join("");
-
-    const close = () => {
-      list.hidden = true;
-      trigger.setAttribute("aria-expanded", "false");
-      document.removeEventListener("pointerdown", onOutside, true);
-      document.removeEventListener("keydown", onKey, true);
-    };
-    const onOutside = (e) => {
-      if (!list.contains(e.target) && !trigger.contains(e.target)) close();
-    };
-    const onKey = (e) => {
-      if (e.key === "Escape") { close(); trigger.focus(); }
-    };
-
-    trigger.addEventListener("click", () => {
-      const open = trigger.getAttribute("aria-expanded") === "true";
-      if (open) { close(); return; }
-      list.hidden = false;
-      trigger.setAttribute("aria-expanded", "true");
-      document.addEventListener("pointerdown", onOutside, true);
-      document.addEventListener("keydown", onKey, true);
-      const first = list.querySelector("[data-fab]");
-      if (first) requestAnimationFrame(() => first.focus());
-    });
-
-    list.querySelectorAll("[data-fab]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const action = actions.find((a) => a.id === btn.dataset.fab);
-        close();
-        if (action) action.run();
-      });
-    });
-  }
-
-  function bindImportMenu() {
-    const trigger = $("importMenuBtn");
-    if (!trigger) return;
-    trigger.addEventListener("click", () => {
-      const menu = document.createElement("div");
-      menu.className = "m3e-menu";
-      menu.setAttribute("role", "menu");
-      const actions = [
-        { id: "import", label: "Import a file", icon: "download" },
-        { id: "export", label: "Export this view", icon: "upload" },
-        { id: "backup", label: "Back up everything", icon: "archive" },
-        { id: "restore", label: "Restore a backup", icon: "upload" },
-      ];
-      menu.innerHTML = actions.map((a) =>
-        '<button class="m3e-menu__item m3e-state" role="menuitem" data-act="' + a.id + '" tabindex="-1">' +
-        svg(a.icon, 20) + "<span>" + esc(a.label) + "</span></button>").join("");
-
-      const handle = M3E.openMenu(trigger, menu, { align: "end" });
-      menu.querySelectorAll("[data-act]").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const id = btn.dataset.act;
-          handle.close();
-          if (id === "import") $("fileImport").click();
-          else if (id === "export") exportVisible();
-          else if (id === "backup") backup();
-          else if (id === "restore") $("fileRestore").click();
-        });
-      });
-    });
-  }
-
-  function bindLibrary() {
-    const host = $("results");
-    if (!host) return;
-
-    host.addEventListener("click", (event) => {
-      const action = event.target.closest("[data-act]");
-      const card = event.target.closest(".bmk");
-      if (!card) return;
-
-      // Playing media in place must not also open the detail view — the two
-      // would fight, and the player would be torn down the instant it mounted.
-      const thumb = event.target.closest("[data-play]");
-      if (thumb) {
-        event.stopPropagation();
-        const item = state.items.find((i) => i.tweet_id === card.dataset.id);
-        const media = item && item.media[Number(thumb.dataset.play)];
-        if (media) playThumb(thumb, media);
+    feed.addEventListener("click", (event) => {
+      const empty = event.target.closest("[data-empty]");
+      if (empty) {
+        const what = empty.dataset.empty;
+        if (what === "import") $("fileImport").click();
+        else if (what === "clear") resetFilters();
+        else if (what === "all") { resetFilters(); selectCollection("all"); }
         return;
       }
 
-      if (action) {
-        event.stopPropagation();
-        const id = card.dataset.id;
-        const meta = getMeta(id);
-        if (action.dataset.act === "archive") {
-          const wasActive = meta.active !== false;
-          meta.active = !wasActive;
-          meta.removedAt = wasActive ? new Date().toISOString() : null;
-          saveMeta();
-          render();
-          snack.show(wasActive ? "Archived." : "Restored.", {
-            action: "Undo",
-            onAction: () => {
-              meta.active = wasActive;
-              meta.removedAt = wasActive ? null : new Date().toISOString();
-              saveMeta(); render();
-            },
-          });
-        } else if (action.dataset.act === "tag") {
-          promptTag(id, () => render());
-        }
+      // Theater controls
+      const reveal = event.target.closest("[data-reveal]");
+      if (reveal) {
+        const stage = reveal.closest(".slide__stage");
+        if (stage) stage.dataset.sensitive = "false";
+        reveal.remove();
+        return;
+      }
+      const slidePlay = event.target.closest("[data-play-slide]");
+      if (slidePlay) {
+        const slide = slidePlay.closest(".slide");
+        const entry = entryById(state.lastList, slide && slide.dataset.entry);
+        if (entry) mountSlideVideo(slide, entry);
+        return;
+      }
+      const slideInfo = event.target.closest("[data-slide-info]");
+      if (slideInfo) {
+        const slide = slideInfo.closest(".slide");
+        if (slide) openDetail(slide.dataset.entry);
         return;
       }
 
-      if (event.target.closest("[data-stop]")) return;
-      openDetail(card.dataset.id);
+      const tile = event.target.closest(".tile[data-entry]");
+      if (!tile) return;
+
+      // Sensitive media reveals on first tap; the second opens it. Going
+      // straight to full screen from a blurred thumbnail is exactly the
+      // ambush the blur exists to prevent.
+      if (tile.dataset.sensitive === "true" && tile.dataset.revealed !== "true") {
+        tile.dataset.revealed = "true";
+        const veil = tile.querySelector(".tile__veil");
+        if (veil) veil.remove();
+        return;
+      }
+
+      const entry = entryById(state.lastList, tile.dataset.entry);
+      if (entry) openViewer(entry);
     });
 
-    host.addEventListener("keydown", (event) => {
-      const card = event.target.closest(".bmk");
-      if (!card) return;
-      if (event.key === "Enter" || event.key === " ") {
-        // A focused control inside the card — a play button, a tag button —
-        // owns its own activation. Only the card itself opens the detail.
-        if (event.target.closest("button, a, [data-play]") !== card &&
-            event.target.closest("button, a, [data-play]")) return;
+    /* Right-click / long-press equivalent: opening the post rather than the
+       media. A secondary action needs a discoverable route, so it is also on
+       the inspector button and on `i`. */
+    feed.addEventListener("contextmenu", (event) => {
+      const tile = event.target.closest(".tile[data-entry]");
+      if (!tile) return;
+      event.preventDefault();
+      openDetail(tile.dataset.entry);
+    });
+
+    feed.addEventListener("keydown", (event) => {
+      const tile = event.target.closest(".tile[data-entry]");
+      if (!tile) return;
+      // `i` inspects without opening: the keyboard route to the post behind
+      // the picture.
+      if (event.key === "i" || event.key === "I") {
         event.preventDefault();
-        openDetail(card.dataset.id);
-      }
-      // Roving arrow navigation across the grid.
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        const cards = Array.from(host.querySelectorAll(".bmk"));
-        const at = cards.indexOf(card);
-        const to = event.key === "ArrowDown" ? at + 1 : at - 1;
-        if (to >= 0 && to < cards.length) { event.preventDefault(); cards[to].focus(); }
+        openDetail(tile.dataset.entry);
       }
     });
 
-    // Broken remote images degrade to a neutral placeholder, never a broken icon.
-    host.addEventListener("error", (event) => {
+    // Broken remote images degrade to a neutral placeholder, never a broken
+    // icon — an archive of remote media WILL have dead links in it.
+    feed.addEventListener("error", (event) => {
       const img = event.target;
       if (!img || img.tagName !== "IMG" || !img.hasAttribute("data-media")) return;
-      const box = img.closest(".bmk__thumb");
+      const box = img.closest(".m3e-tile__media, .slide__stage, .detail__thumb");
       if (box) {
         img.remove();
-        box.insertAdjacentHTML("beforeend", '<span style="color:var(--md-sys-color-on-surface-variant)">' + svg("image", 24) + "</span>");
-      } else if (img.classList.contains("bmk__avatar") || img.classList.contains("detail__avatar")) {
+        box.insertAdjacentHTML("beforeend", '<span class="tile__missing">' + svg("image", 24) + "</span>");
+      } else if (img.classList.contains("detail__avatar") || img.classList.contains("slide__avatar")) {
         const span = document.createElement("span");
         span.className = img.className;
         span.textContent = "?";
@@ -2383,7 +2444,7 @@
       }
       if (event.key === "Escape") {
         // Innermost surface wins. The lightbox sits above the sheet, so it
-        // must swallow Escape before the detail view sees it.
+        // must swallow Escape before the inspector sees it.
         if (window.XLightbox && XLightbox.isOpen) return;
         if (dialog.isOpen) return;      // the overlay handles its own Escape
         if (sheet.isOpen) return;
@@ -2409,6 +2470,15 @@
         return;
       }
 
+      // "v" cycles the view. Switching between grazing, searching and
+      // watching is the most frequent thing anyone does here.
+      if (event.key === "v" || event.key === "V") {
+        event.preventDefault();
+        setView(VIEWS[(VIEWS.indexOf(state.view) + 1) % VIEWS.length]);
+        snack.show(state.view[0].toUpperCase() + state.view.slice(1) + " view");
+        return;
+      }
+
       // Number keys jump between collections — power-user affordance.
       const index = parseInt(event.key, 10);
       if (index >= 1 && index <= COLLECTIONS.length) {
@@ -2421,12 +2491,17 @@
   function init() {
     // ---- theme first, so nothing paints unstyled -------------------------
     state.settings = Object.assign({}, DEFAULT_SETTINGS, readJSON(KEYS.settings, {}));
+    /* A media browser defaults to dark. This is not a taste call: a bright
+       surround measurably shifts how a photograph is perceived, which is why
+       every viewer built for looking at pictures — Lightroom, Photos, X's own
+       image view — darkens the room. "System" remains one tap away. */
+    if (readJSON(KEYS.settings, null) === null) state.settings.scheme = "dark";
     theme = M3ETheme.createController(state.settings);
 
     state.meta = readJSON(KEYS.meta, {}) || {};
-    state.views = readJSON(KEYS.views, []) || [];
     state.items = normalize(readJSON(KEYS.items, []) || []);
     state.collection = state.settings.lastCollection || "all";
+    state.view = VIEWS.includes(state.settings.view) ? state.settings.view : "rails";
 
     // ---- runtime services -------------------------------------------------
     snack = M3E.createSnackbar($("snackbar"));
@@ -2434,19 +2509,30 @@
     dialog = M3E.createOverlay({ element: $("dialog"), scrim: $("scrim") });
 
     M3E.bindRipple(document);
-    M3E.bindWindowClass((cls) => {
-      // Moving across the list-detail boundary re-hosts the open detail view.
-      if (cls === "large" || cls === "extra-large") {
-        if (sheet.isOpen && state.selectedId) { sheet.close(); openDetail(state.selectedId); }
-      } else if (state.selectedId) {
-        const body = $("detailBody");
-        if (body && !body.hidden) { clearDetailPaneOnly(); }
+    /* Crossing the inspector boundary RE-HOSTS the open post rather than
+       discarding it. The previous build dropped the selection on the way
+       down — it closed the pane and did not reopen the sheet — so resizing
+       a window mid-read silently lost your place. The content is identical
+       in both containers; only the container changes, which is the entire
+       promise of an adaptive layout. */
+    M3E.bindWindowClass(() => {
+      if (!state.selectedId) return;
+      const body = $("detailBody");
+      const paneShowing = body && !body.hidden;
+
+      if (isLargeWindow()) {
+        if (sheet.isOpen) sheet.close();
+        if (!paneShowing) openDetail(state.selectedId);
+      } else if (paneShowing) {
+        clearDetailPaneOnly();
+        openDetail(state.selectedId);   // reopens as a sheet
       }
     });
-    M3E.bindScrollChrome({ appBar: $("appBar"), fab: $("fabTrigger") });
+    M3E.bindScrollChrome({ appBar: $("appBar"), toolbar: $("navBar") });
 
     readUrl();
     renderNav();
+    syncViewSeg();
     render();
 
     /* ---- seed with the sample file on a truly empty first run -------------
@@ -2467,13 +2553,6 @@
     }
 
     bindEvents();
-  }
-
-  function clearDetailPaneOnly() {
-    const body = $("detailBody");
-    const placeholder = $("detailPlaceholder");
-    if (body) { body.hidden = true; body.innerHTML = ""; }
-    if (placeholder) placeholder.hidden = false;
   }
 
   function bindEvents() {
@@ -2499,10 +2578,9 @@
       const el = $(id);
       if (el) el.addEventListener("click", () => { filters[key] = !filters[key]; render(); });
     };
-    toggleChip("chipMedia", "hasMedia");
-    toggleChip("chipLinks", "hasLinks");
-    toggleChip("chipTagged", "tagged");
-    toggleChip("chipNoted", "noted");
+    toggleChip("chipVideo", "video");
+    toggleChip("chipPhotos", "photos");
+    toggleChip("chipGif", "gif");
 
     if ($("chipAuthor")) $("chipAuthor").addEventListener("click", openAuthorPicker);
     if ($("chipRefine")) $("chipRefine").addEventListener("click", openRefine);
@@ -2511,7 +2589,7 @@
       $("chipShuffle").addEventListener("click", () => {
         reshuffle();
         render();
-        // The list has just been re-dealt beneath the reader; say so, and put
+        // The feed has just been re-dealt beneath the reader; say so, and put
         // the top of it back in view so the change is legible rather than
         // just disorienting.
         const pane = $("pane");
@@ -2521,18 +2599,9 @@
     }
     if ($("chipReset")) $("chipReset").addEventListener("click", resetFilters);
 
-    document.querySelectorAll("#densitySeg [data-density]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        state.settings.density = btn.dataset.density;
-        theme.set(state.settings);
-        saveSettings();
-        renderFilterBar();
-      });
+    document.querySelectorAll("#viewSeg [data-view]").forEach((btn) => {
+      btn.addEventListener("click", () => setView(btn.dataset.view));
     });
-
-    if ($("importBtn")) $("importBtn").addEventListener("click", () => $("fileImport").click());
-    bindImportMenu();
-    bindFabMenu();
 
     if ($("railFab")) $("railFab").addEventListener("click", () => $("fileImport").click());
     [$("railSettings"), $("appBarSettings")].forEach((btn) => {
@@ -2586,7 +2655,7 @@
     if ($("fileImport")) $("fileImport").addEventListener("change", (e) => handleFile(e.target, {}));
     if ($("fileRestore")) $("fileRestore").addEventListener("change", (e) => handleFile(e.target, { restore: true }));
 
-    bindLibrary();
+    bindFeed();
     bindGlobalKeys();
     bindCaptureBanner();
   }

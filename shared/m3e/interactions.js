@@ -412,6 +412,120 @@
   }
 
   /* ---------------------------------------------------------------------------
+     Carousel controller
+
+     Owns the behaviour an M3 carousel needs beyond what CSS scroll-snap gives
+     for free:
+
+       · arrow buttons that page by a viewport, and disable at each end;
+       · a scroll-extent indicator, since the scrollbar is suppressed;
+       · keyboard parity — Arrow keys, Home and End move the rail, because a
+         horizontally scrolling region that can only be driven by a mouse
+         wheel or a swipe is unusable without one (WCAG 2.1.1);
+       · wheel translation, so a vertical trackpad flick over a rail scrolls
+         the rail rather than the page.
+
+     Everything is passive and rAF-coalesced: a page can hold a dozen rails.
+     --------------------------------------------------------------------------- */
+  function bindCarousel(scroller, options) {
+    if (!scroller) return { destroy() {}, update() {} };
+    const opts = options || {};
+    const prev = opts.prev || null;
+    const next = opts.next || null;
+    const progress = opts.progress || null;
+    let frame = 0;
+
+    const maxScroll = () => Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+
+    const update = () => {
+      frame = 0;
+      const max = maxScroll();
+      const x = scroller.scrollLeft;
+      // 1px of slack: sub-pixel layout means scrollLeft rarely hits max exactly,
+      // which would leave the "next" arrow enabled forever at the end.
+      if (prev) prev.disabled = x <= 1;
+      if (next) next.disabled = x >= max - 1;
+
+      if (progress) {
+        const extent = scroller.scrollWidth ? scroller.clientWidth / scroller.scrollWidth : 1;
+        progress.parentElement.hidden = extent >= 0.999;
+        progress.style.setProperty("--m3e-extent", (extent * 100).toFixed(2) + "%");
+        progress.style.setProperty(
+          "--m3e-offset",
+          (scroller.scrollWidth ? (x / scroller.scrollWidth) * 100 : 0).toFixed(2) + "%"
+        );
+      }
+    };
+
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
+
+    /* A page is one viewport minus a sliver, so the item that was at the edge
+       stays visible and gives the eye something to anchor to. Paging by the
+       full width makes every step feel like a jump cut. */
+    const page = (direction) => {
+      const step = Math.max(120, scroller.clientWidth * 0.85);
+      scroller.scrollBy({
+        left: direction * step,
+        behavior: reducedMotion() ? "auto" : "smooth",
+      });
+    };
+
+    if (prev) prev.addEventListener("click", () => page(-1));
+    if (next) next.addEventListener("click", () => page(1));
+
+    scroller.addEventListener("scroll", schedule, { passive: true });
+
+    scroller.addEventListener("keydown", (event) => {
+      // Only when the rail itself (or a non-input child) has focus; a text
+      // field inside a rail must keep its own arrow keys.
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)) return;
+      switch (event.key) {
+        case "ArrowRight": event.preventDefault(); page(1); break;
+        case "ArrowLeft": event.preventDefault(); page(-1); break;
+        case "Home":
+          event.preventDefault();
+          scroller.scrollTo({ left: 0, behavior: reducedMotion() ? "auto" : "smooth" });
+          break;
+        case "End":
+          event.preventDefault();
+          scroller.scrollTo({ left: maxScroll(), behavior: reducedMotion() ? "auto" : "smooth" });
+          break;
+        default: break;
+      }
+    });
+
+    /* Translate a vertical wheel into horizontal scroll — but only while the
+       rail still has somewhere to go in that direction, so reaching the end of
+       a rail hands the gesture back to the page instead of trapping it. A
+       trackpad user who is already scrolling horizontally (deltaX) is left
+       completely alone. */
+    scroller.addEventListener(
+      "wheel",
+      (event) => {
+        if (event.deltaX !== 0 || event.ctrlKey) return;
+        const max = maxScroll();
+        if (max <= 0) return;
+        const going = Math.sign(event.deltaY);
+        const at = going > 0 ? scroller.scrollLeft >= max - 1 : scroller.scrollLeft <= 1;
+        if (at) return;
+        event.preventDefault();
+        scroller.scrollLeft += event.deltaY;
+      },
+      { passive: false }
+    );
+
+    if (typeof ResizeObserver === "function") {
+      const ro = new ResizeObserver(schedule);
+      ro.observe(scroller);
+      update();
+      return { update: schedule, destroy: () => ro.disconnect() };
+    }
+
+    update();
+    return { update: schedule, destroy() {} };
+  }
+
+  /* ---------------------------------------------------------------------------
      Utilities
      --------------------------------------------------------------------------- */
   function pulse(element) {
@@ -448,6 +562,7 @@
     windowClass,
     bindRovingFocus,
     bindSwitch,
+    bindCarousel,
     pulse,
     debounce,
     escapeHtml,

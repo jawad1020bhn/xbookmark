@@ -182,9 +182,9 @@ They are available as a modifier — `.m3e-title-large--emphasized` — and are
 rationed to roughly **one in five** type instances, per Google's guidance.
 Concretely, emphasised type appears only on:
 
-- the hero unit ("bookmarks") and section headers;
-- card author names;
+- rail titles ("Video & GIFs", "Recently posted");
 - dialog and sheet titles;
+- the inspector's author name;
 - the popup status word and its stat numerals;
 - primary button labels.
 
@@ -193,7 +193,17 @@ never emphasised. If everything is emphasised, nothing is — that is precisely
 what went wrong in the UI this replaces, where six weights competed on one
 card.
 
-Display size is scarcer still: **one instance per screen**, the hero numeral.
+**The display scale is now unused entirely.** The previous build spent it on a
+count of how many bookmarks existed — 57 px of type announcing a number nobody
+came for, occupying the top of every screen. There is no longer any text in
+this product important enough to earn display size, and that is the correct
+answer for a media browser: the largest thing on screen should be a
+photograph, not a word.
+
+That is worth stating plainly because it inverts the usual reading of
+"expressive". Restraint in type is what *lets* the media be expressive. A
+57 px numeral competing with a 16:9 hero image does not produce two loud
+things; it produces one confused screen.
 
 ---
 
@@ -209,26 +219,36 @@ The full M3 Expressive corner scale:
 | `medium` | 12 px | small containers |
 | `medium-increased` | 16 px | stat cards, log rows |
 | `large` | 16 px | FAB, nav drawer |
-| `large-increased` | 20 px | **bookmark cards, default** |
-| `extra-large` | 28 px | dialogs, sheets, **selected card** |
-| `extra-large-increased` | 32 px | hero at compact |
-| `extra-extra-large` | 48 px | hero at ≥840 px |
+| `large-increased` | 20 px | **media tiles, default** |
+| `extra-large` | 28 px | dialogs, sheets, theater stage |
+| `extra-large-increased` | 32 px | — |
+| `extra-extra-large` | 48 px | — |
 | `full` | 9999 px | buttons, chips, badges, search |
 
 ### 3.1 Shape carries meaning
 
-This is the Expressive idea worth the most here. On `.bmk` cards, radius is a
-**state channel**, not styling:
+This is the Expressive idea worth the most here, and it does more work than
+before because colour is no longer available: nothing may tint a photograph,
+so shape has to carry state on its own.
+
+On `.m3e-tile`, radius is a **state channel**, not styling:
 
 | State | Radius | Plus |
 |---|---|---|
 | default | `large-increased` (20) | — |
-| **selected** | `extra-large` (28) | primary outline + 4 px leading spine |
-| archived | `medium` (12) | 0.72 opacity |
+| hover | `large-increased` | scale 1.012, elevation 2 |
+| **pressed** | `medium-increased` (16) | scale 0.985 |
+| **selected** | `large-increased` | 3 px `primary` outline, offset 2 px |
 
-Selection is legible through shape alone, so it survives greyscale, colour
-blindness and forced-colours mode. Colour and the spine are redundant
-reinforcement, never the sole signal.
+Pressing squares the tile off — physical compression rather than a colour
+flash. The same morph runs through the carousel arrows (`full` → `medium`) and
+the theater play button (`full` → `extra-large`), so "pressed" has one
+consistent meaning across every round control in the product.
+
+Selected chips likewise go fully round while unselected ones stay partly
+rounded, so filter state is legible in greyscale, under colour blindness and
+in forced-colours mode. Colour is redundant reinforcement, never the sole
+signal.
 
 The same principle runs through the popup: the status dot is a **circle** while
 capturing, **squares off** when paused, and becomes a **rotated square** on
@@ -243,10 +263,16 @@ later somewhere else on screen.
 
 ### 3.3 Shape scales with container
 
-Larger containers take larger radii — the hero is the only element permitted
-`extra-extra-large`, and it steps down to `extra-large-increased` at compact
-where the container itself is smaller. Nothing else may borrow the hero's
-radius, which is what makes it read as the top of the hierarchy.
+Larger containers take larger radii. The theater stage and the sheets take
+`extra-large` (28); tiles take `large-increased` (20); the filmstrip frames in
+the viewer take `small` (8). A 52 px thumbnail with a 28 px radius is a
+lozenge, not a thumbnail.
+
+`extra-large-increased` and `extra-extra-large` are currently unused. They were
+the hero's radii, and the hero is gone. They stay in the token set rather than
+being deleted: the ladder is the M3 shape scale, not a list of what this
+product happens to use today, and a gap in a scale is how the scale stops
+being one.
 
 ---
 

@@ -68,25 +68,32 @@
 
   <!-- =======================================================================
        Live counters
+
+       "Media" replaces the old duplicate count. The dashboard this feeds is a
+       media browser, so the number that tells you the run is working is how
+       many photos and videos came back — a capture that finds 400 posts and
+       zero media has failed in a way a post count cannot show. Duplicates are
+       scraper diagnostics and moved to the activity log.
        ======================================================================= -->
   <dl class="stats" id="stats">
     <div class="stat stat--captured">
-      <dt class="m3e-label-small">Captured</dt>
+      <dt class="m3e-label-small">Posts</dt>
       <dd class="m3e-headline-small m3e-headline-small--emphasized m3e-tabular" id="statCaptured">0</dd>
     </div>
     <div class="stat stat--new">
       <dt class="m3e-label-small">New</dt>
       <dd class="m3e-headline-small m3e-headline-small--emphasized m3e-tabular" id="statNew">0</dd>
     </div>
-    <div class="stat stat--dupes">
-      <dt class="m3e-label-small">Duplicates</dt>
-      <dd class="m3e-headline-small m3e-headline-small--emphasized m3e-tabular" id="statDupes">0</dd>
+    <div class="stat stat--media">
+      <dt class="m3e-label-small">Media</dt>
+      <dd class="m3e-headline-small m3e-headline-small--emphasized m3e-tabular" id="statMedia">0</dd>
     </div>
     <div class="stat stat--failed">
       <dt class="m3e-label-small">Failed</dt>
       <dd class="m3e-headline-small m3e-headline-small--emphasized m3e-tabular" id="statFailed">0</dd>
     </div>
   </dl>
+  <p class="m3e-body-small stats__hint" id="mediaHint">No photos or video yet</p>
 
   <!-- =======================================================================
        Transport controls

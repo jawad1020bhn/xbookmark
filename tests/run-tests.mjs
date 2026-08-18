@@ -121,6 +121,33 @@ test("media types captured", () => {
   assert.equal(t.media_items[0].alt, "a demo video");
   assert.equal(t.media_items[1].type, "photo");
   assert.equal(t.media_items[1].mp4, null);
+
+  /* The whole mp4 ladder, best first. Keeping only the winner made it
+     impossible for the player to pick a rung by rendered size, so a 168px
+     carousel tile downloaded the 720p file. */
+  assert.deepEqual(
+    t.media_items[0].mp4_variants.map((v) => v.bitrate),
+    [2176000, 832000]
+  );
+  assert.equal(t.media_items[0].mp4_variants[0].url, "https://video.twimg.com/1280x720.mp4");
+
+  // For a video, `media_url_https` IS the poster frame; say so explicitly
+  // rather than making every consumer know it.
+  assert.equal(t.media_items[0].poster, t.media_items[0].url);
+  // Order inside a post is meaningful (a thread's screenshots are sequential)
+  // and is lost the moment anything re-sorts the array.
+  assert.deepEqual(t.media_items.map((m) => m.position), [1, 2]);
+  assert.equal(t.media_items[0].sensitive, false);
+});
+
+test("post-level sensitivity is pushed down onto each media item", () => {
+  // The media grid is what has to blur, and it should not have to reach back
+  // up to the post to find out whether it should.
+  const raw = load("media-video.json").json;
+  const tweet = extract(raw)[0];
+  tweet.legacy.possibly_sensitive = true;
+  const t = normalize(tweet);
+  assert.ok(t.media_items.every((m) => m.sensitive === true));
 });
 
 test("validateItem rejects unsafe URL", () => {

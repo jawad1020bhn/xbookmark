@@ -1,6 +1,6 @@
 # 02 · Components
 
-`shared/m3e/components.css` — 29 sections, ~1 570 lines, tokens only. No
+`shared/m3e/components.css` — 33 sections, ~1 900 lines, tokens only. No
 component hard-codes a colour, radius or duration; every value resolves through
 `var(--md-sys-*)`, which is what lets the whole UI re-theme at runtime from a
 single seed.
@@ -28,7 +28,8 @@ adopts the ones that fit, and — importantly — leaves out the ones that don't
 
 | Component | Section | Where used | Why |
 |---|---|---|---|
-| **Button group** | 6 | Density toggle, popup transport pair | Connected controls that morph shape and width on press |
+| **Carousel** | 31 | Every rail, all three layouts | *The* M3E component for browsing media. See §2.1 |
+| **Button group** | 6 | View switch, popup transport pair | Connected controls that morph shape and width on press |
 | **Split button** | 7 | Dashboard `Import ▾` | One primary action + a menu of variants, without a second full button |
 | **FAB menu** | 8 | Dashboard compact FAB | Replaces the deprecated speed dial; large, contrasting items |
 | **Toolbars** | 9 | Filter bar, detail actions | Floating toolbar replaces the deprecated bottom app bar |
@@ -43,13 +44,23 @@ adopts the ones that fit, and — importantly — leaves out the ones that don't
 
 ### Deliberately not used
 
-- **Carousel** — the library is a list of text, not a gallery. A carousel would
-  hide items behind a gesture for visual novelty.
-- **Docked toolbar** — the dashboard already has a rail and a nav bar; a third
-  persistent bar would be clutter.
+- **Docked toolbar** — the compact surface already floats one toolbar; a second
+  persistent bar would eat the room this redesign exists to reclaim.
 - **Sliders** — nothing here is a continuous quantity.
 - **Wavy *determinate* progress** — the capture genuinely doesn't know its total
   ahead of time. Showing a determinate bar would be a lie.
+- **Split button** — the previous build's `Import ▾` split button is gone.
+  Import is now a single unambiguous action in the rail FAB and the compact
+  toolbar; export and backup live in Personalise, where destructive-adjacent
+  data operations belong. A split button whose menu holds *four* actions is a
+  menu wearing a costume.
+
+> **Reversal worth flagging.** The previous revision of this document listed
+> *Carousel* under "deliberately not used", on the grounds that "the library is
+> a list of text, not a gallery". That premise was wrong, and it was the
+> premise the entire old UI rested on. A bookmark archive from X is
+> overwhelmingly photos and video. The carousel is now the backbone of the
+> product.
 
 Restraint is part of applying a design system. Using all 15 because they exist
 is how you get the incoherence this redesign is fixing.
@@ -58,72 +69,127 @@ is how you get the incoherence this redesign is fixing.
 
 ## 2. Anatomy of the load-bearing components
 
-### 2.1 Bookmark card `.bmk`
+### 2.1 Carousel `.m3e-carousel`
 
-The single most repeated element in the product; everything about it is
-deliberate.
+The backbone of the product. Three of M3's four carousel layouts are
+implemented, because they answer three different questions.
 
-```
-┌─────────────────────────────────────────────┐
-│ ▌ (avatar) Author Name  [TYPE]      Jul 15  │  ← identity row
-│ ▌ @handle                                   │
-│ ▌                                           │
-│ ▌ Post text, clamped to 6 lines             │  ← content
-│ ▌ (3 at compact density)                    │
-│ ▌                                           │
-│ ▌ ♥ 1.3K ⇄ 412 💬 86 👁 142K [MEDIA] [LINK] │  ← metrics + affordances
-│ ▌ Captured Jul 16, 2026      [tag][arch][↗] │  ← provenance + row actions
-└─────────────────────────────────────────────┘
-  ↑ 4px spine, selected only
-```
-
-| Property | Default | Selected | Archived |
+| Layout | Sizing | Says | Used by |
 |---|---|---|---|
-| radius | `large-increased` | `extra-large` | `medium` |
-| outline | none | 1 px `primary` | none |
-| spine | none | 4 px `primary` | none |
-| opacity | 1 | 1 | 0.72 |
+| `--hero` | Fixed width (one item + a peek), fixed band height | *"Look at this one."* | Video & GIFs; small libraries |
+| `--multi` | Fixed height, **width derived from the item's ratio** | *"What have I got?"* | Every grouped rail |
+| `--uncontained` | Natural size, runs past the edge | *"Keep going."* | Everything rail |
 
-Row actions appear on hover and focus-within, and are always in the DOM so
-keyboard and screen-reader users reach them identically — they are not
-`display: none` until hover, which is a common way to make a UI
-keyboard-inaccessible by accident.
+**The peek is the component.** M3's defining carousel behaviour is that the
+item entering the viewport is partially visible, so the rail reads as a
+physical strip continuing past the screen edge rather than a row that has been
+abruptly clipped. That is produced entirely by layout — `scroll-snap` plus the
+sizing above — with no scroll listener and no per-frame JS.
 
-Text is clamped rather than truncated mid-word, and the full text is one click
-away in the detail view, so the clamp never loses information.
+**`--bleed`** pulls the strip out to the window edge with a negative margin and
+restores the first item's alignment with `padding-inline`. A rail that stops at
+the content gutter looks like it has ended; one that runs off the edge looks
+like it continues.
 
-### 2.2 Hero band
+**The scrollbar is suppressed** and replaced by explicit affordances: arrow
+buttons on pointer devices, an extent indicator under the rail, and the
+gesture itself on touch. A visible bar under each of eight rails is noise, and
+it is never the control anyone reaches for.
 
-The only element allowed display type and the only one allowed
-`extra-extra-large` radius. It answers "how big is my library, and what am I
-looking at right now" before anything else.
+**Behaviour** lives in `M3E.bindCarousel(scroller, { prev, next, progress })`:
 
-At compact it sheds the prose caption, drops the numeral to display-small, and
-turns the stat grid into a single horizontally-scrolling row — because on a
-390 × 844 phone the original layout consumed the entire fold and pushed every
-bookmark below it. A summary that hides the thing it summarises is an inverted
-hierarchy. After the fix, a full card is visible without scrolling.
+- arrows page by 85 % of a viewport — not 100 %, so the item that was at the
+  edge stays visible and gives the eye an anchor. Paging by the full width
+  feels like a jump cut;
+- arrows disable at each end, with 1 px of slack because sub-pixel layout means
+  `scrollLeft` rarely reaches `max` exactly;
+- `←` `→` `Home` `End` when the rail has focus — a horizontally scrolling
+  region drivable only by wheel or swipe fails WCAG 2.1.1;
+- a vertical wheel is translated to horizontal scroll, **but only while the
+  rail still has room in that direction**. At either end the gesture is handed
+  back to the page. Trapping it is the classic carousel scroll-jail;
+- everything is rAF-coalesced and `ResizeObserver`-driven; a page can hold a
+  dozen rails.
+
+### 2.2 Media tile `.m3e-tile`
+
+The atom of the product. One photo or one video, sized by its own aspect ratio,
+with every piece of metadata layered **on top of** it rather than beside it.
+
+```
+┌───────────────────────────────┐
+│                        [0:15] │  ← badge: duration / GIF / n-of-m
+│                               │
+│              ▶                │  ← play affordance, motion only
+│                               │
+│ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ │  ← gradient scrim
+│ Engineer Daily                │
+│ Jul 9 · 2.1K likes            │
+└───────────────────────────────┘
+```
+
+**Why overlay, not caption.** In a browsing surface the media is the content
+and the metadata is the label. Giving the label its own row halves the number
+of items on screen and doubles the scroll distance to see the same library.
+
+**Why a gradient, not a bar.** A flat bar is a rectangle of chrome over the
+bottom of a photograph. The gradient is weighted to the bottom third with two
+stops rather than a linear ramp — a straight `linear-gradient` reads as a grey
+haze across the middle of the picture.
+
+| Property | Default | Hover | Pressed | Selected |
+|---|---|---|---|---|
+| radius | `large-increased` | — | `medium-increased` | — |
+| scale | 1 | 1.012 | 0.985 | 1 |
+| elevation | 0 | level 2 | — | 0 |
+| outline | none | none | none | 3 px `primary` |
+
+Hover lifts by 1.2 %, not 5 %. This is a wall of images; anything more and the
+grid ripples as the pointer crosses it.
+
+**Colour is never applied to the media.** No tint, no saturation shift, no
+duotone on hover. Everything in the centre of the screen is the user's content,
+and expressive treatment applied to someone else's photograph is vandalism.
+
+Every tile is a real `<button>` with a label of the form
+`Play video by Engineer Daily: <alt text>` — action first, because a
+screen-reader user decides whether to keep listening during the first few
+words.
 
 ### 2.3 Filter bar
 
-A floating toolbar of chips. Below 600 px it scrolls horizontally with a
-scroll-driven edge fade (`animation-timeline: scroll(self inline)`), so the
-mask only appears when the row actually overflows. From 600 px up **it wraps
-instead** — horizontal scrolling on a wide window hides controls behind a
-gesture for no reason, and the sort chip was being clipped by the fade.
+A horizontally scrollable chip set. Selected chips change **shape** as well as
+colour — fully rounded when on, partly rounded when off — so state survives
+greyscale and colour-blind viewing.
 
-### 2.4 Detail surface
+The trailing edge is masked with a fade so a clipped chip reads as "more this
+way" rather than as a rendering bug.
+
+The three type chips (Video / Photos / GIF) are a **union**. Ticking two of
+them means "either", which is what everyone expects; an intersection would
+render an empty screen for the most obvious pair of clicks in the bar.
+
+### 2.4 Inspector
+
+The post *behind* the selected media. Deliberately not called a detail view:
+the media is the main event and this is context.
 
 One HTML builder, two presentations:
 
-- **≥1200 px** — a persistent third pane. No scrim, no focus trap: it is part
-  of the page, and trapping focus in an always-visible region is hostile.
-- **<1200 px** — a modal bottom sheet with scrim, focus trap and Escape.
+- **≥ 1200 px** — a persistent third column. No scrim, no focus trap: it is
+  part of the page, and trapping focus in an always-visible region is hostile.
+- **< 1200 px** — a bottom sheet (compact) or side sheet (medium) with scrim,
+  focus trap and Escape.
 
-`detailHtml(item, { ownHeader })` takes a flag because the sheet already
-provides a title bar and close button. Without it the sheet rendered the author
-name twice and showed two close buttons — caught in screenshot review, fixed by
-making the header conditional rather than by duplicating the builder.
+It holds the author, the text, the metrics, the sibling media in the same post,
+and four actions (View full size · Open on X · Copy link · Archive). It holds
+**no** tag editor, **no** note field and **no** media grid — the media is
+already on screen at full size, and the filing tools are gone.
+
+The sheet presentation hides the inspector's own close button with CSS rather
+than branching the builder, because the sheet header already provides one. The
+previous build passed an `ownHeader` flag through the builder for this, which
+meant two code paths and, for a while, two visible close buttons.
 
 ### 2.5 Popup status card
 
@@ -210,106 +276,65 @@ toolbar badge and cannot import anything that touches the DOM.
 
 ## 5. Media
 
-Most bookmarks in a real X library are photo or video posts, so media is not a
-detail of the card — for many rows it *is* the card. It gets its own section
-because the decisions here are the ones most likely to be undone by someone who
-doesn't know why they were made.
+Media is not a detail of this product; it *is* the product. The full pipeline —
+capture, normalisation, source selection, playback and failure — has its own
+document, **`06-media-and-playback.md`**, because it crosses every layer of the
+project. What follows is only the presentation side.
 
-### 5.1 The grid
+### 5.1 There is no media grid any more
 
-The card reproduces X's own arrangement, because that is the shape users already
-associate with a post and any other layout makes a saved post look unfamiliar:
+The previous build reproduced X's 1/2/3/4 in-post arrangement inside each card.
+That made sense when the unit was a post. It does not now: a post with four
+photos is **four things to browse**, not one row with a 2×2 squeezed into it.
+The four appear as four independent tiles, each addressable, each openable at
+full size, each with its own place in the sort order.
 
-| Items | Layout |
-| --- | --- |
-| 1 | Full width, **at the media's own aspect ratio**, capped at 62vh |
-| 2 | Two equal columns, 16:9 overall |
-| 3 | One full-height leading cell, two stacked beside it, 16:9 overall |
-| 4 | 2×2, 16:9 overall |
-| 5+ | First four, with `+N` on the last cell |
+What is retained from that arrangement is the `n/m` badge, so an item that came
+from a multi-photo post still says so, and the inspector lists its siblings.
 
-Cells are separated by 3px and clipped by a single `large` radius on the
-container, so the group reads as one object rather than four.
+### 5.2 Sizing
 
-**Every cell is sized by ratio, never by pixel height.** A single photo carries
-its intrinsic ratio through a `--_ar` custom property set from the captured
-`width`/`height`, and images additionally carry real `width`/`height`
-attributes. The space is therefore correct before any bytes arrive, and the list
-does not reflow as it loads — a media-heavy feed that jumps while scrolling is
-unusable, and cumulative layout shift is the usual cause.
+**Every tile is sized by ratio, never by pixel height.** The intrinsic ratio
+rides a `--_ar` custom property set from the captured `width`/`height`, and
+images additionally carry real `width`/`height` attributes. The space is
+therefore correct before any bytes arrive, and the feed does not reflow as it
+loads — a media-heavy surface that jumps while scrolling is unusable, and
+cumulative layout shift is the usual cause.
 
-Multi-item cells crop with `object-fit: cover` to keep the grid regular; a lone
-item uses `contain` so nothing is cut off when there is no grid to keep regular.
+Where cropping is and is not permitted is tabulated in
+`03-layout-and-navigation.md` §3. The short version: only the hero rail crops,
+and only because a non-cropping view of the same item is always one tap away.
 
-### 5.2 Playback
+### 5.3 Bandwidth
 
-**Cards never mount a `<video>`.** Two hundred bookmarks that are mostly video
-would mean two hundred media elements, each with a decode pipeline and network
-activity. Cells render as poster images and a real player is swapped in only on
-activation. This is the single most important performance decision on the
-surface, and it is the one to check first if the library ever feels slow.
+Tiles request `?format=webp&name=small` from X's CDN; the viewer asks for
+`large`. Only `pbs.twimg.com` URLs are rewritten and everything else passes
+through untouched. On a library that is mostly images this is the difference
+between a few hundred kilobytes and several megabytes per screen.
 
-Playing a thumbnail does **not** open the detail view. The two actions would
-otherwise fight and the player would be destroyed as it mounted.
+Video applies the same idea to the mp4 ladder: `playableSource(media, {width})`
+picks the smallest rung that covers the rendered size. See
+`06-media-and-playback.md` §3.1.
 
-**One video at a time.** `M3EMedia` keeps a single stop function; starting any
-video stops the previous one, and opening or closing the detail pane stops
-everything. Concurrent audio is never what anyone wants and is easy to trigger
-in a list.
+### 5.4 Sensitive media
 
-Controls are the browser's own. Native `<video controls>` is already
-keyboard-complete, screen-reader labelled, and brings picture-in-picture and
-fullscreen for free; a bespoke control bar is a large amount of code whose best
-possible outcome is parity with it. The design system supplies the frame —
-shape, surface, focus ring — and nothing else.
+Blurred behind a veil, revealed on first activation, opened on the second.
+Going straight to full screen from a blurred thumbnail is exactly the ambush
+the blur exists to prevent. Sensitive media is never autoplayed.
 
-### 5.3 HLS, and why there is no player library
+The blur is applied to the image, not the tile, so the badge, the veil label
+and the focus ring stay sharp.
 
-X publishes video two ways: an adaptive HLS playlist, and fixed-bitrate MP4
-variants. Only Safari plays HLS natively; Chrome and Firefox need hls.js, which
-is larger than this entire application and would be the first runtime dependency
-in a deliberately zero-dependency, build-free repo. The MV3 content security
-policy also forbids loading it from a CDN, so it would have to be vendored.
+### 5.5 Accessibility
 
-**The resolution: prefer the MP4, which X publishes for essentially every video
-and which plays natively everywhere.** Where several variants exist the
-highest-bitrate one wins. HLS is used only where the browser can play it
-unaided. That covers the real corpus with zero bytes of dependency.
-
-For the residual case — a video published *only* as a stream — the UI says so
-and offers "Watch on X" over the poster frame. An honest dead end beats a play
-button that leads to a black rectangle.
-
-> **Detection note.** `canPlayType` cannot be trusted for this and the code says
-> so at the point of use. Chromium answers `"maybe"` to both HLS mime types and
-> then fails to play a playlist; this was found by probing a real build, not
-> assumed. Blink is therefore excluded explicitly. `tests/media.test.mjs` pins
-> that behaviour for Chrome, Edge and Opera user agents.
-
-### 5.4 Bandwidth
-
-Card posters are requested from X's CDN as `?format=webp&name=small` and the
-detail view asks for `name=medium`; only `pbs.twimg.com` URLs are rewritten and
-everything else passes through untouched. On a library that is mostly images
-this is the difference between a few hundred kilobytes and several megabytes per
-screen.
-
-### 5.5 Sensitive media
-
-Media captured as sensitive renders blurred behind a "tap to view" scrim, and
-the first activation only reveals it — watching is a second, deliberate action.
-Sensitive media is never autoplayed.
-
-### 5.6 Accessibility
-
-- Playable cells are real `<button>`s, focusable and activated by Enter or
-  Space, labelled `Play video (0:15)` / `Play GIF` rather than the filename.
-  Non-interactive cells are plain `<div>`s and stay out of the tab order.
-- Captured alt text becomes the image's `alt` and the video's `aria-label`; it
-  is also shown in the detail view's figcaption, where it is useful to everyone.
+- Tiles are real `<button>`s, activated by Enter or Space, labelled with the
+  action, the medium, the author and the caption — in that order.
+- Captured alt text becomes the image's `alt`. Where there is none, the post's
+  own text is used, truncated: it usually describes the picture better than any
+  generic string, and "image" describes nothing.
 - Duration badges use tabular numerals so they don't jitter.
-- GIFs are muted and looped, as their source medium implies; nothing else
-  autoplays, which keeps `prefers-reduced-motion` users from being ambushed.
+- GIFs loop silently; everything else autoplays only when both the setting and
+  `prefers-reduced-motion` allow it.
 
 ---
 
@@ -319,9 +344,24 @@ A large share of saved X media is screenshots of text — threads, code, charts,
 receipts. At card size these are unreadable, so full-screen viewing with zoom
 is not a flourish; it is the only way the content is legible at all.
 
-**Anatomy.** Top bar (counter, copy link, open on X, close) · stage · previous
-and next · bottom bar (caption, dots). Chrome is white-on-scrim rather than
-themed surfaces: the media is the subject and the frame should recede.
+**It traverses the whole library.** This is the change that turns the viewer
+from a per-post gallery into a browser: it is handed the entire current index,
+not the handful of attachments inside one post. Open anything, then keep going
+with the arrow keys or a swipe, and you move across posts, across authors and
+across years, in whatever order you are currently sorted by. `contextAt(i)`
+relabels the top bar as you cross a post boundary.
+
+**Anatomy.** Top bar (author, date, counter, copy link, open on X, close) ·
+stage · previous and next · bottom bar (caption, filmstrip). Chrome is
+white-on-scrim rather than themed surfaces: the media is the subject and the
+frame should recede.
+
+**Filmstrip, not dots.** The old dot row did not survive the change above:
+forty dots is a texture, not a control, and a library-wide viewer can hold
+thousands. A strip of thumbnails scales, and it doubles as a preview of what is
+coming — which dots never were. Only a window of ±12 items around the current
+index is materialised; building an `<img>` for every item to decorate a bottom
+bar would cost more than the photograph being looked at.
 
 **Backdrop at 97%.** The dialog scrim is 40%; this is not a dialog. At the 92%
 I first tried, the app chrome was still legible behind the photo and competed
@@ -337,7 +377,10 @@ smaller than the stage, which is most screenshots on a desktop monitor, i.e.
 precisely the case zoom exists for.
 
 **Keyboard.** `←` `→` navigate, `Home`/`End` jump, `z` zooms (centred, since
-there is no pointer to zoom toward), `Escape` closes. Keys are bound on the
+there is no pointer to zoom toward), `Space` plays/pauses, `Escape` closes.
+`Space` matters more than it looks: native video controls auto-hide, so
+without it the only way to pause is to make a hidden control reappear first,
+which reads as the player ignoring you. Keys are bound on the
 document rather than the viewer root: clicking a non-focusable `<img>` moves
 focus to `<body>`, and a root listener would then never fire — Escape appeared
 dead after any click on the media itself.
@@ -424,9 +467,17 @@ along whatever dimension you happen to care about today.
 | --- | --- |
 | **Time** | Newest · Oldest · Recently captured · Capture order |
 | **Reach** | Most liked · Most reposted · Most replied · Most viewed · Best engagement |
-| **Content** | Author A–Z · Longest · Shortest |
-| **Yours** | Recently tagged · Least touched |
+| **Content** | Author A–Z · Most text · Least text |
+| **Media** | Motion first · Longest video · Widest first |
 | **Chance** | Shuffle · Forgotten first |
+
+The **Media** group replaces the old **Yours** group, and the swap is the
+clearest single illustration of what changed in this redesign. *Yours* held
+"Recently tagged" and "Least touched" — sorts over filing metadata that the
+user had to generate by hand. *Media* holds sorts that only become expressible
+once the unit is a media item: motion before stills, by running time, by
+aspect ratio. The first set asked the user to do work so the product could sort
+them; the second sorts what is already there.
 
 **Grouped, not flat.** Past roughly eight items an ungrouped menu stops being
 scannable. M3E's November 2025 menu guidance permits gaps and grouping to
@@ -447,23 +498,25 @@ always captured and nothing ever read.
 
 A bookmark library sorted by recency forever means the oldest 90% is never seen
 again. Shuffle is the cheapest possible fix for that, and **Forgotten first**
-is the pointed version: a weighted draw favouring posts with no tag and no
-note, biased towards older ones. It is still random — two runs differ — but it
+is the pointed version: a weighted draw favouring media you have never opened, biased towards older
+posts. It is still random — two runs differ — but it
 digs where the value is buried. The weighting is applied *before* the jitter so
 randomness still dominates; otherwise it stops being a shuffle and becomes just
 another deterministic sort.
 
 **The hard requirement is that a shuffle be random between sessions and
 perfectly stable within one.** If the order were redrawn on every render,
-tagging a post or loading the next chunk would reshuffle the list under the
-reader's cursor and the card they were aiming at would move as they clicked.
+opening an item or loading the next chunk would reshuffle the list under the
+reader's cursor and the tile they were aiming at would move as they clicked.
 
 So the order is a pure function of a seed:
 
 - `hashSeed` (xmur3) + `rng` (mulberry32) — about fifteen lines, no dependency.
-- Each item's score is `rng(hash(tweet_id + ":" + seed))`. Scores derive from
-  the **item**, not from the array, so filtering keeps survivors in the same
-  relative order instead of re-dealing them.
+- Each entry's score is `rng(hash(entryId + ":" + seed))`, where `entryId` is
+  `<tweet_id>:<position>`. Scores derive from the **entry**, not from the
+  array, so filtering keeps survivors in the same relative order instead of
+  re-dealing them — and the two photos of one post shuffle independently,
+  which is correct now that they are two things.
 - Scores are precomputed into a `Map` before sorting. A comparator runs
   O(n log n) times; hashing inside it would make a large library crawl.
 - The seed travels in the URL, so a copied link reproduces the exact order the

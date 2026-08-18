@@ -158,6 +158,19 @@ body {
 .stat--failed[data-nonzero="true"] dt,
 .stat--failed[data-nonzero="true"] dd { color: var(--md-sys-color-on-error-container); }
 .stat--new[data-nonzero="true"] dd { color: var(--md-sys-color-primary); }
+/* Media is what the run is FOR, so it gets the tertiary container the moment
+   there is anything to show — a positive counterpart to the error tile. */
+.stat--media[data-nonzero="true"] {
+  background: var(--md-sys-color-tertiary-container);
+}
+.stat--media[data-nonzero="true"] dt,
+.stat--media[data-nonzero="true"] dd { color: var(--md-sys-color-on-tertiary-container); }
+
+.stats__hint {
+  margin: calc(-1 * var(--md-sys-spacing-2)) 0 0;
+  color: var(--md-sys-color-on-surface-variant);
+  text-align: center;
+}
 
 /* =============================================================================
    Controls
