@@ -1498,7 +1498,20 @@
     };
 
     window.addEventListener("scroll", schedule, { passive: true });
-    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(relayout) : null;
+
+    /* Wrap the ResizeObserver callback in a requestAnimationFrame to prevent
+       the "ResizeObserver loop completed with undelivered notifications" warning.
+       The relayout function modifies host.style.blockSize, which can trigger
+       a new observation synchronously — deferring it to the next frame breaks
+       the cycle while still reacting to container size changes within a frame. */
+    let resizeFrame = 0;
+    const observedRelayout = () => {
+      resizeFrame = 0;
+      relayout();
+    };
+    const observer = typeof ResizeObserver === "function"
+      ? new ResizeObserver(() => { if (!resizeFrame) resizeFrame = requestAnimationFrame(observedRelayout); })
+      : null;
     if (observer) observer.observe(host);
     else window.addEventListener("resize", relayout);
     relayout();

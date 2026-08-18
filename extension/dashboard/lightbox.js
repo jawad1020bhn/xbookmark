@@ -244,8 +244,15 @@
       closeOverview();
     });
     els.overviewGrid.addEventListener("scroll", scheduleOverviewPaint, { passive: true });
+
+    /* Defer the overview resize handler inside the ResizeObserver to avoid a
+       mutation cycle: layoutOverview sets blockSize on the observed element
+       and paintOverview writes innerHTML, both of which can trigger new
+       observations in the same frame. Using requestAnimationFrame breaks that
+       cycle while still reacting to container size changes within a frame. */
+    let overviewResizeFrame = 0;
     if (typeof ResizeObserver === "function") {
-      new ResizeObserver(overviewResize).observe(els.overviewGrid);
+      new ResizeObserver(() => { if (!overviewResizeFrame) overviewResizeFrame = requestAnimationFrame(() => { overviewResizeFrame = 0; overviewResize(); }); }).observe(els.overviewGrid);
     } else {
       window.addEventListener("resize", overviewResize);
     }
