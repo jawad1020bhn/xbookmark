@@ -22,7 +22,7 @@
 
   const STATUS = {
     idle:             { label: "Idle",          detail: "No capture run yet." },
-    capturing:        { label: "Capturing",     detail: "Scrolling conservatively…" },
+    capturing:        { label: "Capturing",     detail: "Scrolling slowly and deliberately — accuracy over speed." },
     paused:           { label: "Paused",        detail: "Manual scrolling is still captured." },
     completed:        { label: "Completed",     detail: "All available bookmarks captured." },
     stopped_by_user:  { label: "Stopped",       detail: "You stopped this run." },
@@ -30,13 +30,14 @@
   };
 
   const REASONS = {
-    "end-of-feed": "Reached the end of the feed.",
+    "end-of-feed": "Reached the end of the feed — every page answered empty.",
     "incremental-complete": "Incremental pass complete — no new bookmarks.",
-    "time-limit": "Hit the safety time limit.",
+    "max-runtime": "Hit the safety time limit.",
+    "max-batches": "Hit the safety scroll limit — start again to continue from here.",
     "no-responses-seen": "No timeline responses were intercepted. The page may stream over a transport this tool can't see.",
     "schema-mismatch": "Responses arrived but no posts could be read — X changed the response shape.",
-    "max-consecutive-errors": "Too many consecutive failures.",
-    "rate-limit": "Rate limited by X. Wait a few minutes before retrying.",
+    "too-many-errors": "Too many consecutive failures.",
+    "rate-limited": "Rate limited by X. Wait a few minutes before retrying.",
     "auth-error": "Authentication problem — check you're signed in on x.com.",
   };
 
