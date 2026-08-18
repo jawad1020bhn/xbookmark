@@ -222,7 +222,6 @@ test("the scraper keeps the whole variant ladder and the poster", () => {
   const fn = content.slice(content.indexOf("function buildMediaItems"), content.indexOf("function normalizeTweet"));
   assert.match(fn, /mp4_variants: mp4Variants/);
   assert.match(fn, /poster: still/);
-  assert.match(fn, /sensitive:/);
 
   // And the dashboard normalizer must not drop them again on the way in.
   const norm = app.slice(app.indexOf("function normalizeMedia"), app.indexOf("function normalize("));
@@ -309,12 +308,17 @@ test("media keeps its own aspect ratio", () => {
   assert.match(app, /style="--_ar:' \+ ar/);
 });
 
-test("sensitive media is gated behind a deliberate reveal", () => {
-  const fn = app.slice(app.indexOf("function bindFeed"), app.indexOf("function bindGlobalKeys"));
-  // First tap reveals, second opens: going straight to full screen from a
-  // blurred thumbnail is the exact ambush the blur exists to prevent.
-  assert.match(fn, /dataset\.sensitive === "true" && tile\.dataset\.revealed !== "true"/);
-  assert.match(components, /\.m3e-tile\[data-sensitive="true"\][\s\S]{0,120}filter: blur/);
+test("the private dashboard has no sensitive-content gate", () => {
+  const tile = app.slice(app.indexOf("function tileHtml"), app.indexOf("function buildRails"));
+  const theater = app.slice(app.indexOf("function theaterSlideHtml"), app.indexOf("function mountTheaterPlayers"));
+  const feed = app.slice(app.indexOf("function bindFeed"), app.indexOf("function bindGlobalKeys"));
+
+  // Every media item renders normally and the first activation opens it.
+  for (const src of [tile, theater, feed, components, layout]) {
+    assert.doesNotMatch(src, /data-sensitive|data-revealed|data-reveal|tile__veil|slide__veil/);
+  }
+  assert.doesNotMatch(tile + theater, /m\.sensitive|possibly_sensitive/);
+  assert.match(feed, /if \(entry\) openViewer\(entry\)/);
 });
 
 test("reduced motion is honoured by the new surfaces", () => {

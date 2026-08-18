@@ -148,7 +148,6 @@
     expand: '<path d="M4 4h6v2H6v4H4V4Zm10 0h6v6h-2V6h-4V4ZM4 14h2v4h4v2H4v-6Zm14 0h2v6h-6v-2h4v-4Z"/>',
     fullscreen: '<path d="M5 5h5v2H7v3H5V5Zm9 0h5v5h-2V7h-3V5ZM5 14h2v3h3v2H5v-5Zm12 0h2v5h-5v-2h3v-3Z"/>',
     shuffle: '<path d="M17 4.5 21.5 9 17 13.5V10.4h-2.1c-1 0-1.6.4-2.4 1.6l-.6 1-1.4-2.3.4-.6C12 8.3 13.2 7.6 15 7.6H17V4.5ZM3 8h3.2c1.6 0 2.8.6 3.9 2.2l3 4.6c.7 1 1.2 1.3 2 1.3H17v-3.1L21.5 17 17 21.5v-3.1h-1.9c-1.7 0-2.9-.7-4-2.4l-3-4.6C7.4 10.3 6.9 10 6.2 10H3V8Zm0 8h3.2c.6 0 1-.2 1.5-.8l.4-.6 1.4 2.3-.2.3c-.9 1.2-1.9 1.8-3.1 1.8H3v-3Z"/>',
-    eyeoff: '<path d="M2.1 3.5 3.5 2.1l18.4 18.4-1.4 1.4-3.3-3.3A11.6 11.6 0 0 1 12 19c-5 0-9.3-3-11-7a12.3 12.3 0 0 1 4.3-5.1L2.1 3.5ZM12 5c5 0 9.3 3 11 7a12.4 12.4 0 0 1-3 4l-3-3a5 5 0 0 0-6-6L8.8 5.3A11.8 11.8 0 0 1 12 5Z"/>',
   };
 
   const svg = (name, size) =>
@@ -345,7 +344,6 @@
           mp4Variants: variants,
           hls: safeMediaUrl(m.hls) || safeMediaUrl(m.hls_url) || null,
           alt: m.alt || m.alt_text || null,
-          sensitive: Boolean(m.sensitive || m.possibly_sensitive),
           width,
           height,
           aspect,
@@ -917,7 +915,6 @@
     return (
       '<button type="button" class="m3e-tile tile" data-entry="' + esc(entry.id) + '"' +
       ' data-motion="' + motion + '"' +
-      (m.sensitive ? ' data-sensitive="true"' : "") +
       (selected ? ' data-selected="true"' : "") +
       ' style="--_ar:' + ar + '"' +
       ' aria-label="' + esc(label) + '"' +
@@ -934,9 +931,6 @@
               (m.width ? ' width="' + m.width + '"' : "") + (m.height ? ' height="' + m.height + '"' : "") + " />"
             : '<span class="tile__missing">' + svg("image", 28) + "</span>") +
         "</span>" +
-
-        (m.sensitive ? '<span class="tile__veil">' + svg("eyeoff", 20) +
-          '<span class="m3e-label-small">Sensitive · tap to show</span></span>' : "") +
 
         (motion && !unplayable ? '<span class="m3e-tile__play">' + svg("play", 28) + "</span>" : "") +
         (unplayable ? '<span class="m3e-tile__play tile__play--dead" title="Not playable here">' + svg("external", 24) + "</span>" : "") +
@@ -1269,7 +1263,7 @@
 
     return (
       '<article class="slide" data-entry="' + esc(entry.id) + '" style="--_ar:' + ar + '">' +
-        '<div class="slide__stage"' + (m.sensitive ? ' data-sensitive="true"' : "") + '>' +
+        '<div class="slide__stage">' +
           (still
             ? '<img class="slide__media" src="' + esc(still) + '" alt="' + esc(m.alt || item.text.slice(0, 140) || "Saved media") +
               '" loading="lazy" decoding="async" referrerpolicy="no-referrer" data-media />'
@@ -1283,11 +1277,6 @@
               (item.url ? '<a class="m3e-button m3e-button--filled m3e-state" href="' + esc(item.url) +
                 '" target="_blank" rel="noopener noreferrer">' + svg("external", 18) + "<span>Watch on X</span></a>" : "") +
               "</div>"
-            : "") +
-          (m.sensitive
-            ? '<button type="button" class="slide__veil" data-reveal>' + svg("eyeoff", 28) +
-              '<span class="m3e-title-medium">Sensitive media</span>' +
-              '<span class="m3e-body-medium">Tap to show</span></button>'
             : "") +
         "</div>" +
 
@@ -2365,13 +2354,6 @@
       }
 
       // Theater controls
-      const reveal = event.target.closest("[data-reveal]");
-      if (reveal) {
-        const stage = reveal.closest(".slide__stage");
-        if (stage) stage.dataset.sensitive = "false";
-        reveal.remove();
-        return;
-      }
       const slidePlay = event.target.closest("[data-play-slide]");
       if (slidePlay) {
         const slide = slidePlay.closest(".slide");
@@ -2395,16 +2377,6 @@
 
       const tile = event.target.closest(".tile[data-entry]");
       if (!tile) return;
-
-      // Sensitive media reveals on first tap; the second opens it. Going
-      // straight to full screen from a blurred thumbnail is exactly the
-      // ambush the blur exists to prevent.
-      if (tile.dataset.sensitive === "true" && tile.dataset.revealed !== "true") {
-        tile.dataset.revealed = "true";
-        const veil = tile.querySelector(".tile__veil");
-        if (veil) veil.remove();
-        return;
-      }
 
       const entry = entryById(state.lastList, tile.dataset.entry);
       if (entry) openViewer(entry);

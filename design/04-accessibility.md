@@ -65,7 +65,6 @@ Every state that matters is encoded at least twice:
 | Filter chip on | secondary container | **radius partial → full** | `aria-pressed` |
 | Motion vs still | — | **play glyph** | duration or `GIF` badge |
 | Unplayable video | — | **glyph is "open", not "play"** | explanatory card on open |
-| Sensitive media | — | **blur** | veil label "Sensitive · tap to show" |
 | Capture paused | tertiary container | **dot becomes a square** | word "Paused" |
 | Capture error | error container | **dot becomes a rotated square** | word + reason |
 | Zero-value stat | dimmed to `outline` | the numeral is `0` | — |
@@ -192,8 +191,6 @@ A dedicated `@media (forced-colors: active)` block:
 
 ## 7. Media-specific concerns
 
-- **Sensitive media** is blurred, and the first activation only reveals it.
-  Opening is a second, deliberate action. Nothing marked sensitive autoplays.
 - **No seizure risk from autoplay**: only one item plays at a time, it is
   always muted, and it stops the moment it leaves the viewport.
 - **Layout never shifts as media loads.** Intrinsic `width`/`height` plus the

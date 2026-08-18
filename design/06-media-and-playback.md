@@ -21,8 +21,7 @@ x.com GraphQL response
    │
    ├─ content.js :: buildMediaItems()       ← capture. Runs on x.com.
    │     emits { type, url, poster, width, height, aspect,
-   │             mp4, mp4_variants[], hls, duration, alt,
-   │             sensitive, position }
+   │             mp4, mp4_variants[], hls, duration, alt, position }
    │
    ├─ chrome.storage.local  /  exported JSON
    │
@@ -117,14 +116,6 @@ that, and the ones that did not showed a grey box until the video was played —
 which nobody does for a thumbnail they cannot see.
 
 It is now emitted as `poster` as well, explicitly.
-
-### 3.3 Sensitivity
-
-`possibly_sensitive` is a property of the *post*, but the thing that has to
-blur is the *media grid*. Making the grid reach back up to the post to find
-out was a layering violation that guaranteed the blur would be forgotten in
-at least one of the three renderers. The flag is now pushed down onto each
-media item at capture time.
 
 ---
 

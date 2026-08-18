@@ -316,16 +316,7 @@ Video applies the same idea to the mp4 ladder: `playableSource(media, {width})`
 picks the smallest rung that covers the rendered size. See
 `06-media-and-playback.md` §3.1.
 
-### 5.4 Sensitive media
-
-Blurred behind a veil, revealed on first activation, opened on the second.
-Going straight to full screen from a blurred thumbnail is exactly the ambush
-the blur exists to prevent. Sensitive media is never autoplayed.
-
-The blur is applied to the image, not the tile, so the badge, the veil label
-and the focus ring stay sharp.
-
-### 5.5 Accessibility
+### 5.4 Accessibility
 
 - Tiles are real `<button>`s, activated by Enter or Space, labelled with the
   action, the medium, the author and the caption — in that order.
