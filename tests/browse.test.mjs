@@ -169,6 +169,15 @@ test("the theater always has an explicit exit path", () => {
   assert.match(read("extension/shared/m3e/interactions.js"), /function bindEscape/);
 });
 
+test("the theater says when the item cap truncates the list", () => {
+  // The theater is capped at THEATER_LIMIT slides; a silent truncation would
+  // read as a broken library. The hint line must own the cap when it bites.
+  assert.match(app, /const truncated = list\.length > THEATER_LIMIT;/);
+  assert.match(app, /first " \+ slice\.length \+ " of "/);
+  assert.match(app, /list\.length\.toLocaleString\(\) \+ " items"/);
+  assert.match(app, /"<span>" \+ hintText \+ "<\/span>"/);
+});
+
 test("a carousel is operable from the keyboard", () => {
   // A horizontally scrolling region drivable only by wheel or swipe fails
   // WCAG 2.1.1. The controller owns arrows, Home and End.

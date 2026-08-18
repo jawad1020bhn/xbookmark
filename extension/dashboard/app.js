@@ -67,6 +67,7 @@
     density: "comfortable",
     lastCollection: "all",
     view: "rails",
+    sort: "newest",
     autoplay: true,
     tileSize: "medium",
   });
@@ -1541,6 +1542,14 @@
 
     const slice = list.slice(0, THEATER_LIMIT);
 
+    /* The theater is capped on purpose — full-size media per slide means a
+       bounded DOM — but the cap must never read as a silent truncation. */
+    const truncated = list.length > THEATER_LIMIT;
+    const hintText = truncated
+      ? "Swipe or scroll · Esc exits · first " + slice.length + " of " +
+        list.length.toLocaleString() + " items"
+      : "Swipe or scroll · Esc exits";
+
     /* The floating exit control lives OUTSIDE the scrolling rail so it stays
        put while the slides page underneath it, and floats over the letterboxed
        corner of the stage where media never covers it. */
@@ -1553,7 +1562,7 @@
         ' aria-label="Exit theater view" title="Exit theater (Esc)">' + svg("close", 22) + "</button>" +
       "</div>" +
       '<div class="theater__hint m3e-label-medium" aria-hidden="true">' +
-        svg("prev", 16) + "<span>Swipe or scroll · Esc exits</span>" + svg("next", 16) +
+        svg("prev", 16) + "<span>" + hintText + "</span>" + svg("next", 16) +
       "</div>";
 
     const rail = $("theater");
@@ -1797,12 +1806,17 @@
 
     const down = (event) => {
       if (event.pointerType === "mouse" || pointerId !== null) return;
-      /* A drag that begins on the player's chrome is that control's own
-         gesture (scrub on the seek bar, tap-to-toggle on the controls) — it
-         must never read as a pull-down-to-exit. The media itself stays fair
-         game: swiping down on the video is the dismiss gesture. */
+      /* A drag that begins on interactive chrome is that control's own
+         gesture (button press, seek scrub, menu pick) — it must never read
+         as a pull-down-to-exit. The media itself stays a dismiss surface,
+         except when it is carrying NATIVE controls (the fallback player):
+         there the control bar lives inside the video element, and this guard
+         is the only way to keep a scrub from closing the theater. */
       if (event.target.closest &&
-          event.target.closest(".slide__controls, .slide__resume, .slide__buffering")) {
+          event.target.closest(
+            "button, a, input, select, textarea, video[controls]," +
+            " .slide__controls, .slide__resume, .slide__buffering"
+          )) {
         return;
       }
       pointerId = event.pointerId;
@@ -2214,6 +2228,7 @@
   function viewerContext(item) {
     return {
       url: item && item.url,
+      autoplay: state.settings.autoplay && !M3E.reducedMotion(),
       onCopy: (link) => copyText(link, "Media link copied."),
     };
   }
@@ -2227,6 +2242,7 @@
       list.map((e) => e.media),
       start < 0 ? 0 : start,
       {
+        autoplay: state.settings.autoplay && !M3E.reducedMotion(),
         // The caption line changes as you move between posts, so the context
         // has to be a function of the index rather than a fixed value.
         contextAt: (i) => {
@@ -2423,6 +2439,8 @@
         const key = btn.dataset.sort;
         if (isShuffle(key)) reshuffle();
         state.sort = key;
+        state.settings.sort = key;
+        saveSettings();
         sortMenu.close();
         render();
       });
@@ -2797,8 +2815,9 @@
           label: "Delete everything",
           variant: "error-filled",
           onClick: () => {
-            state.items = []; state.meta = {};
+            state.items = []; state.meta = {}; state.progress = {};
             saveItems(); saveMeta();
+            writeJSON(KEYS.progress, state.progress);
             clearDetail();
             render();
             snack.show("Library cleared.");
@@ -2832,6 +2851,7 @@
 
     const rows = Array.isArray(parsed) ? parsed : parsed && parsed.bookmarks ? parsed.bookmarks : [];
     const fileMeta = parsed && !Array.isArray(parsed) ? parsed.meta : null;
+    const fileProgress = parsed && !Array.isArray(parsed) ? parsed.progress : null;
 
     if (!rows.length) {
       snack.show("No bookmarks found in that file.", { error: true });
@@ -2840,7 +2860,7 @@
       return;
     }
 
-    if (opts.restore) { state.items = []; state.meta = {}; }
+    if (opts.restore) { state.items = []; state.meta = {}; state.progress = {}; }
 
     const items = normalize(rows);
     const invalid = rows.length - items.length;
@@ -2853,6 +2873,20 @@
         if (fm.removed_at || fm.removedAt) m.removedAt = fm.removed_at || fm.removedAt;
         if (fm.opened_at || fm.openedAt) m.openedAt = fm.opened_at || fm.openedAt;
       }
+    }
+
+    // Resume positions travel with a backup; apply them on restore only.
+    if (opts.restore && fileProgress && typeof fileProgress === "object") {
+      for (const [id, p] of Object.entries(fileProgress).slice(0, PROGRESS_LIMIT)) {
+        if (p && typeof p === "object" && Number.isFinite(Number(p.t))) {
+          state.progress[id] = {
+            t: Number(p.t),
+            d: Number(p.d) || 0,
+            at: Number(p.at) || Date.now(),
+          };
+        }
+      }
+      writeJSON(KEYS.progress, state.progress);
     }
 
     for (const id of ids) {
@@ -2892,6 +2926,7 @@
       exported_at: new Date().toISOString(),
       bookmarks: state.items.map(strip),
       meta: state.meta,
+      progress: state.progress,
     }, null, 2));
     snack.show("Backup downloaded: " + plural(state.items.length, "post") + ".");
   }
@@ -3209,6 +3244,8 @@
     state.items = normalize(readJSON(KEYS.items, []) || []);
     state.collection = state.settings.lastCollection || "all";
     state.view = VIEWS.includes(state.settings.view) ? state.settings.view : "rails";
+    /* Persisted sort is the fallback; a sort= URL parameter (readUrl) wins. */
+    state.sort = SORTS.some((s) => s.key === state.settings.sort) ? state.settings.sort : "newest";
 
     // ---- runtime services -------------------------------------------------
     snack = M3E.createSnackbar($("snackbar"));

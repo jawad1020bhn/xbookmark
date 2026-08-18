@@ -19,6 +19,28 @@ const read = (p) => readFileSync(join(root, p), "utf8");
    Lightbox
    --------------------------------------------------------------------------- */
 
+test("the viewer respects the autoplay and reduced-motion settings", () => {
+  // Opening the viewer must not bypass the user's playback preferences:
+  // autoplay-off or reduced motion must mean a paused video with controls.
+  const app = read("extension/dashboard/app.js");
+  assert.match(app, /autoplay: state\.settings\.autoplay && !M3E\.reducedMotion\(\)/);
+  const lb = read("extension/dashboard/lightbox.js");
+  assert.match(lb, /autoplay = context\.autoplay !== false;/);
+  assert.match(lb, /autoplay,/);
+});
+
+test("resume progress is backed up, restored and cleared", () => {
+  const app = read("extension/dashboard/app.js");
+  // Backups carry the resume positions...
+  assert.match(app, /progress: state\.progress,/);
+  // ...restores apply them (bounded by the same limit as live writes)...
+  assert.match(app, /const fileProgress = parsed && !Array\.isArray\(parsed\) \? parsed\.progress : null;/);
+  assert.match(app, /Object\.entries\(fileProgress\)\.slice\(0, PROGRESS_LIMIT\)/);
+  // ...and clearing the library clears them too, or "resume" would point at
+  // videos that no longer exist.
+  assert.match(app, /state\.items = \[\]; state\.meta = \{\}; state\.progress = \{\};/);
+});
+
 test("the lightbox sits above every other layer", () => {
   const tokens = read("extension/shared/m3e/tokens.css");
   const layout = read("extension/dashboard/layout.css");
@@ -56,6 +78,17 @@ test("the custom keyboard shortcut system is absent", () => {
   // (Enter/Space), which is semantics a role=button element is owed, not a
   // shortcut system.
   assert.match(app, /event\.key !== "Enter" && event\.key !== " "/);
+});
+
+test("the UI copy promises no keyboard shortcuts", () => {
+  // Hints must never tell the user to press a key, because the keys would not
+  // do anything. "Esc exits" in the theater is a true statement about a real
+  // affordance; "press / to search" would be a lie.
+  const html = read("extension/dashboard/index.html");
+  assert.doesNotMatch(html, /[Pp]ress\s+[isvz/](?![a-z])/);
+  assert.doesNotMatch(html, /\bslash\b/);
+  assert.doesNotMatch(html, /<kbd/);
+  assert.doesNotMatch(html, /shortcut/i);
 });
 
 test("modal Escape remains owned by the shared overlay primitive", () => {
