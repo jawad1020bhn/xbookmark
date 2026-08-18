@@ -128,9 +128,11 @@ whole library rather than to the four photos inside a single post.
 flick skids through six items and lands somewhere arbitrary, which reads as
 broken rather than fast.
 
-On compact and medium the theater takes the room left under the chrome and the
-page itself stops scrolling vertically. Two scroll axes on one screen is the
-fastest way to make a swipe feel unreliable.
+At every window class the theater takes exactly the room left inside the dynamic
+viewport after the app bar, filters and optional capture banner are laid out.
+The page itself stops scrolling vertically while this view is active, so the
+whole media frame and author bar remain visible without a guessed `vh` offset.
+Two scroll axes on one screen is the fastest way to make a swipe feel unreliable.
 
 ---
 
@@ -147,7 +149,7 @@ The rule is applied by surface, according to what that surface is *for*:
 | Grid tile | `aspect-ratio: --_ar`, max 78 vh | No | The grid is for finding things; a cropped screenshot cannot be found |
 | Multi-browse cell | Fixed height, **width** derived from ratio | No | Uniform height is what makes a strip read as a strip; varying width preserves the ratio |
 | Hero cell | Fixed height *and* width | **Yes** | Letting each hero self-size leaves a ragged column of dead space beside every landscape item. The hero's job is to invite a tap |
-| Theater stage | `aspect-ratio: --_ar`, `object-fit: contain` | No | This is the "look at it properly" surface |
+| Theater stage | Flexes into the remaining dynamic viewport, `object-fit: contain` | No | The whole frame stays visible while preserving the media's ratio |
 | Viewer | `object-fit: contain`, zoomable | No | Ditto, more so |
 
 Cropping is permitted in exactly one place, and only because a second,

@@ -1436,6 +1436,11 @@
   function render() {
     syncUrl();
 
+    /* Theater is a viewport mode, not a document-length view. Expose the
+       current renderer at the root so CSS can make the shell consume exactly
+       the dynamic viewport without relying on guessed header heights. */
+    document.documentElement.dataset.view = state.view;
+
     // Tear down anything the previous render owned, or its observers keep
     // firing against detached nodes for the life of the page.
     while (carousels.length) { const c = carousels.pop(); if (c && c.destroy) c.destroy(); }

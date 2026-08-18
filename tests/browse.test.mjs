@@ -308,6 +308,19 @@ test("media keeps its own aspect ratio", () => {
   assert.match(app, /style="--_ar:' \+ ar/);
 });
 
+test("theater media fits inside the dynamic viewport", () => {
+  // The available height must come from flex layout, not a guessed vh band;
+  // otherwise the slide's lower edge falls below shorter desktop windows.
+  assert.match(app, /document\.documentElement\.dataset\.view = state\.view/);
+  assert.match(layout, /html\[data-view="theater"\] \.shell[\s\S]{0,120}block-size: 100dvh/);
+  assert.match(layout, /html\[data-view="theater"\] \.feed\[data-view="theater"\][\s\S]{0,180}flex: 1 1 0/);
+  assert.match(layout, /html\[data-view="theater"\] \.slide__stage[\s\S]{0,120}flex: 1 1 0/);
+
+  const media = layout.slice(layout.indexOf(".slide__media {"), layout.indexOf(".slide__video"));
+  assert.match(media, /max-block-size: 100%/);
+  assert.match(media, /object-fit: contain/);
+});
+
 test("the private dashboard has no sensitive-content gate", () => {
   const tile = app.slice(app.indexOf("function tileHtml"), app.indexOf("function buildRails"));
   const theater = app.slice(app.indexOf("function theaterSlideHtml"), app.indexOf("function mountTheaterPlayers"));

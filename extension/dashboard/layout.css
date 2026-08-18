@@ -536,6 +536,56 @@
   object-fit: contain;
   border-radius: var(--md-sys-shape-corner-large);
 }
+
+/* Theater is constrained by the real dynamic viewport, including whatever
+   room the app bar, filters and optional capture banner currently consume.
+   Flexing the feed's remaining room avoids the old `vh` estimate that pushed
+   the author bar and the bottom of portrait media below a desktop screen. */
+html[data-view="theater"],
+html[data-view="theater"] body {
+  block-size: 100%;
+  overflow: hidden;
+}
+html[data-view="theater"] .shell {
+  block-size: 100dvh;
+  min-block-size: 0;
+}
+html[data-view="theater"] .shell__main {
+  block-size: 100%;
+  min-block-size: 0;
+  overflow: hidden;
+}
+html[data-view="theater"] .pane {
+  min-block-size: 0;
+  overflow: hidden;
+}
+html[data-view="theater"] .feed[data-view="theater"] {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-block-size: 0;
+}
+html[data-view="theater"] .theater {
+  flex: 1 1 0;
+  min-block-size: 0;
+}
+html[data-view="theater"] .slide {
+  block-size: 100%;
+  min-block-size: 0;
+}
+html[data-view="theater"] .slide__stage {
+  flex: 1 1 0;
+  min-block-size: 0;
+}
+/* Neither element contains anything in theater. Removing their reserved
+   padding gives that space back to the media and keeps the whole slide visible. */
+html[data-view="theater"] .feed__more,
+html[data-view="theater"] .pane__foot { display: none; }
+
+@media (min-width: 600px) {
+  html[data-view="theater"] .pane { padding-block-end: var(--md-sys-spacing-4); }
+}
+
 .slide__video { inline-size: auto; }
 .slide__missing { display: grid; place-items: center; color: var(--md-sys-color-on-surface-variant); }
 .slide__play {
