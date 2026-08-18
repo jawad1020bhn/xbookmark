@@ -73,7 +73,7 @@ none into colour and type, which would.
 | Shape morph on press | Carousel arrows, tiles, play buttons round → square | Confirms contact at the point of contact |
 | Tonal containers | Popup counters, capture banner, rail counts | Four numbers become four *kinds* of number |
 | Wavy progress | Popup capture | Long, indeterminate work reads as "alive" |
-| Organic seed swatches | Personalise dialog | The one place pure delight is the point |
+| Organic seed swatches | Settings dialog | The one place pure delight is the point |
 
 **Deliberately not expressive:** the media itself is never tinted, never
 shape-morphed, never animated on hover beyond a 1.2 % lift. Everything in the

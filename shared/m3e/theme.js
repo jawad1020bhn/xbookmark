@@ -24,7 +24,7 @@
        gets a teal UI — a deliberate, delightful surprise on a phone home
        screen, but wrong as the default for a tool where the swatch you pick
        should be the colour you get. `expressive` stays one tap away in
-       Personalise for people who want it. */
+       Settings for people who want it. */
     variant: M3EColor.DEFAULT_VARIANT,
     contrast: "standard",
     scheme: "system",     // 'system' | 'light' | 'dark'

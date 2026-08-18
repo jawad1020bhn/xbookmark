@@ -50,10 +50,10 @@ adopts the ones that fit, and — importantly — leaves out the ones that don't
 - **Wavy *determinate* progress** — the capture genuinely doesn't know its total
   ahead of time. Showing a determinate bar would be a lie.
 - **Split button** — the previous build's `Import ▾` split button is gone.
-  Import is now a single unambiguous action in the rail FAB and the compact
-  toolbar; export and backup live in Personalise, where destructive-adjacent
-  data operations belong. A split button whose menu holds *four* actions is a
-  menu wearing a costume.
+  The rail FAB and compact toolbar now open a dedicated Data Vault. Import,
+  export, restore, backup and destructive actions stay together there instead
+  of leaking into visual settings. A split button whose menu holds *four*
+  actions is a menu wearing a costume.
 
 > **Reversal worth flagging.** The previous revision of this document listed
 > *Carousel* under "deliberately not used", on the grounds that "the library is
@@ -158,16 +158,15 @@ words.
 
 ### 2.3 Filter bar
 
-A horizontally scrollable chip set. Selected chips change **shape** as well as
-colour — fully rounded when on, partly rounded when off — so state survives
-greyscale and colour-blind viewing.
+Three chips fit without horizontal scrolling at every window class: **Media
+type**, **Sort**, and **More**. Selected chips change **shape** as well as colour
+— fully rounded when on, partly rounded when off — so state survives greyscale
+and colour-blind viewing.
 
-The trailing edge is masked with a fade so a clipped chip reads as "more this
-way" rather than as a rendering bug.
-
-The three type chips (Video / Photos / GIF) are a **union**. Ticking two of
-them means "either", which is what everyone expects; an intersection would
-render an empty screen for the most obvious pair of clicks in the bar.
+Media type progressively discloses All / Photos / Videos / GIFs as a
+single-choice menu. More holds author, dates and engagement thresholds, plus a
+contextual clear action. Shuffle stays in Sort rather than becoming a fourth
+standalone control.
 
 ### 2.4 Inspector
 
@@ -181,10 +180,11 @@ One HTML builder, two presentations:
 - **< 1200 px** — a bottom sheet (compact) or side sheet (medium) with scrim,
   focus trap and Escape.
 
-It holds the author, the text, the metrics, the sibling media in the same post,
-and four actions (View full size · Open on X · Copy link · Archive). It holds
-**no** tag editor, **no** note field and **no** media grid — the media is
-already on screen at full size, and the filing tools are gone.
+It holds the author, text, metrics, sibling media and recovery actions. A media
+stream that cannot play stays visually quiet in the grid; the inspector explains
+why and offers **Open on X**, **Find on Wayback**, and reversible **Remove from
+library**. It holds **no** tag editor, **no** note field and **no** media grid —
+the media is already on screen, and the filing tools are gone.
 
 The sheet presentation hides the inspector's own close button with CSS rather
 than branching the builder, because the sheet header already provides one. The
@@ -513,12 +513,11 @@ So the order is a pure function of a seed:
 - The seed travels in the URL, so a copied link reproduces the exact order the
   sender saw — the same promise every other filter in this app makes.
 
-Re-dealing is available three ways, because it is the most repeated action in
-the feature: the **Shuffle again** chip (only visible while a shuffle is
-active), pressing **`s`** anywhere, or re-picking the shuffle you are already
-on. Re-dealing scrolls back to the top and announces itself — the list has just
-changed underneath the reader, and silence there is disorienting rather than
-delightful.
+Re-dealing stays inside the sorting model: press **`s`** anywhere, or re-pick
+Shuffle in the Sort menu. There is no standalone Shuffle chip competing with
+filters. Re-dealing scrolls back to the top and announces itself — the list has
+just changed underneath the reader, and silence there is disorienting rather
+than delightful.
 
 > **Two menu bugs this exposed.** Both predate the feature and were invisible
 > with seven options. (1) The capture-phase scroll listener that closes a menu

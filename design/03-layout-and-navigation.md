@@ -115,7 +115,7 @@ shuffled, there is no sequence to lose. It would be the wrong tradeoff in a
 ranked list.
 
 Column width is user-controllable (Dense 180 px / Medium 240 px / Large 340 px)
-in Personalise, because how much detail you need per item depends entirely on
+in Settings, because how much detail you need per item depends entirely on
 whether you are hunting for a screenshot of text or flipping through
 photographs.
 
@@ -168,21 +168,23 @@ level — "Video" means video items, not posts that happen to contain one
 alongside three photos. That distinction did not exist in the previous build
 and is the reason its Media collection showed stills.
 
-*Archive* lives in the rail and in settings but not in the compact toolbar: it
-is a recovery surface, not a place you browse.
+*Archive* lives in the rail but not in the compact toolbar: it is a recovery
+surface, not a primary destination. The toolbar's filled action opens the Data
+Vault instead.
 
 ### 4.1 Filters are orthogonal to destinations
 
-The chip bar (Video / Photos / GIF / author / refine / sort) narrows whatever
-destination is active. The three type chips are a **union**, not an
-intersection — ticking Video and GIF means "motion of either kind", which is
-what everyone expects and what an intersection would render as an empty
-screen.
+The filter bar narrows whatever destination is active, but keeps only three
+stable controls visible: **Media type**, **Sort**, and **More**. Media type is a
+single-choice menu (All / Photos / Videos / GIFs); author, date and engagement
+thresholds are progressively disclosed under More. Shuffle is a sort option,
+not a separate chip. This keeps compact screens free of a horizontally
+scrolling row of controls.
 
 ### 4.2 Everything is addressable
 
 The full view state round-trips through the URL: collection, view, sort,
-shuffle seed, search, author, type chips, thresholds and dates. A copied link
+shuffle seed, search, author, media type, thresholds and dates. A copied link
 reproduces exactly what the sender was looking at, shuffle order included.
 
 ---

@@ -50,9 +50,9 @@ test("an entry id addresses a single item inside a post", () => {
   assert.match(app, /id: item\.tweet_id \+ ":" \+ media\.position/);
 });
 
-test("type filters are a union, not an intersection", () => {
-  // Ticking Video AND GIF must mean "either", or the two most obvious chips
-  // in the bar render an empty screen when used together.
+test("legacy multi-type URLs remain a union, not an intersection", () => {
+  // The new menu is single-choice, but older shared URLs may carry several
+  // type flags. They must still mean "either" rather than rendering nothing.
   const fn = app.slice(app.indexOf("function matchesMedia"), app.indexOf("function mediaIndex"));
   assert.match(fn, /filters\.video && isVideo\(media\)/);
   assert.match(fn, /\|\|\s*\n?\s*\(filters\.photos && isPhoto\(media\)\)/);
@@ -101,6 +101,32 @@ test("archive state survives the removal of tags and notes", () => {
   assert.match(app, /function toggleArchive/);
   const collections = app.slice(app.indexOf("const COLLECTIONS = ["), app.indexOf("const SORTS"));
   assert.match(collections, /"archived"/);
+});
+
+test("the filter bar uses progressive disclosure", () => {
+  const bar = html.slice(html.indexOf('class="filterbar"'), html.indexOf("Result summary"));
+  for (const id of ["chipMediaType", "chipSort", "chipMoreFilters"]) {
+    assert.match(bar, new RegExp('id="' + id + '"'));
+  }
+  assert.equal((bar.match(/<button/g) || []).length, 3, "only three filter controls should stay visible");
+  assert.doesNotMatch(bar, /chipVideo|chipPhotos|chipGif|chipAuthor|chipRefine|chipShuffle|chipReset/);
+
+  assert.match(app, /function openMediaTypeMenu/);
+  assert.match(app, /function openMoreFiltersMenu/);
+  const sort = app.slice(app.indexOf("function openSortMenu"), app.indexOf("function openRefine"));
+  assert.match(sort, /SORTS\.filter/); // Shuffle remains reachable as a sort option.
+});
+
+test("data management is isolated from visual settings", () => {
+  const settings = app.slice(app.indexOf("function openSettings"), app.indexOf("function openVault"));
+  const vault = app.slice(app.indexOf("function openVault"), app.indexOf("function confirmClear"));
+
+  assert.doesNotMatch(settings, /data-vault|Import JSON|Clear library|Back up everything/);
+  assert.match(settings, /segDensity/);
+  for (const action of ["import", "restore", "export", "backup", "clear"]) {
+    assert.match(vault, new RegExp('data-vault=\\"' + action + '\\"'));
+  }
+  assert.match(html, /aria-label="Open data vault"/);
 });
 
 /* ---------------------------------------------------------------------------
@@ -254,6 +280,20 @@ test("tiles render a poster, never a video element", () => {
   assert.match(fn, /loading="lazy"/);
 });
 
+test("unplayable media stays quiet until hover or inspection", () => {
+  const tile = app.slice(app.indexOf("function tileHtml"), app.indexOf("function buildRails"));
+  const detail = app.slice(app.indexOf("function detailHtml"), app.indexOf("function linkify"));
+
+  assert.doesNotMatch(tile + layout, /tile__play--dead|Not playable here/);
+  assert.match(tile, /tile__status/);
+  assert.match(layout, /\.tile__status[\s\S]{0,500}opacity:\s*0/);
+  assert.match(layout, /\.tile:hover \.tile__status/);
+  assert.match(detail, /Find on Wayback/);
+  assert.match(detail, /Remove from library/);
+  const feed = app.slice(app.indexOf("function bindFeed"), app.indexOf("function bindGlobalKeys"));
+  assert.match(feed, /M3EMedia\.hlsOnly\(entry\.media\)\) openDetail/);
+});
+
 /* ---------------------------------------------------------------------------
    The viewer
    --------------------------------------------------------------------------- */
@@ -331,7 +371,7 @@ test("the private dashboard has no sensitive-content gate", () => {
     assert.doesNotMatch(src, /data-sensitive|data-revealed|data-reveal|tile__veil|slide__veil/);
   }
   assert.doesNotMatch(tile + theater, /m\.sensitive|possibly_sensitive/);
-  assert.match(feed, /if \(entry\) openViewer\(entry\)/);
+  assert.match(feed, /else openViewer\(entry\)/);
 });
 
 test("reduced motion is honoured by the new surfaces", () => {
@@ -349,7 +389,7 @@ test("every tile is a real button with a meaningful label", () => {
   // Not "image": the label leads with the ACTION, then the subject, then the
   // source, because a screen-reader user decides whether to keep listening
   // during the first few words.
-  assert.match(fn, /const label = \(motion \? "Play " : "Open "\) \+ what \+ " by " \+ who/);
+  assert.match(fn, /const label = \(unplayable \? "Inspect " : motion \? "Play " : "Open "\) \+ what \+ " by " \+ who/);
   // Alt text falls back to the post's own words, which usually describe the
   // picture better than any generic string.
   assert.match(fn, /m\.alt \|\| \(item\.text/);

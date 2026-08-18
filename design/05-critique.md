@@ -356,7 +356,7 @@ is why every application built for looking at pictures — Lightroom, Photos,
 Preview, X's own image viewer — darkens the room. Defaulting to system means
 roughly half of first runs frame photographs in white.
 
-"System" is one tap away in Personalise, and the rail toggle is always visible.
+"System" is one tap away in Settings, and the rail toggle is always visible.
 Only a genuinely first-time user gets the opinionated default; anyone who has
 ever set a preference keeps it.
 

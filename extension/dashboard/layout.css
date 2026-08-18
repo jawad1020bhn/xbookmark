@@ -251,10 +251,9 @@
 /* =============================================================================
    Filter bar
 
-   Horizontally scrollable chips. Selected chips change SHAPE as well as
-   colour — a selected chip is fully rounded, an unselected one is only
-   partly so — which is what keeps state legible in greyscale and for a
-   colour-blind reader (WCAG 1.4.1: colour is never the only channel).
+   Progressive disclosure keeps this to three stable controls: media type,
+   sort, and more filters. Selected chips change shape as well as colour, so
+   active state remains legible in greyscale (WCAG 1.4.1).
    ============================================================================= */
 .filterbar {
   display: flex;
@@ -267,29 +266,22 @@
   gap: var(--md-sys-spacing-2);
   flex: 1;
   min-width: 0;
-  overflow-x: auto;
   padding-block: var(--md-sys-spacing-1);
-  /* Clears the fade below, so the last chip is fully legible once the row is
-     scrolled to its end instead of staying half-erased forever. */
-  padding-inline-end: var(--md-sys-spacing-7);
-  scrollbar-width: none;
-  /* Fade the trailing edge so a clipped chip reads as "more this way"
-     rather than as a rendering bug. */
-  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%);
 }
-.filterbar__scroll::-webkit-scrollbar { display: none; }
 .filterbar__chip { flex: none; }
 .filterbar__chip[aria-pressed="true"] { border-radius: var(--md-sys-shape-corner-full); }
-.filterbar__chip--reset {
-  --_container: var(--md-sys-color-error-container);
-  color: var(--md-sys-color-on-error-container);
-}
-.filterbar__divider {
-  flex: none;
-  align-self: center;
-  width: 1px;
-  height: 24px;
-  background: var(--md-sys-color-outline-variant);
+.filterbar__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* Three controls fit without horizontal scrolling even on compact screens.
+   Equal flexing keeps their hit targets predictable as labels change. */
+@media (max-width: 599px) {
+  .filterbar__scroll { gap: var(--md-sys-spacing-1); }
+  .filterbar__chip {
+    flex: 1 1 0;
+    min-width: 0;
+    justify-content: center;
+    padding-inline: var(--md-sys-spacing-2);
+  }
 }
 
 /* =============================================================================
@@ -439,7 +431,27 @@
   color: var(--md-sys-color-on-surface-variant);
   background: var(--md-sys-color-surface-container-highest);
 }
-.tile__play--dead { background: rgb(0 0 0 / 0.7); }
+
+/* Availability never competes with the poster. It appears as quiet text only
+   when a pointer hovers or the tile has keyboard focus; the inspector carries
+   the explanation and recovery actions. */
+.tile__status {
+  position: absolute;
+  inset-block-start: var(--md-sys-spacing-2);
+  inset-inline-start: var(--md-sys-spacing-2);
+  max-inline-size: calc(100% - 76px);
+  padding: 4px 10px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: rgb(0 0 0 / 0.66);
+  color: #fff;
+  opacity: 0;
+  translate: 0 -4px;
+  pointer-events: none;
+  transition: opacity var(--md-sys-motion-spring-fast-effects),
+              translate var(--md-sys-motion-spring-fast-spatial);
+}
+.tile:hover .tile__status,
+.tile:focus-visible .tile__status { opacity: 1; translate: 0; }
 
 .tile[data-selected="true"] {
   outline: 3px solid var(--md-sys-color-primary);
@@ -702,6 +714,27 @@ html[data-view="theater"] .pane__foot { display: none; }
   color: var(--md-sys-color-on-surface-variant);
 }
 .detail__metric { display: inline-flex; align-items: center; gap: 5px; }
+.detail__availability {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--md-sys-spacing-3);
+  padding: var(--md-sys-spacing-3);
+  border-radius: var(--md-sys-shape-corner-large);
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+}
+.detail__availability-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+}
+.detail__availability p { margin: 0; }
+.detail__availability .m3e-body-small { margin-block-start: 2px; color: var(--md-sys-color-on-surface-variant); }
 
 .detail__more { display: flex; flex-direction: column; gap: var(--md-sys-spacing-2); }
 .detail__more-label { color: var(--md-sys-color-on-surface-variant); }
@@ -808,7 +841,50 @@ html[data-view="theater"] .pane__foot { display: none; }
   letter-spacing: 0.08em;
 }
 .settings__help { margin: 0; color: var(--md-sys-color-on-surface-variant); }
-.settings__row { display: flex; flex-wrap: wrap; gap: var(--md-sys-spacing-2); }
+
+/* Data management is deliberately a separate surface from visual settings. */
+.vault { display: flex; flex-direction: column; gap: var(--md-sys-spacing-6); }
+.vault__summary {
+  display: flex;
+  align-items: center;
+  gap: var(--md-sys-spacing-4);
+  padding: var(--md-sys-spacing-4);
+  border-radius: var(--md-sys-shape-corner-large-increased);
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+.vault__summary > svg { flex: none; }
+.vault__summary p { margin: 0; }
+.vault__group { display: flex; flex-direction: column; gap: var(--md-sys-spacing-2); }
+.vault__group h3 { margin: 0; }
+.vault__actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--md-sys-spacing-2); }
+.vault__action {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--md-sys-spacing-3);
+  min-width: 0;
+  padding: var(--md-sys-spacing-4);
+  border: none;
+  border-radius: var(--md-sys-shape-corner-large);
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  text-align: start;
+  cursor: pointer;
+}
+.vault__action > svg { flex: none; color: var(--md-sys-color-primary); }
+.vault__action > span { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.vault__action strong { font: var(--md-sys-typescale-title-small-weight) var(--md-sys-typescale-title-small-size) / 1.25 var(--md-ref-typeface-plain); }
+.vault__action small { color: var(--md-sys-color-on-surface-variant); font-size: var(--md-sys-typescale-body-small-size); line-height: 1.35; }
+.vault__action:disabled { opacity: var(--md-sys-state-disabled-content-opacity); cursor: default; }
+.vault__danger {
+  padding-block-start: var(--md-sys-spacing-4);
+  border-block-start: 1px solid var(--md-sys-color-outline);
+}
+.vault__danger p { margin: 0; color: var(--md-sys-color-on-surface-variant); }
+.vault__danger .m3e-button { align-self: flex-start; }
+@media (max-width: 599px) {
+  .vault__actions { grid-template-columns: 1fr; }
+}
 
 /* Seed swatches — personalisation made tangible. */
 .seedgrid { display: flex; flex-wrap: wrap; gap: var(--md-sys-spacing-3); }
@@ -1138,12 +1214,14 @@ html[data-view="theater"] .pane__foot { display: none; }
 .deadletter__why { color: var(--md-sys-color-on-surface-variant); }
 
 
+.m3e-menu--filter { min-inline-size: min(300px, calc(100vw - 16px)); }
+
 /* -----------------------------------------------------------------------------
    Sort menu grouping
 
    Seventeen sorts in one flat column is a wall, not a menu. M3E's Nov-2025
    menu guidance permits gaps and headers to categorise related actions; the
-   groups here are Time / Reach / Content / Yours / Chance.
+   groups here are Time / Reach / Content / Media / Chance.
    -------------------------------------------------------------------------- */
 .m3e-menu__header {
   margin: var(--md-sys-spacing-3) 0 var(--md-sys-spacing-1);

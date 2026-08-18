@@ -170,7 +170,7 @@ Because motion is never the sole carrier of meaning, nothing is lost: the wave
 still reads as a wave, the status word still says "Capturing", and every video
 still plays the moment it is asked to.
 
-Autoplay additionally has its own switch in Personalise, independent of the
+Autoplay additionally has its own switch in Settings, independent of the
 motion setting, because bandwidth is a legitimate reason to want it off and
 those two preferences should not be welded together.
 

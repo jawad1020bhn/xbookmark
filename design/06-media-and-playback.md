@@ -152,7 +152,7 @@ Three constraints on it:
   wall of sound is hostile regardless of what the policy permits.
 * **Off under reduced motion.** Someone who asked the OS to stop things moving
   has asked for exactly this. There is also an explicit *Autoplay in view*
-  switch in Personalise, because bandwidth is a legitimate reason to want it
+  switch in Settings, because bandwidth is a legitimate reason to want it
   off independent of motion sensitivity.
 * **GIFs always loop.** A still frame of a looping GIF is an unreadable
   object; the loop *is* the content.

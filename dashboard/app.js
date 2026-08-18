@@ -33,7 +33,7 @@
      6  chrome: nav, filter bar
      7  rendering: tiles, rails, grid, theater, inspector
      8  overlays: sheets, dialogs, menus
-     9  import / export
+     9  data vault / import / export
     10  bindings & init
    ============================================================================= */
 (() => {
@@ -130,6 +130,8 @@
     heart: '<path d="M12 21S3 15 3 9.2A4.2 4.2 0 0 1 7.2 5c1.9 0 3.5 1 4.8 2.7C13.3 6 14.9 5 16.8 5A4.2 4.2 0 0 1 21 9.2C21 15 12 21 12 21Z"/>',
     repost: '<path d="M7 7h9l-2-2 1.4-1.4L19.8 8l-4.4 4.4L14 11l2-2H7v3H5V9a2 2 0 0 1 2-2Zm10 10H8l2 2-1.4 1.4L4.2 16l4.4-4.4L10 13l-2 2h9v-3h2v3a2 2 0 0 1-2 2Z"/>',
     reply: '<path d="M12 4a8 8 0 0 0-8 8 7.8 7.8 0 0 0 1 3.8L4 21l5.4-1a8 8 0 1 0 2.6-16Z"/>',
+    person: '<path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0 2c-4 0-7 2-7 4.6V21h14v-2.4C19 16 16 14 12 14Z"/>',
+    tune: '<path d="M10 18h4v-2h-4v2Zm-7-6v2h18v-2H3ZM6 6v2h12V6H6Z"/>',
     eye: '<path d="M12 5C7 5 2.7 8 1 12c1.7 4 6 7 11 7s9.3-3 11-7c-1.7-4-6-7-11-7Zm0 11a4 4 0 1 1 4-4 4 4 0 0 1-4 4Zm0-6a2 2 0 1 0 2 2 2 2 0 0 0-2-2Z"/>',
     play: '<path d="M8 5v14l11-7L8 5Z"/>',
     link: '<path d="M9.9 15.5 8.5 14.1l5.6-5.6 1.4 1.4-5.6 5.6ZM7.8 18.9a4.6 4.6 0 0 1 0-6.5l2.1-2.1 1.4 1.4-2.1 2.1a2.6 2.6 0 0 0 3.7 3.7l2.1-2.1 1.4 1.4-2.1 2.1a4.6 4.6 0 0 1-6.5 0Zm8.4-8.4-1.4-1.4 2.1-2.1a2.6 2.6 0 1 0-3.7-3.7l-2.1 2.1L9.7 4l2.1-2.1a4.6 4.6 0 0 1 6.5 6.5l-2.1 2.1Z"/>',
@@ -139,6 +141,7 @@
     trash: '<path d="M9 3h6l1 2h4v2H4V5h4l1-2ZM6 9h12l-1 11a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 9Z"/>',
     download: '<path d="M11 13.2V3h2v10.2l3.6-3.6L18 11l-6 6-6-6 1.4-1.4L11 13.2ZM5 19h14v2H5v-2Z"/>',
     upload: '<path d="M13 10.8V21h-2V10.8l-3.6 3.6L6 13l6-6 6 6-1.4 1.4L13 10.8ZM5 3h14v2H5V3Z"/>',
+    vault: '<path d="M4 4h16v5H4V4Zm0 7h16v9H4v-9Zm3 3v2h2v-2H7Z"/>',
     plus: '<path d="M11 11V5h2v6h6v2h-6v6h-2v-6H5v-2h6Z"/>',
     close: '<path d="M18.3 7.1 16.9 5.7 12 10.6 7.1 5.7 5.7 7.1l4.9 4.9-4.9 4.9 1.4 1.4 4.9-4.9 4.9 4.9 1.4-1.4-4.9-4.9 4.9-4.9Z"/>',
     moon: '<path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/>',
@@ -488,9 +491,9 @@
     if (state.collection === "photos" && !isPhoto(media)) return false;
     if (state.collection === "recent" && !getMeta(item.tweet_id).openedAt) return false;
 
-    /* The three type chips are a union, not an intersection: ticking Video
-       and GIF means "motion of either kind", which is what everyone expects
-       and what an intersection would render as an empty screen. */
+    /* Type state remains a union so older shared URLs that selected multiple
+       types still reproduce faithfully. The progressive menu writes one
+       choice at a time for a simpler interaction. */
     const anyType = filters.video || filters.photos || filters.gif;
     if (anyType) {
       const ok =
@@ -754,9 +757,9 @@
       );
     }).join("");
 
-    /* The floating bar carries the four browsing destinations plus Import as
-       a trailing filled action. Archive lives in the rail and in settings —
-       it is a recovery surface, not a place you browse. */
+    /* The floating bar carries the four browsing destinations plus the Vault
+       as its trailing filled action. Heavy data operations stay together
+       rather than leaking into navigation or visual settings. */
     bar.innerHTML =
       COLLECTIONS.slice(0, 4).map((c) => {
         const selected = c.id === state.collection;
@@ -768,13 +771,13 @@
         );
       }).join("") +
       '<button class="m3e-fab m3e-fab--primary m3e-fab--small m3e-state nav-bar__fab" id="navFab"' +
-      ' aria-label="Import bookmarks">' + svg("download", 22) + "</button>";
+      ' aria-label="Open data vault">' + svg("vault", 22) + "</button>";
 
     document.querySelectorAll("[data-collection]").forEach((btn) => {
       btn.addEventListener("click", () => selectCollection(btn.dataset.collection));
     });
     const navFab = $("navFab");
-    if (navFab) navFab.addEventListener("click", () => $("fileImport").click());
+    if (navFab) navFab.addEventListener("click", openVault);
 
     const title = COLLECTIONS.find((c) => c.id === state.collection);
     if ($("paneTitle")) $("paneTitle").textContent = title ? title.label : "Browse";
@@ -816,30 +819,29 @@
   }
 
   function renderFilterBar() {
-    const setChip = (id, on) => {
-      const el = $(id);
-      if (el) el.setAttribute("aria-pressed", String(!!on));
-    };
-    setChip("chipVideo", filters.video);
-    setChip("chipPhotos", filters.photos);
-    setChip("chipGif", filters.gif);
-
-    const authorLabel = $("chipAuthorLabel");
-    if (authorLabel) authorLabel.textContent = filters.author === "all" ? "All authors" : "@" + filters.author;
-    const authorChip = $("chipAuthor");
-    if (authorChip) authorChip.setAttribute("aria-pressed", String(filters.author !== "all"));
+    const chosenTypes = [
+      filters.photos && "Photos",
+      filters.video && "Video",
+      filters.gif && "GIFs",
+    ].filter(Boolean);
+    const typeChip = $("chipMediaType");
+    if (typeChip) typeChip.setAttribute("aria-pressed", String(chosenTypes.length > 0));
+    if ($("mediaTypeLabel")) {
+      $("mediaTypeLabel").textContent = chosenTypes.length === 0
+        ? "Media type"
+        : chosenTypes.length === 1 ? chosenTypes[0] : chosenTypes.length + " types";
+    }
 
     const refine = (filters.minLikes ? 1 : 0) + (filters.minReposts ? 1 : 0) +
       (filters.from ? 1 : 0) + (filters.to ? 1 : 0);
-    const badge = $("refineBadge");
-    if (badge) { badge.hidden = !refine; badge.textContent = String(refine); }
-    const refineChip = $("chipRefine");
-    if (refineChip) refineChip.setAttribute("aria-pressed", String(refine > 0));
+    const moreCount = (filters.author !== "all" ? 1 : 0) + refine;
+    const moreChip = $("chipMoreFilters");
+    if (moreChip) moreChip.setAttribute("aria-pressed", String(moreCount > 0));
+    const badge = $("moreFilterBadge");
+    if (badge) { badge.hidden = !moreCount; badge.textContent = String(moreCount); }
 
     const sortDef = SORTS.find((s) => s.key === state.sort);
     if ($("chipSortLabel")) $("chipSortLabel").textContent = sortDef ? sortDef.label : "Newest";
-    if ($("chipShuffle")) $("chipShuffle").hidden = !isShuffle();
-    if ($("chipReset")) $("chipReset").hidden = activeFilterCount() === 0;
   }
 
   function renderSummary(list) {
@@ -895,6 +897,9 @@
     const still = M3EMedia.sizedImage(m.poster || m.url, options.size || "small");
     const count = item.media.length;
     const selected = state.selectedId === entry.id;
+    const archived = getMeta(item.tweet_id).active === false;
+    const quietStatus = unplayable && archived ? "Preview only · Archived"
+      : unplayable ? "Preview only" : archived ? "Archived" : "";
 
     /* Alt text is the caption when there is one. Where there isn't, the post's
        own text is a far better description than "image" — it is usually what
@@ -909,12 +914,14 @@
        reliably produce nonsense when treated as a noun phrase. */
     const who = item.author_name || "@" + (item.author_username || "unknown");
     const what = motion ? (isGif(m) ? "GIF" : "video") : "photo";
-    const label = (motion ? "Play " : "Open ") + what + " by " + who +
+    const label = (unplayable ? "Inspect " : motion ? "Play " : "Open ") + what + " by " + who +
       (m.alt ? ": " + m.alt.slice(0, 100) : "");
 
     return (
       '<button type="button" class="m3e-tile tile" data-entry="' + esc(entry.id) + '"' +
       ' data-motion="' + motion + '"' +
+      (unplayable ? ' data-unplayable="true"' : "") +
+      (archived ? ' data-archived="true"' : "") +
       (selected ? ' data-selected="true"' : "") +
       ' style="--_ar:' + ar + '"' +
       ' aria-label="' + esc(label) + '"' +
@@ -933,7 +940,7 @@
         "</span>" +
 
         (motion && !unplayable ? '<span class="m3e-tile__play">' + svg("play", 28) + "</span>" : "") +
-        (unplayable ? '<span class="m3e-tile__play tile__play--dead" title="Not playable here">' + svg("external", 24) + "</span>" : "") +
+        (quietStatus ? '<span class="tile__status m3e-label-medium">' + esc(quietStatus) + "</span>" : "") +
 
         (badge ? '<span class="m3e-tile__badge">' + esc(badge) + "</span>" : "") +
         (count > 1 && !badge
@@ -1486,6 +1493,8 @@
     const item = entry.item;
     const meta = getMeta(item.tweet_id);
     const archived = meta.active === false;
+    const unplayable = M3EMedia.hlsOnly(entry.media);
+    const waybackUrl = item.url ? "https://web.archive.org/web/*/" + item.url : null;
 
     const others = item.media.filter((m) => m.position !== entry.media.position);
 
@@ -1534,6 +1543,19 @@
 
         (metrics ? '<div class="detail__metrics m3e-label-medium">' + metrics + "</div>" : "") +
 
+        (archived
+          ? '<div class="detail__availability">' +
+              '<span class="detail__availability-icon">' + svg("archive", 20) + "</span>" +
+              '<div><p class="m3e-title-small">Removed from library</p>' +
+              '<p class="m3e-body-small">This post is kept in Archive and hidden from active collections.</p></div></div>'
+          : "") +
+        (unplayable
+          ? '<div class="detail__availability">' +
+              '<span class="detail__availability-icon">' + svg("play", 20) + "</span>" +
+              '<div><p class="m3e-title-small">Preview only</p>' +
+              '<p class="m3e-body-small">The poster is saved, but this browser cannot play the available stream.</p></div></div>'
+          : "") +
+
         (others.length
           ? '<div class="detail__more">' +
               '<p class="m3e-label-medium detail__more-label">' + plural(others.length, "more item") + " in this post</p>" +
@@ -1555,10 +1577,15 @@
             ? '<a class="m3e-button m3e-button--outlined m3e-button--s m3e-state" href="' + esc(item.url) +
               '" target="_blank" rel="noopener noreferrer">' + svg("external", 18) + "<span>Open on X</span></a>"
             : "") +
+          (unplayable && waybackUrl
+            ? '<a class="m3e-button m3e-button--outlined m3e-button--s m3e-state" href="' + esc(waybackUrl) +
+              '" target="_blank" rel="noopener noreferrer">' + svg("clock", 18) + "<span>Find on Wayback</span></a>"
+            : "") +
           '<button class="m3e-button m3e-button--text m3e-button--s m3e-state" data-detail="copy">' +
             svg("copy", 18) + "<span>Copy link</span></button>" +
           '<button class="m3e-button m3e-button--text m3e-button--s m3e-state" data-detail="archive">' +
-            svg("archive", 18) + "<span>" + (archived ? "Restore" : "Archive") + "</span></button>" +
+            svg(archived ? "archive" : "trash", 18) + "<span>" +
+            (archived ? "Restore to library" : "Remove from library") + "</span></button>" +
         "</div>" +
       "</article>"
     );
@@ -1654,7 +1681,7 @@
     saveMeta();
     clearDetail();
     render();
-    snack.show(wasActive ? "Archived." : "Restored.", {
+    snack.show(wasActive ? "Removed from library." : "Restored to library.", {
       action: "Undo",
       onAction: () => {
         meta.active = wasActive;
@@ -1765,6 +1792,89 @@
       });
   }
 
+  let mediaTypeMenu = null;
+  function openMediaTypeMenu(trigger) {
+    if (mediaTypeMenu) { mediaTypeMenu.close(); return; }
+
+    const selected = filters.photos && !filters.video && !filters.gif ? "photos"
+      : filters.video && !filters.photos && !filters.gif ? "video"
+      : filters.gif && !filters.photos && !filters.video ? "gif"
+      : !filters.photos && !filters.video && !filters.gif ? "all" : "multiple";
+    const types = [
+      { key: "all", label: "All media", describe: "Photos, videos and GIFs" },
+      { key: "photos", label: "Photos", describe: "Still images only" },
+      { key: "video", label: "Videos", describe: "Playable video only" },
+      { key: "gif", label: "GIFs", describe: "Looping animation only" },
+    ];
+
+    const menu = document.createElement("div");
+    menu.className = "m3e-menu m3e-menu--filter";
+    menu.setAttribute("role", "menu");
+    menu.setAttribute("aria-label", "Media type");
+    menu.innerHTML = types.map((type) =>
+      '<button class="m3e-menu__item m3e-state" role="menuitemradio" data-media-type="' + type.key + '"' +
+      ' aria-checked="' + (type.key === selected) + '" aria-selected="' + (type.key === selected) + '" tabindex="-1">' +
+        '<span class="m3e-menu__item-text"><span class="m3e-body-large">' + type.label + "</span>" +
+        '<span class="m3e-body-small">' + type.describe + "</span></span>" +
+        (type.key === selected ? svg("check", 20) : "") +
+      "</button>"
+    ).join("");
+
+    mediaTypeMenu = M3E.openMenu(trigger, menu, {
+      align: "start",
+      onClose: () => { mediaTypeMenu = null; },
+    });
+    menu.querySelectorAll("[data-media-type]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        filters.photos = btn.dataset.mediaType === "photos";
+        filters.video = btn.dataset.mediaType === "video";
+        filters.gif = btn.dataset.mediaType === "gif";
+        mediaTypeMenu.close();
+        render();
+      });
+    });
+  }
+
+  let moreFiltersMenu = null;
+  function openMoreFiltersMenu(trigger) {
+    if (moreFiltersMenu) { moreFiltersMenu.close(); return; }
+
+    const refine = (filters.minLikes ? 1 : 0) + (filters.minReposts ? 1 : 0) +
+      (filters.from ? 1 : 0) + (filters.to ? 1 : 0);
+    const menu = document.createElement("div");
+    menu.className = "m3e-menu m3e-menu--filter";
+    menu.setAttribute("role", "menu");
+    menu.setAttribute("aria-label", "More filters");
+    menu.innerHTML =
+      '<button class="m3e-menu__item m3e-state" role="menuitem" data-more-filter="author" aria-selected="' +
+        (filters.author !== "all") + '" tabindex="-1">' + svg("person", 20) +
+        '<span class="m3e-menu__item-text"><span class="m3e-body-large">Author</span>' +
+        '<span class="m3e-body-small">' + (filters.author === "all" ? "Anyone" : "@" + esc(filters.author)) + "</span></span></button>" +
+      '<button class="m3e-menu__item m3e-state" role="menuitem" data-more-filter="refine" aria-selected="' +
+        (refine > 0) + '" tabindex="-1">' + svg("tune", 20) +
+        '<span class="m3e-menu__item-text"><span class="m3e-body-large">Date & engagement</span>' +
+        '<span class="m3e-body-small">' + (refine ? plural(refine, "rule") + " active" : "Likes, reposts and date range") + "</span></span></button>" +
+      (activeFilterCount()
+        ? '<hr class="m3e-menu__divider"><button class="m3e-menu__item m3e-state" role="menuitem" data-more-filter="clear" tabindex="-1">' +
+          svg("close", 20) + '<span class="m3e-menu__item-text"><span class="m3e-body-large">Clear all filters</span>' +
+          '<span class="m3e-body-small">Return to the full collection</span></span></button>'
+        : "");
+
+    moreFiltersMenu = M3E.openMenu(trigger, menu, {
+      align: "end",
+      onClose: () => { moreFiltersMenu = null; },
+    });
+    menu.querySelectorAll("[data-more-filter]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const action = btn.dataset.moreFilter;
+        moreFiltersMenu.close();
+        if (action === "author") openAuthorPicker();
+        else if (action === "refine") openRefine();
+        else if (action === "clear") resetFilters();
+      });
+    });
+  }
+
   let sortMenu = null;
   function openSortMenu(trigger) {
     if (sortMenu) { sortMenu.close(); return; }
@@ -1872,7 +1982,7 @@
       "</div>";
 
     openDialog(
-      "Personalise",
+      "Settings",
       '<div class="settings">' +
         '<div class="settings__group">' +
           '<span class="m3e-label-medium settings__label">Theme colour</span>' +
@@ -1927,6 +2037,16 @@
         "</div>" +
 
         '<div class="settings__group">' +
+          '<span class="m3e-label-medium settings__label">Interface density</span>' +
+          '<p class="m3e-body-medium settings__help">Adjust spacing around controls without changing media size.</p>' +
+          seg("segDensity", [
+            { value: "compact", label: "Compact" },
+            { value: "comfortable", label: "Comfortable" },
+            { value: "spacious", label: "Spacious" },
+          ], s.density) +
+        "</div>" +
+
+        '<div class="settings__group">' +
           '<span class="m3e-label-medium settings__label">Playback</span>' +
           '<div class="m3e-switch-row"><span class="m3e-switch-row__text">' +
             '<span class="m3e-switch-row__title">Autoplay in view</span>' +
@@ -1946,17 +2066,6 @@
             '<span class="m3e-switch__handle">' + svg("check", 14) + "</span></button></div>" +
         "</div>" +
 
-        '<div class="settings__group">' +
-          '<span class="m3e-label-medium settings__label">Your data</span>' +
-          '<p class="m3e-body-medium settings__help">Everything lives in this browser only. Back it up before clearing site data.</p>' +
-          '<div class="settings__row">' +
-            '<button class="m3e-button m3e-button--tonal m3e-state" data-data="import">' + svg("download") + "<span>Import</span></button>" +
-            '<button class="m3e-button m3e-button--tonal m3e-state" data-data="backup">' + svg("upload") + "<span>Back up</span></button>" +
-            '<button class="m3e-button m3e-button--outlined m3e-state" data-data="restore">' + svg("upload") + "<span>Restore</span></button>" +
-            '<button class="m3e-button m3e-button--text m3e-state" data-data="clear" style="color:var(--md-sys-color-error)">' +
-              svg("trash") + "<span>Clear library</span></button>" +
-          "</div>" +
-        "</div>" +
       "</div>",
       [{ label: "Done", variant: "filled" }],
       (host) => {
@@ -2028,6 +2137,7 @@
         bindSeg("segScheme", "scheme", repaintSeeds);
         bindSeg("segContrast", "contrast", repaintSeeds);
         bindSeg("segTile", "tileSize", () => render());
+        bindSeg("segDensity", "density");
 
         M3E.bindSwitch(host.querySelector("#setAutoplay"), (on) => {
           applySettings({ autoplay: on });
@@ -2035,12 +2145,61 @@
         });
         M3E.bindSwitch(host.querySelector("#setMotion"), (on) => applySettings({ reducedMotion: on }));
 
-        host.querySelectorAll("[data-data]").forEach((btn) => {
+      }
+    );
+  }
+
+  function openVault() {
+    const mediaCount = state.items.reduce((total, item) => total + item.media.length, 0);
+    const visiblePosts = new Set(state.lastList.map((entry) => entry.item.tweet_id)).size;
+
+    openDialog(
+      "Data vault",
+      '<div class="vault">' +
+        '<div class="vault__summary">' + svg("vault", 28) +
+          '<div><p class="m3e-title-medium">Stored only in this browser</p>' +
+          '<p class="m3e-body-small">' + plural(state.items.length, "post") + " · " +
+            plural(mediaCount, "media item") + "</p></div>" +
+        "</div>" +
+
+        '<section class="vault__group" aria-labelledby="vaultBringIn">' +
+          '<h3 class="m3e-label-medium settings__label" id="vaultBringIn">Bring data in</h3>' +
+          '<div class="vault__actions">' +
+            '<button class="vault__action m3e-state" data-vault="import">' + svg("download", 22) +
+              '<span><strong>Import JSON</strong><small>Add new posts and update existing ones</small></span></button>' +
+            '<button class="vault__action m3e-state" data-vault="restore">' + svg("upload", 22) +
+              '<span><strong>Restore backup</strong><small>Replace this library from a dashboard backup</small></span></button>' +
+          "</div>" +
+        "</section>" +
+
+        '<section class="vault__group" aria-labelledby="vaultTakeOut">' +
+          '<h3 class="m3e-label-medium settings__label" id="vaultTakeOut">Take data out</h3>' +
+          '<div class="vault__actions">' +
+            '<button class="vault__action m3e-state" data-vault="export"' + (!visiblePosts ? " disabled" : "") + ">" +
+              svg("download", 22) + '<span><strong>Export current view</strong><small>' +
+              plural(visiblePosts, "post") + " after current filters</small></span></button>" +
+            '<button class="vault__action m3e-state" data-vault="backup"' + (!state.items.length ? " disabled" : "") + ">" +
+              svg("upload", 22) + '<span><strong>Back up everything</strong><small>Includes Archive and local viewing state</small></span></button>' +
+          "</div>" +
+        "</section>" +
+
+        '<section class="vault__group vault__danger" aria-labelledby="vaultDanger">' +
+          '<h3 class="m3e-label-medium settings__label" id="vaultDanger">Danger zone</h3>' +
+          '<p class="m3e-body-small">Clearing is permanent and always requires a separate confirmation.</p>' +
+          '<button class="m3e-button m3e-button--text m3e-state" data-vault="clear"' +
+            (!state.items.length ? " disabled" : "") + ' style="color:var(--md-sys-color-error)">' +
+            svg("trash", 18) + "<span>Clear library</span></button>" +
+        "</section>" +
+      "</div>",
+      [{ label: "Done", variant: "filled" }],
+      (host) => {
+        host.querySelectorAll("[data-vault]").forEach((btn) => {
           btn.addEventListener("click", () => {
-            const action = btn.dataset.data;
+            const action = btn.dataset.vault;
             if (action === "import") { dialog.close(); $("fileImport").click(); }
+            else if (action === "restore") { dialog.close(); $("fileRestore").click(); }
+            else if (action === "export") exportVisible();
             else if (action === "backup") backup();
-            else if (action === "restore") $("fileRestore").click();
             else if (action === "clear") { dialog.close(); confirmClear(); }
           });
         });
@@ -2384,7 +2543,12 @@
       if (!tile) return;
 
       const entry = entryById(state.lastList, tile.dataset.entry);
-      if (entry) openViewer(entry);
+      if (entry) {
+        // A poster-only stream has no useful full-screen playback. Go straight
+        // to the inspector where its explanation and recovery actions live.
+        if (M3EMedia.hlsOnly(entry.media)) openDetail(tile.dataset.entry);
+        else openViewer(entry);
+      }
     });
 
     /* Right-click / long-press equivalent: opening the post rather than the
@@ -2569,35 +2733,19 @@
       });
     }
 
-    const toggleChip = (id, key) => {
-      const el = $(id);
-      if (el) el.addEventListener("click", () => { filters[key] = !filters[key]; render(); });
-    };
-    toggleChip("chipVideo", "video");
-    toggleChip("chipPhotos", "photos");
-    toggleChip("chipGif", "gif");
-
-    if ($("chipAuthor")) $("chipAuthor").addEventListener("click", openAuthorPicker);
-    if ($("chipRefine")) $("chipRefine").addEventListener("click", openRefine);
-    if ($("chipSort")) $("chipSort").addEventListener("click", (e) => openSortMenu(e.currentTarget));
-    if ($("chipShuffle")) {
-      $("chipShuffle").addEventListener("click", () => {
-        reshuffle();
-        render();
-        // The feed has just been re-dealt beneath the reader; say so, and put
-        // the top of it back in view so the change is legible rather than
-        // just disorienting.
-        scrollFeedTop();
-        snack.show("Shuffled.");
-      });
+    if ($("chipMediaType")) {
+      $("chipMediaType").addEventListener("click", (e) => openMediaTypeMenu(e.currentTarget));
     }
-    if ($("chipReset")) $("chipReset").addEventListener("click", resetFilters);
+    if ($("chipSort")) $("chipSort").addEventListener("click", (e) => openSortMenu(e.currentTarget));
+    if ($("chipMoreFilters")) {
+      $("chipMoreFilters").addEventListener("click", (e) => openMoreFiltersMenu(e.currentTarget));
+    }
 
     document.querySelectorAll("#viewSeg [data-view]").forEach((btn) => {
       btn.addEventListener("click", () => setView(btn.dataset.view));
     });
 
-    if ($("railFab")) $("railFab").addEventListener("click", () => $("fileImport").click());
+    if ($("railFab")) $("railFab").addEventListener("click", openVault);
     [$("railSettings"), $("appBarSettings")].forEach((btn) => {
       if (btn) btn.addEventListener("click", openSettings);
     });
@@ -2622,7 +2770,7 @@
       // means the first press of a system-light user changes nothing on screen
       // (system already resolved to light), which reads as a broken button.
       // Instead: flip to the opposite of what is currently *rendered*.
-      // "Follow system" remains available in Personalise, where a three-way
+      // "Follow system" remains available in Settings, where a three-way
       // choice can be labelled properly.
       $("railTheme").addEventListener("click", () => {
         const next = M3ETheme.resolveDark(state.settings) ? "light" : "dark";
