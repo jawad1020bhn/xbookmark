@@ -616,7 +616,6 @@ async function startCapture() {
   if (capture) {
     if (capture.pause) {
       capture.pause = false;
-      capture.status = "capturing";
       setState({ status: "capturing", lastStopReason: null });
       runCaptureLoop(capture).catch(() => {});
       return { ok: true, resumed: true };
@@ -625,10 +624,8 @@ async function startCapture() {
   }
 
   const run = {
-    status: "capturing",
     stop: false,
     pause: false,
-    panic: false,
     startedAt: Date.now(),
     scrollBatches: 0,
     stableEmpty: 0,
@@ -655,10 +652,9 @@ async function pauseCapture() {
   return { ok: false, reason: "not-capturing" };
 }
 
-async function stopCapture(panic) {
+async function stopCapture() {
   if (!capture) return { ok: false, reason: "idle" };
   capture.stop = true;
-  if (panic) capture.panic = true;
   return { ok: true };
 }
 
@@ -691,10 +687,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       pauseCapture().then(sendResponse);
       return true;
     case "stop":
-      stopCapture(false).then(sendResponse);
+      stopCapture().then(sendResponse);
       return true;
     case "panic":
-      stopCapture(true).then(sendResponse);
+      stopCapture().then(sendResponse);
       return true;
     case "get-state":
       getState().then(sendResponse);

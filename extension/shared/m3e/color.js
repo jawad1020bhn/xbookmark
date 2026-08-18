@@ -344,13 +344,6 @@
     return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
   }
 
-  /** Blend `over` onto `base` at `alpha` — used to precompute state layers. */
-  function blend(base, over, alpha) {
-    const A = parseHex(base) || [0, 0, 0];
-    const B = parseHex(over) || [0, 0, 0];
-    return toHex(A.map((c, i) => c + (B[i] - c) * alpha));
-  }
-
   /* ---------------------------------------------------------------------------
      7 · Public surface
      --------------------------------------------------------------------------- */
@@ -373,7 +366,6 @@
     toHex,
     luminance,
     contrastRatio,
-    blend,
     TONES,
   };
 });

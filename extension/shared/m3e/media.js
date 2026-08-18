@@ -229,51 +229,6 @@
     return video;
   }
 
-  /* ---------------------------------------------------------------------------
-     Viewport-driven playback
-
-     In a scrolling media feed, "play" is a scroll position, not a click. This
-     plays whichever motion item is most central in the viewport and pauses
-     everything else, which is the behaviour every video feed has trained
-     people to expect.
-
-     It is opt-in per element and it always respects reduced-motion: someone
-     who has asked the OS to stop things moving has asked for exactly this.
-     --------------------------------------------------------------------------- */
-  function autoplayInView(container, opts) {
-    if (typeof IntersectionObserver === "undefined") return function () {};
-    const options = opts || {};
-    const selector = options.selector || "video[data-autoplay]";
-    const ratio = options.threshold != null ? options.threshold : 0.6;
-
-    let best = null;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          const v = entry.target;
-          if (entry.isIntersecting && entry.intersectionRatio >= ratio) {
-            if (best && best !== v) { try { best.pause(); } catch (_) {} }
-            best = v;
-            const attempt = v.play();
-            if (attempt && attempt.catch) attempt.catch(() => {});
-          } else {
-            try { v.pause(); } catch (_) {}
-            if (best === v) best = null;
-          }
-        }
-      },
-      { root: options.root || null, threshold: [0, ratio, 1] }
-    );
-
-    const scan = () => {
-      container.querySelectorAll(selector).forEach((v) => observer.observe(v));
-    };
-    scan();
-
-    return { rescan: scan, disconnect: () => observer.disconnect() };
-  }
-
   /** Stop whatever is currently playing (used when a view is torn down). */
   function stopAll() {
     if (stopCurrent) stopCurrent();
@@ -328,17 +283,6 @@
     return h ? h + ":" + pad(m) + ":" + pad(s) : m + ":" + pad(s);
   }
 
-  /** The same clock, but for a value already in seconds. */
-  function formatTime(seconds) {
-    return formatDuration((Number(seconds) || 0) * 1000);
-  }
-
-  /** True when this video element can be popped into picture-in-picture. */
-  function supportsPiP(video) {
-    return !!(typeof document !== "undefined" && document.pictureInPictureEnabled &&
-      video && typeof video.requestPictureInPicture === "function");
-  }
-
   /** The short badge a thumbnail shows: `GIF`, a duration, or nothing. */
   function badgeFor(media) {
     if (!media) return "";
@@ -355,15 +299,12 @@
     hlsOnly,
     isMotion,
     createVideo,
-    autoplayInView,
     claimPlayback,
     releasePlayback,
     stopAll,
     aspectRatio,
     sizedImage,
     formatDuration,
-    formatTime,
-    supportsPiP,
     badgeFor,
   };
 });

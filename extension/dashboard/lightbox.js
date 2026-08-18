@@ -42,12 +42,17 @@
     '<svg viewBox="0 0 24 24" width="' + size + '" height="' + size +
     '" aria-hidden="true" fill="currentColor">' + ICON[name] + "</svg>";
 
+  /** Escape a value for interpolation into an HTML attribute. */
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
   let root = null;      // the viewer element
   let overlay = null;   // M3E focus-trap controller
   let els = null;       // cached child references
   let items = [];
   let index = 0;
   let context = {};
+  let autoplay = true;
   let onCopy = null;
   let onChange = null;
   let contextAt = null;
@@ -438,7 +443,11 @@
          `width` is still passed so a phone in portrait does not pull a 1080p
          file to fill a 390px stage. */
       const video = window.M3EMedia.createVideo(m, {
-        autoplay: true,
+        autoplay,
+        /* Native controls here by design: the lightbox is a plain viewer, not
+           the theater, so it keeps the browser's own controls rather than a
+           second custom layer. */
+        controls: true,
         preload: "auto",
         width: els.stage.clientWidth || 1280,
         onFail: () => {
@@ -705,7 +714,7 @@
         (active ? ' aria-current="true"' : "") +
         ">" +
         (src
-          ? '<img src="' + src + '" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">'
+          ? '<img src="' + esc(src) + '" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">'
           : '<span class="lb__overview-cell__blank">' + (i + 1) + "</span>") +
         (window.M3EMedia.isMotion(m)
           ? '<span class="lb__overview-cell__motion">' + svg("play", 11) + "</span>"
@@ -714,7 +723,6 @@
         "</button>";
     }
     grid.innerHTML = html;
-    grid.dataset.rendered = String(to - from);
   }
 
   let overviewFrame = 0;
@@ -862,6 +870,7 @@
     items = list;
     if (overviewOpen) closeOverview(false);
     context = ctx || {};
+    autoplay = context.autoplay !== false;
     onCopy = context.onCopy || null;
     onChange = context.onChange || null;
     contextAt = context.contextAt || null;

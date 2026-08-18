@@ -169,6 +169,15 @@ test("the theater always has an explicit exit path", () => {
   assert.match(read("extension/shared/m3e/interactions.js"), /function bindEscape/);
 });
 
+test("the theater says when the item cap truncates the list", () => {
+  // The theater is capped at THEATER_LIMIT slides; a silent truncation would
+  // read as a broken library. The hint line must own the cap when it bites.
+  assert.match(app, /const truncated = list\.length > THEATER_LIMIT;/);
+  assert.match(app, /first " \+ slice\.length \+ " of "/);
+  assert.match(app, /list\.length\.toLocaleString\(\) \+ " items"/);
+  assert.match(app, /"<span>" \+ hintText \+ "<\/span>"/);
+});
+
 test("a carousel is operable from the keyboard", () => {
   // A horizontally scrolling region drivable only by wheel or swipe fails
   // WCAG 2.1.1. The controller owns arrows, Home and End.
@@ -241,7 +250,7 @@ test("a video that fails steps down the ladder before giving up", () => {
   // A dead source produces a black rectangle and a play button that does
   // nothing, which is the exact failure this module exists to prevent.
   const src = read("extension/shared/m3e/media.js");
-  const fn = src.slice(src.indexOf("function createVideo"), src.indexOf("function autoplayInView"));
+  const fn = src.slice(src.indexOf("function createVideo"), src.indexOf("function stopAll"));
   assert.match(fn, /video\.addEventListener\("error"/);
   assert.match(fn, /const next = ladder\[\+\+rung\]/);
   assert.match(fn, /options\.onFail/);
@@ -249,7 +258,7 @@ test("a video that fails steps down the ladder before giving up", () => {
 
 test("autoplaying video is muted, or the browser refuses to start it", () => {
   const src = read("extension/shared/m3e/media.js");
-  const fn = src.slice(src.indexOf("function createVideo"), src.indexOf("function autoplayInView"));
+  const fn = src.slice(src.indexOf("function createVideo"), src.indexOf("function stopAll"));
   assert.match(fn, /gif \|\| !!options\.autoplay/);
 });
 

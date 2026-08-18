@@ -67,6 +67,7 @@
     density: "comfortable",
     lastCollection: "all",
     view: "rails",
+    sort: "newest",
     autoplay: true,
     tileSize: "medium",
   });
@@ -140,7 +141,6 @@
     tune: '<path d="M10 18h4v-2h-4v2Zm-7-6v2h18v-2H3ZM6 6v2h12V6H6Z"/>',
     eye: '<path d="M12 5C7 5 2.7 8 1 12c1.7 4 6 7 11 7s9.3-3 11-7c-1.7-4-6-7-11-7Zm0 11a4 4 0 1 1 4-4 4 4 0 0 1-4 4Zm0-6a2 2 0 1 0 2 2 2 2 0 0 0-2-2Z"/>',
     play: '<path d="M8 5v14l11-7L8 5Z"/>',
-    link: '<path d="M9.9 15.5 8.5 14.1l5.6-5.6 1.4 1.4-5.6 5.6ZM7.8 18.9a4.6 4.6 0 0 1 0-6.5l2.1-2.1 1.4 1.4-2.1 2.1a2.6 2.6 0 0 0 3.7 3.7l2.1-2.1 1.4 1.4-2.1 2.1a4.6 4.6 0 0 1-6.5 0Zm8.4-8.4-1.4-1.4 2.1-2.1a2.6 2.6 0 1 0-3.7-3.7l-2.1 2.1L9.7 4l2.1-2.1a4.6 4.6 0 0 1 6.5 6.5l-2.1 2.1Z"/>',
     external: '<path d="M14 3h7v7h-2V6.4l-9 9L8.6 14l9-9H14V3ZM5 7h6v2H7v8h8v-4h2v6H5V7Z"/>',
     copy: '<path d="M16 3H5v13h2V5h9V3Zm3 4H9v14h10V7Zm-2 2v10h-6V9h6Z"/>',
     check: '<path d="M9.6 16.2 5.4 12 4 13.4l5.6 5.6L20.6 8 19.2 6.6 9.6 16.2Z"/>',
@@ -205,9 +205,7 @@
     shuffleSeed: String(Date.now() % 2147483647),
     selectedId: null,      // "<tweet_id>:<position>" — a media item, not a post
     progress: {},          // resume positions, keyed by media entry id
-    rendered: 0,
     lastList: [],
-    fullSync: false,
   };
 
   const filters = {
@@ -763,18 +761,6 @@
   /* ===========================================================================
      6 · Chrome
      =========================================================================== */
-  function collectionCount(id) {
-    const prevC = state.collection;
-    state.collection = id;
-    let n = 0;
-    for (const item of state.items) {
-      if (!matchesCollection(item)) continue;
-      for (const media of item.media) if (matchesMedia(media, item)) n++;
-    }
-    state.collection = prevC;
-    return n;
-  }
-
   function renderNav() {
     const rail = $("railItems");
     const bar = $("navBar");
@@ -1483,11 +1469,11 @@
           cell.top.toFixed(2) + 'px,0);inline-size:' + cell.width.toFixed(2) + "px;block-size:" +
           cell.height.toFixed(2) + 'px">' + tileHtml(cell.entry, { size: "small" }) + "</div>"
       ).join("");
-      host.dataset.rendered = String(cells.length);
       if (autoplayer && autoplayer.rescan) autoplayer.rescan();
     };
 
     const schedule = () => { if (!frame) frame = requestAnimationFrame(paint); };
+
     const relayout = () => {
       if (destroyed) return;
       const width = Math.max(1, host.clientWidth);
@@ -1534,7 +1520,6 @@
 
     feed.innerHTML = '<div class="grid-virtual" data-size="' + esc(state.settings.tileSize) +
       '" role="list" aria-label="Media grid"></div>';
-    state.rendered = list.length;
     virtualGrid = createVirtualGrid(feed.querySelector(".grid-virtual"), list);
   }
 
@@ -1548,8 +1533,7 @@
 
      Built on scroll-snap with `scroll-snap-stop: always`, so a fast flick
      advances exactly one item rather than skidding through six. Videos mount
-     lazily and autoplay only while centred, which is what `autoplayInView`
-     is for.
+     lazily and autoplay only while centred (mountTheaterPlayers).
      --------------------------------------------------------------------------- */
   function renderTheater(list) {
     const feed = $("feed");
@@ -1557,7 +1541,14 @@
     if (!list.length) { feed.innerHTML = emptyStateHtml(); return; }
 
     const slice = list.slice(0, THEATER_LIMIT);
-    state.rendered = slice.length;
+
+    /* The theater is capped on purpose — full-size media per slide means a
+       bounded DOM — but the cap must never read as a silent truncation. */
+    const truncated = list.length > THEATER_LIMIT;
+    const hintText = truncated
+      ? "Swipe or scroll · Esc exits · first " + slice.length + " of " +
+        list.length.toLocaleString() + " items"
+      : "Swipe or scroll · Esc exits";
 
     /* The floating exit control lives OUTSIDE the scrolling rail so it stays
        put while the slides page underneath it, and floats over the letterboxed
@@ -1571,7 +1562,7 @@
         ' aria-label="Exit theater view" title="Exit theater (Esc)">' + svg("close", 22) + "</button>" +
       "</div>" +
       '<div class="theater__hint m3e-label-medium" aria-hidden="true">' +
-        svg("prev", 16) + "<span>Swipe or scroll · Esc exits</span>" + svg("next", 16) +
+        svg("prev", 16) + "<span>" + hintText + "</span>" + svg("next", 16) +
       "</div>";
 
     const rail = $("theater");
@@ -1583,7 +1574,8 @@
     /* Mount the real player for whichever slide is centred, and tear down the
        ones that are not. A hundred <video> elements on one page is how a tab
        runs out of memory; one is how a feed feels instant. */
-    mountTheaterPlayers(rail, slice);
+    const players = mountTheaterPlayers(rail, slice);
+    if (players) carousels.push(players);
   }
 
   function theaterSlideHtml(entry) {
@@ -1636,7 +1628,7 @@
   }
 
   function mountTheaterPlayers(rail, entries) {
-    if (typeof IntersectionObserver === "undefined") return;
+    if (typeof IntersectionObserver === "undefined") return null;
     const byId = new Map(entries.map((e) => [e.id, e]));
 
     const observer = new IntersectionObserver(
@@ -1672,6 +1664,10 @@
     );
 
     rail.querySelectorAll(".slide").forEach((s) => observer.observe(s));
+
+    // Hand the observer to the view's teardown list so a re-render disconnects
+    // it instead of leaving it watching detached slides for the life of the page.
+    return { destroy: () => observer.disconnect() };
   }
 
   function mountSlideVideo(slide, entry) {
@@ -1702,20 +1698,33 @@
     if (!video) return;
     video.classList.add("slide__media", "slide__video");
     stage.appendChild(video);
-    const play = stage.querySelector(".slide__play");
-    if (play) play.remove();
 
     /* A GIF is a silent loop with no chrome; a real video gets the custom
        control layer (play/pause, seek, time, mute, rate, loop, PiP, resume).
        The controller returns its own teardown, stored on the slide so the
        centering observer can dispose it before removing the video. */
+    let controlsReady = false;
     if (!gif && window.M3EVideoControls) {
-      slide._vcCleanup = window.M3EVideoControls.bind(video, {
-        container: stage,
-        entryId: entry.id,
-        progress: progressStore,
-      });
+      try {
+        slide._vcCleanup = window.M3EVideoControls.bind(video, {
+          container: stage,
+          entryId: entry.id,
+          progress: progressStore,
+        });
+        controlsReady = true;
+      } catch (error) {
+        // A failed control layer must never leave the video unplayable:
+        // fall back to native controls and drop the stored teardown.
+        console.error("M3EVideoControls failed to bind", error);
+        slide._vcCleanup = null;
+      }
     }
+    if (!controlsReady) video.controls = true;
+
+    /* The large play button only goes away once something can actually play
+       the video — custom controls bound, or native controls enabled. */
+    const play = stage.querySelector(".slide__play");
+    if (play && (controlsReady || video.controls)) play.remove();
   }
 
   /** Poster-only preload for the slides either side of the one being watched.
@@ -1797,6 +1806,19 @@
 
     const down = (event) => {
       if (event.pointerType === "mouse" || pointerId !== null) return;
+      /* A drag that begins on interactive chrome is that control's own
+         gesture (button press, seek scrub, menu pick) — it must never read
+         as a pull-down-to-exit. The media itself stays a dismiss surface,
+         except when it is carrying NATIVE controls (the fallback player):
+         there the control bar lives inside the video element, and this guard
+         is the only way to keep a scrub from closing the theater. */
+      if (event.target.closest &&
+          event.target.closest(
+            "button, a, input, select, textarea, video[controls]," +
+            " .slide__controls, .slide__resume, .slide__buffering"
+          )) {
+        return;
+      }
       pointerId = event.pointerId;
       startX = event.clientX;
       startY = event.clientY;
@@ -1960,14 +1982,13 @@
 
     const list = mediaIndex();
     state.lastList = list;
-    state.rendered = 0;
 
     renderFilterBar();
     renderSummary(list);
 
     if (state.view === "rails") renderRails(list);
     else if (state.view === "theater") renderTheater(list);
-    else renderGrid(list, false);
+    else renderGrid(list);
 
     // Inline previews. Hover-to-play is wired once in bindFeed; the touch
     // fallback (most-centred tile, paused while scrolling) is per-render
@@ -2207,6 +2228,7 @@
   function viewerContext(item) {
     return {
       url: item && item.url,
+      autoplay: state.settings.autoplay && !M3E.reducedMotion(),
       onCopy: (link) => copyText(link, "Media link copied."),
     };
   }
@@ -2220,6 +2242,7 @@
       list.map((e) => e.media),
       start < 0 ? 0 : start,
       {
+        autoplay: state.settings.autoplay && !M3E.reducedMotion(),
         // The caption line changes as you move between posts, so the context
         // has to be a function of the index rather than a fixed value.
         contextAt: (i) => {
@@ -2416,6 +2439,8 @@
         const key = btn.dataset.sort;
         if (isShuffle(key)) reshuffle();
         state.sort = key;
+        state.settings.sort = key;
+        saveSettings();
         sortMenu.close();
         render();
       });
@@ -2790,8 +2815,9 @@
           label: "Delete everything",
           variant: "error-filled",
           onClick: () => {
-            state.items = []; state.meta = {};
+            state.items = []; state.meta = {}; state.progress = {};
             saveItems(); saveMeta();
+            writeJSON(KEYS.progress, state.progress);
             clearDetail();
             render();
             snack.show("Library cleared.");
@@ -2825,6 +2851,7 @@
 
     const rows = Array.isArray(parsed) ? parsed : parsed && parsed.bookmarks ? parsed.bookmarks : [];
     const fileMeta = parsed && !Array.isArray(parsed) ? parsed.meta : null;
+    const fileProgress = parsed && !Array.isArray(parsed) ? parsed.progress : null;
 
     if (!rows.length) {
       snack.show("No bookmarks found in that file.", { error: true });
@@ -2833,7 +2860,7 @@
       return;
     }
 
-    if (opts.restore) { state.items = []; state.meta = {}; }
+    if (opts.restore) { state.items = []; state.meta = {}; state.progress = {}; }
 
     const items = normalize(rows);
     const invalid = rows.length - items.length;
@@ -2848,13 +2875,20 @@
       }
     }
 
-    // Full-snapshot semantics: anything absent from this file is archived.
-    if (state.fullSync && !opts.restore) {
-      const now = new Date().toISOString();
-      for (const [id, m] of Object.entries(state.meta)) {
-        if (m.active !== false && !ids.has(id)) { m.active = false; m.removedAt = now; }
+    // Resume positions travel with a backup; apply them on restore only.
+    if (opts.restore && fileProgress && typeof fileProgress === "object") {
+      for (const [id, p] of Object.entries(fileProgress).slice(0, PROGRESS_LIMIT)) {
+        if (p && typeof p === "object" && Number.isFinite(Number(p.t))) {
+          state.progress[id] = {
+            t: Number(p.t),
+            d: Number(p.d) || 0,
+            at: Number(p.at) || Date.now(),
+          };
+        }
       }
+      writeJSON(KEYS.progress, state.progress);
     }
+
     for (const id of ids) {
       const m = getMeta(id);
       if (!(fileMeta && fileMeta[id] && fileMeta[id].active === false)) { m.active = true; m.removedAt = null; }
@@ -2892,6 +2926,7 @@
       exported_at: new Date().toISOString(),
       bookmarks: state.items.map(strip),
       meta: state.meta,
+      progress: state.progress,
     }, null, 2));
     snack.show("Backup downloaded: " + plural(state.items.length, "post") + ".");
   }
@@ -3209,6 +3244,8 @@
     state.items = normalize(readJSON(KEYS.items, []) || []);
     state.collection = state.settings.lastCollection || "all";
     state.view = VIEWS.includes(state.settings.view) ? state.settings.view : "rails";
+    /* Persisted sort is the fallback; a sort= URL parameter (readUrl) wins. */
+    state.sort = SORTS.some((s) => s.key === state.settings.sort) ? state.settings.sort : "newest";
 
     // ---- runtime services -------------------------------------------------
     snack = M3E.createSnackbar($("snackbar"));

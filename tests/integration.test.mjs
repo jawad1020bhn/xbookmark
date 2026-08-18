@@ -19,6 +19,28 @@ const read = (p) => readFileSync(join(root, p), "utf8");
    Lightbox
    --------------------------------------------------------------------------- */
 
+test("the viewer respects the autoplay and reduced-motion settings", () => {
+  // Opening the viewer must not bypass the user's playback preferences:
+  // autoplay-off or reduced motion must mean a paused video with controls.
+  const app = read("extension/dashboard/app.js");
+  assert.match(app, /autoplay: state\.settings\.autoplay && !M3E\.reducedMotion\(\)/);
+  const lb = read("extension/dashboard/lightbox.js");
+  assert.match(lb, /autoplay = context\.autoplay !== false;/);
+  assert.match(lb, /autoplay,/);
+});
+
+test("resume progress is backed up, restored and cleared", () => {
+  const app = read("extension/dashboard/app.js");
+  // Backups carry the resume positions...
+  assert.match(app, /progress: state\.progress,/);
+  // ...restores apply them (bounded by the same limit as live writes)...
+  assert.match(app, /const fileProgress = parsed && !Array\.isArray\(parsed\) \? parsed\.progress : null;/);
+  assert.match(app, /Object\.entries\(fileProgress\)\.slice\(0, PROGRESS_LIMIT\)/);
+  // ...and clearing the library clears them too, or "resume" would point at
+  // videos that no longer exist.
+  assert.match(app, /state\.items = \[\]; state\.meta = \{\}; state\.progress = \{\};/);
+});
+
 test("the lightbox sits above every other layer", () => {
   const tokens = read("extension/shared/m3e/tokens.css");
   const layout = read("extension/dashboard/layout.css");
@@ -56,6 +78,17 @@ test("the custom keyboard shortcut system is absent", () => {
   // (Enter/Space), which is semantics a role=button element is owed, not a
   // shortcut system.
   assert.match(app, /event\.key !== "Enter" && event\.key !== " "/);
+});
+
+test("the UI copy promises no keyboard shortcuts", () => {
+  // Hints must never tell the user to press a key, because the keys would not
+  // do anything. "Esc exits" in the theater is a true statement about a real
+  // affordance; "press / to search" would be a lie.
+  const html = read("extension/dashboard/index.html");
+  assert.doesNotMatch(html, /[Pp]ress\s+[isvz/](?![a-z])/);
+  assert.doesNotMatch(html, /\bslash\b/);
+  assert.doesNotMatch(html, /<kbd/);
+  assert.doesNotMatch(html, /shortcut/i);
 });
 
 test("modal Escape remains owned by the shared overlay primitive", () => {
@@ -146,16 +179,34 @@ test("the dashboard is mirrored into the extension, without the sample data", ()
   assert.match(read("extension/dashboard/index.html").slice(0, 200), /<!--\s*AUTO-GENERATED/);
 });
 
-test("relative asset paths resolve in both locations", () => {
-  // dashboard/../shared/ works from the repo AND from extension/dashboard/,
-  // which is the whole reason the mirror can be a straight copy.
+test("relative asset paths resolve from the dashboard page", () => {
+  // Every ../shared/... reference from extension/dashboard/ must resolve to a
+  // file inside the package, or the surface breaks in Chrome.
   const html = read("extension/dashboard/index.html");
   for (const m of html.matchAll(/(?:src|href)="(\.\.\/[^"]+)"/g)) {
-    const fromRepo = join(root, "dashboard", m[1]);
     const fromExt = join(root, "extension/dashboard", m[1]);
-    assert.ok(existsSync(fromRepo), "missing in repo: " + m[1]);
     assert.ok(existsSync(fromExt), "missing in extension: " + m[1]);
   }
+});
+
+test("the theater player module is loaded before the app", () => {
+  // The theater mounts videos with `controls: false` and relies on
+  // window.M3EVideoControls for operation. If the script were ever dropped
+  // from index.html (or reordered after app.js), every theater video would
+  // mount with no controls at all — a silent, total loss of playback.
+  const html = read("extension/dashboard/index.html");
+  const scripts = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)].map((m) => m[1]);
+  const vc = scripts.findIndex((s) => s.includes("video-controls.js"));
+  const app = scripts.findIndex((s) => s.endsWith("app.js"));
+  assert.ok(vc > -1, "video-controls.js must be included in index.html");
+  assert.ok(app > -1, "app.js must be included in index.html");
+  assert.ok(vc < app, "video-controls.js must load before app.js");
+
+  // And the module itself must expose the API the app calls.
+  const controls = read("extension/shared/m3e/video-controls.js");
+  assert.match(controls, /M3EVideoControls\s*=\s*factory\(\)/);
+  assert.match(controls, /function bind\(video, options\)/);
+  assert.match(controls, /function cleanup\(\)/);
 });
 
 test("the sample library is not fetched inside the extension", () => {
