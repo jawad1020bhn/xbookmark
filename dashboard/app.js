@@ -146,6 +146,7 @@
     prev: '<path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6 4.6-4.6Z"/>',
     next: '<path d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6-4.6 4.6Z"/>',
     expand: '<path d="M4 4h6v2H6v4H4V4Zm10 0h6v6h-2V6h-4V4ZM4 14h2v4h4v2H4v-6Zm14 0h2v6h-6v-2h4v-4Z"/>',
+    fullscreen: '<path d="M5 5h5v2H7v3H5V5Zm9 0h5v5h-2V7h-3V5ZM5 14h2v3h3v2H5v-5Zm12 0h2v5h-5v-2h3v-3Z"/>',
     shuffle: '<path d="M17 4.5 21.5 9 17 13.5V10.4h-2.1c-1 0-1.6.4-2.4 1.6l-.6 1-1.4-2.3.4-.6C12 8.3 13.2 7.6 15 7.6H17V4.5ZM3 8h3.2c1.6 0 2.8.6 3.9 2.2l3 4.6c.7 1 1.2 1.3 2 1.3H17v-3.1L21.5 17 17 21.5v-3.1h-1.9c-1.7 0-2.9-.7-4-2.4l-3-4.6C7.4 10.3 6.9 10 6.2 10H3V8Zm0 8h3.2c.6 0 1-.2 1.5-.8l.4-.6 1.4 2.3-.2.3c-.9 1.2-1.9 1.8-3.1 1.8H3v-3Z"/>',
     eyeoff: '<path d="M2.1 3.5 3.5 2.1l18.4 18.4-1.4 1.4-3.3-3.3A11.6 11.6 0 0 1 12 19c-5 0-9.3-3-11-7a12.3 12.3 0 0 1 4.3-5.1L2.1 3.5ZM12 5c5 0 9.3 3 11 7a12.4 12.4 0 0 1-3 4l-3-3a5 5 0 0 0-6-6L8.8 5.3A11.8 11.8 0 0 1 12 5Z"/>',
   };
@@ -781,6 +782,13 @@
     if ($("paneTitle")) $("paneTitle").textContent = title ? title.label : "Browse";
   }
 
+  /* The window is the scroll container — `.pane` never overflows on its own,
+     so calling scrollTo on it was a silent no-op and "back to top" simply
+     didn't happen. */
+  function scrollFeedTop() {
+    window.scrollTo({ top: 0, behavior: M3E.reducedMotion() ? "auto" : "smooth" });
+  }
+
   function selectCollection(id) {
     if (!COLLECTIONS.some((c) => c.id === id)) return;
     state.collection = id;
@@ -788,8 +796,7 @@
     saveSettings();
     renderNav();
     render();
-    const pane = $("pane");
-    if (pane) pane.scrollTo({ top: 0, behavior: M3E.reducedMotion() ? "auto" : "smooth" });
+    scrollFeedTop();
   }
 
   function setView(view) {
@@ -799,6 +806,9 @@
     saveSettings();
     syncViewSeg();
     render();
+    // The three views have wildly different heights; keeping the old scroll
+    // offset lands the reader in the middle of nowhere.
+    scrollFeedTop();
   }
 
   function syncViewSeg() {
@@ -1291,6 +1301,7 @@
               esc(fmtDate(item.posted)) + "</p>" +
           "</div>" +
           '<div class="slide__acts">' +
+            '<button class="m3e-icon-button m3e-state" data-slide-full aria-label="Watch full screen">' + svg("fullscreen", 22) + "</button>" +
             '<button class="m3e-icon-button m3e-state" data-slide-info aria-label="Show the post">' + svg("expand", 22) + "</button>" +
             (item.url
               ? '<a class="m3e-icon-button m3e-state" href="' + esc(item.url) + '" target="_blank" rel="noopener noreferrer"' +
@@ -1583,11 +1594,11 @@
 
     if (isLargeWindow()) {
       const body = $("detailBody");
-      const placeholder = $("detailPlaceholder");
+      const pane = $("detailPane");
       if (!body) return;
       body.innerHTML = html;
       body.hidden = false;
-      if (placeholder) placeholder.hidden = true;
+      if (pane) pane.dataset.open = "true";
       bindDetail(body, entry);
     } else {
       openSheet(entry.item.author_name || "Post", html, (host) => bindDetail(host, entry));
@@ -1630,9 +1641,9 @@
 
   function clearDetailPaneOnly() {
     const body = $("detailBody");
-    const placeholder = $("detailPlaceholder");
+    const pane = $("detailPane");
     if (body) { body.hidden = true; body.innerHTML = ""; }
-    if (placeholder) placeholder.hidden = false;
+    if (pane) pane.dataset.open = "false";
   }
 
   function markOpened(tweetId) {
@@ -2374,6 +2385,13 @@
         if (slide) openDetail(slide.dataset.entry);
         return;
       }
+      const slideFull = event.target.closest("[data-slide-full]");
+      if (slideFull) {
+        const slide = slideFull.closest(".slide");
+        const entry = entryById(state.lastList, slide && slide.dataset.entry);
+        if (entry) openViewer(entry);
+        return;
+      }
 
       const tile = event.target.closest(".tile[data-entry]");
       if (!tile) return;
@@ -2592,8 +2610,7 @@
         // The feed has just been re-dealt beneath the reader; say so, and put
         // the top of it back in view so the change is legible rather than
         // just disorienting.
-        const pane = $("pane");
-        if (pane) pane.scrollTo({ top: 0, behavior: M3E.reducedMotion() ? "auto" : "smooth" });
+        scrollFeedTop();
         snack.show("Shuffled.");
       });
     }

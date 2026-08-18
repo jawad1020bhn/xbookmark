@@ -58,11 +58,15 @@
   }
 }
 
-/* --- large and up: persistent inspector ----------------------------------- */
+/* --- large and up: persistent inspector ------------------------------------
+   The third column is `auto`, not a fixed track: while nothing is selected
+   the inspector is display:none and the feed takes the whole width. There is
+   no permanent empty grey column waiting for a selection. */
 @media (min-width: 1200px) {
-  .shell { grid-template-columns: auto minmax(0, 1fr) 400px; }
-  .shell__detail {
+  .shell { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .shell__detail[data-open="true"] {
     display: block;
+    width: 400px;
     position: sticky;
     top: 0;
     height: 100dvh;
@@ -73,7 +77,7 @@
   }
 }
 @media (min-width: 1600px) {
-  .shell { grid-template-columns: auto minmax(0, 1fr) 460px; }
+  .shell__detail[data-open="true"] { width: 460px; }
 }
 
 /* =============================================================================
@@ -133,9 +137,6 @@
 }
 @media (max-width: 599px) {
   .nav-bar { display: flex; }
-  /* Only enough room for the pill itself: it floats over the feed, so the
-     feed does not have to end above it — just not underneath it at rest. */
-  .pane { padding-bottom: calc(104px + env(safe-area-inset-bottom, 0)); }
 }
 /* Hidden on scroll-down, returned on scroll-up, by bindScrollChrome. */
 .nav-bar[data-hidden="true"] {
@@ -233,6 +234,12 @@
 @media (min-width: 1600px) {
   .pane { padding-inline: var(--md-sys-margin-large); --_bleed: var(--md-sys-margin-large); }
 }
+/* Room for the floating nav pill. This lives AFTER the base `.pane` padding
+   shorthand on purpose: declared before it, the shorthand won the cascade and
+   the pill sat on top of the feed's last row. */
+@media (max-width: 599px) {
+  .pane { padding-block-end: calc(104px + env(safe-area-inset-bottom, 0)); }
+}
 .pane__summary { color: var(--md-sys-color-on-surface-variant); margin: 0; min-height: 1.25rem; }
 .pane__foot {
   margin-block-start: auto;
@@ -262,6 +269,9 @@
   min-width: 0;
   overflow-x: auto;
   padding-block: var(--md-sys-spacing-1);
+  /* Clears the fade below, so the last chip is fully legible once the row is
+     scrolled to its end instead of staying half-erased forever. */
+  padding-inline-end: var(--md-sys-spacing-7);
   scrollbar-width: none;
   /* Fade the trailing edge so a clipped chip reads as "more this way"
      rather than as a rendering bug. */
@@ -411,6 +421,16 @@
      entire column and push everything else off the page. */
   max-block-size: 78vh;
 }
+/* Never crop the media. `contain` instead of the component default `cover`:
+   whenever a tile's box does not match the media's real ratio (fixed-height
+   rail cells, the hero band, a capped portrait in the grid) the picture is
+   letterboxed on a quiet fill rather than zoomed and cut. In the grid the box
+   already matches the ratio, so this changes nothing there. */
+.feed .m3e-tile__media img,
+.feed .m3e-tile__media video {
+  object-fit: contain;
+  background: var(--md-sys-color-surface-container);
+}
 .tile__missing {
   position: absolute;
   inset: 0;
@@ -479,21 +499,13 @@
 .theater:focus-visible { outline: 3px solid var(--md-sys-color-secondary); outline-offset: 4px; }
 @media (prefers-reduced-motion: reduce) { .theater { scroll-behavior: auto; } }
 
-/* On a phone the theater IS the page: it takes the room left under the app
-   bar and filter chips rather than being a band inside a scrolling column.
-   Two scroll axes on one screen — the page vertically and the rail
-   horizontally — is the fastest way to make a swipe feel unreliable. */
+/* On a phone the stage sizes itself from the media's own ratio, capped so a
+   portrait item still leaves room for the slide's author bar and the app
+   chrome. The previous fixed `calc(100dvh - 300px)` band guessed at the
+   chrome height and guessed wrong on most phones, which left the page with
+   a second vertical scroll fighting the horizontal pager. */
 @media (max-width: 839px) {
-  .feed[data-view="theater"] {
-    display: flex;
-    flex-direction: column;
-    /* Fill the room left under the app bar and chips, so the pane itself has
-       nothing left to scroll vertically. */
-    block-size: calc(100dvh - 300px);
-    min-block-size: 340px;
-  }
-  .theater { flex: 1; min-block-size: 0; }
-  .slide__stage { max-block-size: calc(100% - 64px); }
+  .slide__stage { max-block-size: min(62dvh, 600px); }
   /* The gesture is the control on touch; the caption spends a line saying so
      once, and the arrows it names do not exist here. */
   .theater__hint { display: none; }
@@ -520,7 +532,9 @@
      theater view exists to spend on the picture. */
   aspect-ratio: var(--_ar, 16 / 9);
   inline-size: 100%;
-  max-block-size: min(68vh, 720px);
+  /* As tall as the screen allows while leaving room for the slide's author
+     bar — the media should read at screen size, not as a band in a column. */
+  max-block-size: min(76dvh, 900px);
   block-size: auto;
   border-radius: var(--md-sys-shape-corner-extra-large);
   background: var(--md-sys-color-surface-container-low);
@@ -626,28 +640,6 @@
 /* =============================================================================
    Inspector (the post behind the media)
    ============================================================================= */
-.detail-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--md-sys-spacing-3);
-  height: 100%;
-  padding: var(--md-sys-spacing-8);
-  text-align: center;
-  color: var(--md-sys-color-on-surface-variant);
-}
-.detail-empty__glyph {
-  display: grid;
-  place-items: center;
-  width: 80px;
-  height: 80px;
-  border-radius: var(--md-sys-shape-corner-full);
-  background: var(--md-sys-color-surface-container-high);
-  color: var(--md-sys-color-on-surface-variant);
-}
-.detail-empty__body { max-width: 30ch; }
-
 .detail { padding: var(--md-sys-spacing-5); }
 .detail__body { display: flex; flex-direction: column; gap: var(--md-sys-spacing-4); }
 .detail__head { display: flex; align-items: center; gap: var(--md-sys-spacing-3); }
