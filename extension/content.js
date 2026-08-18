@@ -164,13 +164,11 @@ function resolveUser(userResult) {
  *  2. A real poster. For a video, `media_url_https` IS the still frame, but
  *     naming it `url` and nothing else meant every consumer had to know that.
  *     It is emitted as `poster` too, explicitly.
- *  3. The sensitivity flag, so the UI can gate a blur instead of ambushing
- *     someone scrolling in public.
  *
  * `mp4` (the best variant) is still emitted unchanged: it is what every
  * existing consumer and test reads.
  */
-function buildMediaItems(media, postSensitive) {
+function buildMediaItems(media) {
   return (Array.isArray(media) ? media : [])
     .filter((m) => m && typeof m === "object")
     .map((m, index) => {
@@ -208,7 +206,6 @@ function buildMediaItems(media, postSensitive) {
         hls: (hls && hls.url) || null,
         duration: (m.video_info && Number(m.video_info.duration_millis)) || 0,
         alt: m.ext_alt_text || m.alt_text || null,
-        sensitive: Boolean(postSensitive || m.sensitive_media_warning || m.possibly_sensitive),
         // Media order inside a post is meaningful (a thread's screenshots are
         // sequential) and is lost the moment anything re-sorts the array.
         position: index + 1
@@ -322,10 +319,7 @@ function normalizeTweet(tweet) {
     has_media: media.length > 0,
     has_links: urls.length > 0,
     media_types: media.map((m) => m.type),
-    /* Sensitivity is flagged on the post, not on each attachment, so it is
-       pushed down here — the media grid is what has to blur, and it should
-       not have to reach back up to the post to find out. */
-    media_items: buildMediaItems(media, Boolean(l.possibly_sensitive)),
+    media_items: buildMediaItems(media),
     urls_expanded: urlsExpanded,
     conversation_id: l.conversation_id_str || null,
     in_reply_to_status_id: l.in_reply_to_status_id_str || null,

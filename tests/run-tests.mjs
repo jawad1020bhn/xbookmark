@@ -137,17 +137,15 @@ test("media types captured", () => {
   // Order inside a post is meaningful (a thread's screenshots are sequential)
   // and is lost the moment anything re-sorts the array.
   assert.deepEqual(t.media_items.map((m) => m.position), [1, 2]);
-  assert.equal(t.media_items[0].sensitive, false);
 });
 
-test("post-level sensitivity is pushed down onto each media item", () => {
-  // The media grid is what has to blur, and it should not have to reach back
-  // up to the post to find out whether it should.
+test("source sensitivity metadata is not persisted on media items", () => {
   const raw = load("media-video.json").json;
   const tweet = extract(raw)[0];
   tweet.legacy.possibly_sensitive = true;
+  tweet.legacy.extended_entities.media[0].sensitive_media_warning = true;
   const t = normalize(tweet);
-  assert.ok(t.media_items.every((m) => m.sensitive === true));
+  assert.ok(t.media_items.every((m) => !("sensitive" in m)));
 });
 
 test("validateItem rejects unsafe URL", () => {

@@ -137,7 +137,7 @@ test("badges distinguish gif, video and photo", () => {
 test("the dashboard normalizer preserves every field playback depends on", () => {
   const src = readFileSync(join(root, "dashboard/app.js"), "utf8");
   const fn = src.slice(src.indexOf("function normalizeMedia"), src.indexOf("function normalizeItem"));
-  for (const field of ["hls", "width", "height", "poster", "mp4Variants", "sensitive", "aspect"]) {
+  for (const field of ["hls", "width", "height", "poster", "mp4Variants", "aspect"]) {
     // Either `field:` or ES6 shorthand `field,`.
     assert.ok(new RegExp("\\b" + field + "\\s*[:,]").test(fn), "normalizeMedia must emit " + field);
   }

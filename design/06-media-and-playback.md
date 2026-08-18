@@ -21,8 +21,7 @@ x.com GraphQL response
    │
    ├─ content.js :: buildMediaItems()       ← capture. Runs on x.com.
    │     emits { type, url, poster, width, height, aspect,
-   │             mp4, mp4_variants[], hls, duration, alt,
-   │             sensitive, position }
+   │             mp4, mp4_variants[], hls, duration, alt, position }
    │
    ├─ chrome.storage.local  /  exported JSON
    │
@@ -118,14 +117,6 @@ which nobody does for a thumbnail they cannot see.
 
 It is now emitted as `poster` as well, explicitly.
 
-### 3.3 Sensitivity
-
-`possibly_sensitive` is a property of the *post*, but the thing that has to
-blur is the *media grid*. Making the grid reach back up to the post to find
-out was a layering violation that guaranteed the blur would be forgotten in
-at least one of the three renderers. The flag is now pushed down onto each
-media item at capture time.
-
 ---
 
 ## 4. Playback behaviour
@@ -161,7 +152,7 @@ Three constraints on it:
   wall of sound is hostile regardless of what the policy permits.
 * **Off under reduced motion.** Someone who asked the OS to stop things moving
   has asked for exactly this. There is also an explicit *Autoplay in view*
-  switch in Personalise, because bandwidth is a legitimate reason to want it
+  switch in Settings, because bandwidth is a legitimate reason to want it
   off independent of motion sensitivity.
 * **GIFs always loop.** A still frame of a looping GIF is an unreadable
   object; the loop *is* the content.
@@ -173,7 +164,14 @@ memory leak with extra steps. The theater's IntersectionObserver mounts a
 player when a slide becomes centred and **removes the element entirely** when
 it leaves, rather than pausing it.
 
-### 4.5 Failure is handled, then admitted
+### 4.5 Directional prefetch
+
+The lightbox keeps a three-item runway in the direction of travel. Image assets
+are decoded ahead of time; HLS playlists and the first 64 KiB range of MP4
+sources are fetched into cache. Prefetch never mounts a hidden `<video>`, so it
+warms network data without allocating extra decoders.
+
+### 4.6 Failure is handled, then admitted
 
 A source that 404s or is codec-rejected fires `error` on the element and then
 does nothing at all. `createVideo` attaches an error handler that:
@@ -192,8 +190,8 @@ thing they saved, even when this tool cannot render it.
 
 Automated, in `tests/`:
 
-* `run-tests.mjs` — the scraper emits the full ladder, the poster, the
-  sensitivity flag and stable positions, from a real captured GraphQL fixture.
+* `run-tests.mjs` — the scraper emits the full ladder, poster and stable
+  positions from a real captured GraphQL fixture.
 * `media.test.mjs` — MP4 beats HLS; Chromium's false `"maybe"` is disbelieved;
   `hlsOnly` flags exactly the unplayable case; aspect ratios clamp; the
   normaliser preserves every field playback depends on.

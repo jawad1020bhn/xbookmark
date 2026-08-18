@@ -33,7 +33,7 @@
      6  chrome: nav, filter bar
      7  rendering: tiles, rails, grid, theater, inspector
      8  overlays: sheets, dialogs, menus
-     9  import / export
+     9  data vault / import / export
     10  bindings & init
    ============================================================================= */
 (() => {
@@ -45,11 +45,12 @@
      1 · Constants
      =========================================================================== */
 
-  /* How many media items a grid renders before "Show more". Media is far
-     cheaper per item than the old post cards were — a tile is one <img> with
-     a fixed aspect box, no text layout, no metrics row — so the chunk is
-     bigger than the old 60 and still paints faster. */
-  const CHUNK = 120;
+  /* The masonry computes positions for the full result set but only mounts a
+     small viewport window. Keeping this below 200 protects scroll performance
+     even when the library contains tens of thousands of media items. */
+  const MAX_GRID_NODES = 180;
+  const GRID_OVERSCAN = 1.5;
+  const THEATER_LIMIT = 120;
 
   const KEYS = {
     items: "xbm.items",
@@ -130,6 +131,8 @@
     heart: '<path d="M12 21S3 15 3 9.2A4.2 4.2 0 0 1 7.2 5c1.9 0 3.5 1 4.8 2.7C13.3 6 14.9 5 16.8 5A4.2 4.2 0 0 1 21 9.2C21 15 12 21 12 21Z"/>',
     repost: '<path d="M7 7h9l-2-2 1.4-1.4L19.8 8l-4.4 4.4L14 11l2-2H7v3H5V9a2 2 0 0 1 2-2Zm10 10H8l2 2-1.4 1.4L4.2 16l4.4-4.4L10 13l-2 2h9v-3h2v3a2 2 0 0 1-2 2Z"/>',
     reply: '<path d="M12 4a8 8 0 0 0-8 8 7.8 7.8 0 0 0 1 3.8L4 21l5.4-1a8 8 0 1 0 2.6-16Z"/>',
+    person: '<path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0 2c-4 0-7 2-7 4.6V21h14v-2.4C19 16 16 14 12 14Z"/>',
+    tune: '<path d="M10 18h4v-2h-4v2Zm-7-6v2h18v-2H3ZM6 6v2h12V6H6Z"/>',
     eye: '<path d="M12 5C7 5 2.7 8 1 12c1.7 4 6 7 11 7s9.3-3 11-7c-1.7-4-6-7-11-7Zm0 11a4 4 0 1 1 4-4 4 4 0 0 1-4 4Zm0-6a2 2 0 1 0 2 2 2 2 0 0 0-2-2Z"/>',
     play: '<path d="M8 5v14l11-7L8 5Z"/>',
     link: '<path d="M9.9 15.5 8.5 14.1l5.6-5.6 1.4 1.4-5.6 5.6ZM7.8 18.9a4.6 4.6 0 0 1 0-6.5l2.1-2.1 1.4 1.4-2.1 2.1a2.6 2.6 0 0 0 3.7 3.7l2.1-2.1 1.4 1.4-2.1 2.1a4.6 4.6 0 0 1-6.5 0Zm8.4-8.4-1.4-1.4 2.1-2.1a2.6 2.6 0 1 0-3.7-3.7l-2.1 2.1L9.7 4l2.1-2.1a4.6 4.6 0 0 1 6.5 6.5l-2.1 2.1Z"/>',
@@ -139,6 +142,7 @@
     trash: '<path d="M9 3h6l1 2h4v2H4V5h4l1-2ZM6 9h12l-1 11a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 9Z"/>',
     download: '<path d="M11 13.2V3h2v10.2l3.6-3.6L18 11l-6 6-6-6 1.4-1.4L11 13.2ZM5 19h14v2H5v-2Z"/>',
     upload: '<path d="M13 10.8V21h-2V10.8l-3.6 3.6L6 13l6-6 6 6-1.4 1.4L13 10.8ZM5 3h14v2H5V3Z"/>',
+    vault: '<path d="M4 4h16v5H4V4Zm0 7h16v9H4v-9Zm3 3v2h2v-2H7Z"/>',
     plus: '<path d="M11 11V5h2v6h6v2h-6v6h-2v-6H5v-2h6Z"/>',
     close: '<path d="M18.3 7.1 16.9 5.7 12 10.6 7.1 5.7 5.7 7.1l4.9 4.9-4.9 4.9 1.4 1.4 4.9-4.9 4.9 4.9 1.4-1.4-4.9-4.9 4.9-4.9Z"/>',
     moon: '<path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/>',
@@ -148,7 +152,6 @@
     expand: '<path d="M4 4h6v2H6v4H4V4Zm10 0h6v6h-2V6h-4V4ZM4 14h2v4h4v2H4v-6Zm14 0h2v6h-6v-2h4v-4Z"/>',
     fullscreen: '<path d="M5 5h5v2H7v3H5V5Zm9 0h5v5h-2V7h-3V5ZM5 14h2v3h3v2H5v-5Zm12 0h2v5h-5v-2h3v-3Z"/>',
     shuffle: '<path d="M17 4.5 21.5 9 17 13.5V10.4h-2.1c-1 0-1.6.4-2.4 1.6l-.6 1-1.4-2.3.4-.6C12 8.3 13.2 7.6 15 7.6H17V4.5ZM3 8h3.2c1.6 0 2.8.6 3.9 2.2l3 4.6c.7 1 1.2 1.3 2 1.3H17v-3.1L21.5 17 17 21.5v-3.1h-1.9c-1.7 0-2.9-.7-4-2.4l-3-4.6C7.4 10.3 6.9 10 6.2 10H3V8Zm0 8h3.2c.6 0 1-.2 1.5-.8l.4-.6 1.4 2.3-.2.3c-.9 1.2-1.9 1.8-3.1 1.8H3v-3Z"/>',
-    eyeoff: '<path d="M2.1 3.5 3.5 2.1l18.4 18.4-1.4 1.4-3.3-3.3A11.6 11.6 0 0 1 12 19c-5 0-9.3-3-11-7a12.3 12.3 0 0 1 4.3-5.1L2.1 3.5ZM12 5c5 0 9.3 3 11 7a12.4 12.4 0 0 1-3 4l-3-3a5 5 0 0 0-6-6L8.8 5.3A11.8 11.8 0 0 1 12 5Z"/>',
   };
 
   const svg = (name, size) =>
@@ -217,6 +220,7 @@
   let sheet = null;
   let dialog = null;
   let autoplayer = null;
+  let virtualGrid = null;
   const carousels = [];
 
   const readJSON = (key, fallback) => {
@@ -345,7 +349,6 @@
           mp4Variants: variants,
           hls: safeMediaUrl(m.hls) || safeMediaUrl(m.hls_url) || null,
           alt: m.alt || m.alt_text || null,
-          sensitive: Boolean(m.sensitive || m.possibly_sensitive),
           width,
           height,
           aspect,
@@ -490,9 +493,9 @@
     if (state.collection === "photos" && !isPhoto(media)) return false;
     if (state.collection === "recent" && !getMeta(item.tweet_id).openedAt) return false;
 
-    /* The three type chips are a union, not an intersection: ticking Video
-       and GIF means "motion of either kind", which is what everyone expects
-       and what an intersection would render as an empty screen. */
+    /* Type state remains a union so older shared URLs that selected multiple
+       types still reproduce faithfully. The progressive menu writes one
+       choice at a time for a simpler interaction. */
     const anyType = filters.video || filters.photos || filters.gif;
     if (anyType) {
       const ok =
@@ -528,7 +531,7 @@
      Shuffling
 
      A shuffle has to be *stable within a viewing session*. If the order were
-     redrawn on every render, opening an item or loading the next chunk would
+     redrawn on every render, opening an item or changing a filter would
      reshuffle the list under the reader's cursor — the tile they were aiming
      at moves as they click. So the order is a pure function of a seed, and
      the seed only changes when the user asks for a new one.
@@ -756,9 +759,9 @@
       );
     }).join("");
 
-    /* The floating bar carries the four browsing destinations plus Import as
-       a trailing filled action. Archive lives in the rail and in settings —
-       it is a recovery surface, not a place you browse. */
+    /* The floating bar carries the four browsing destinations plus the Vault
+       as its trailing filled action. Heavy data operations stay together
+       rather than leaking into navigation or visual settings. */
     bar.innerHTML =
       COLLECTIONS.slice(0, 4).map((c) => {
         const selected = c.id === state.collection;
@@ -770,13 +773,13 @@
         );
       }).join("") +
       '<button class="m3e-fab m3e-fab--primary m3e-fab--small m3e-state nav-bar__fab" id="navFab"' +
-      ' aria-label="Import bookmarks">' + svg("download", 22) + "</button>";
+      ' aria-label="Open data vault">' + svg("vault", 22) + "</button>";
 
     document.querySelectorAll("[data-collection]").forEach((btn) => {
       btn.addEventListener("click", () => selectCollection(btn.dataset.collection));
     });
     const navFab = $("navFab");
-    if (navFab) navFab.addEventListener("click", () => $("fileImport").click());
+    if (navFab) navFab.addEventListener("click", openVault);
 
     const title = COLLECTIONS.find((c) => c.id === state.collection);
     if ($("paneTitle")) $("paneTitle").textContent = title ? title.label : "Browse";
@@ -818,30 +821,29 @@
   }
 
   function renderFilterBar() {
-    const setChip = (id, on) => {
-      const el = $(id);
-      if (el) el.setAttribute("aria-pressed", String(!!on));
-    };
-    setChip("chipVideo", filters.video);
-    setChip("chipPhotos", filters.photos);
-    setChip("chipGif", filters.gif);
-
-    const authorLabel = $("chipAuthorLabel");
-    if (authorLabel) authorLabel.textContent = filters.author === "all" ? "All authors" : "@" + filters.author;
-    const authorChip = $("chipAuthor");
-    if (authorChip) authorChip.setAttribute("aria-pressed", String(filters.author !== "all"));
+    const chosenTypes = [
+      filters.photos && "Photos",
+      filters.video && "Video",
+      filters.gif && "GIFs",
+    ].filter(Boolean);
+    const typeChip = $("chipMediaType");
+    if (typeChip) typeChip.setAttribute("aria-pressed", String(chosenTypes.length > 0));
+    if ($("mediaTypeLabel")) {
+      $("mediaTypeLabel").textContent = chosenTypes.length === 0
+        ? "Media type"
+        : chosenTypes.length === 1 ? chosenTypes[0] : chosenTypes.length + " types";
+    }
 
     const refine = (filters.minLikes ? 1 : 0) + (filters.minReposts ? 1 : 0) +
       (filters.from ? 1 : 0) + (filters.to ? 1 : 0);
-    const badge = $("refineBadge");
-    if (badge) { badge.hidden = !refine; badge.textContent = String(refine); }
-    const refineChip = $("chipRefine");
-    if (refineChip) refineChip.setAttribute("aria-pressed", String(refine > 0));
+    const moreCount = (filters.author !== "all" ? 1 : 0) + refine;
+    const moreChip = $("chipMoreFilters");
+    if (moreChip) moreChip.setAttribute("aria-pressed", String(moreCount > 0));
+    const badge = $("moreFilterBadge");
+    if (badge) { badge.hidden = !moreCount; badge.textContent = String(moreCount); }
 
     const sortDef = SORTS.find((s) => s.key === state.sort);
     if ($("chipSortLabel")) $("chipSortLabel").textContent = sortDef ? sortDef.label : "Newest";
-    if ($("chipShuffle")) $("chipShuffle").hidden = !isShuffle();
-    if ($("chipReset")) $("chipReset").hidden = activeFilterCount() === 0;
   }
 
   function renderSummary(list) {
@@ -897,6 +899,9 @@
     const still = M3EMedia.sizedImage(m.poster || m.url, options.size || "small");
     const count = item.media.length;
     const selected = state.selectedId === entry.id;
+    const archived = getMeta(item.tweet_id).active === false;
+    const quietStatus = unplayable && archived ? "Preview only · Archived"
+      : unplayable ? "Preview only" : archived ? "Archived" : "";
 
     /* Alt text is the caption when there is one. Where there isn't, the post's
        own text is a far better description than "image" — it is usually what
@@ -911,13 +916,14 @@
        reliably produce nonsense when treated as a noun phrase. */
     const who = item.author_name || "@" + (item.author_username || "unknown");
     const what = motion ? (isGif(m) ? "GIF" : "video") : "photo";
-    const label = (motion ? "Play " : "Open ") + what + " by " + who +
+    const label = (unplayable ? "Inspect " : motion ? "Play " : "Open ") + what + " by " + who +
       (m.alt ? ": " + m.alt.slice(0, 100) : "");
 
     return (
       '<button type="button" class="m3e-tile tile" data-entry="' + esc(entry.id) + '"' +
       ' data-motion="' + motion + '"' +
-      (m.sensitive ? ' data-sensitive="true"' : "") +
+      (unplayable ? ' data-unplayable="true"' : "") +
+      (archived ? ' data-archived="true"' : "") +
       (selected ? ' data-selected="true"' : "") +
       ' style="--_ar:' + ar + '"' +
       ' aria-label="' + esc(label) + '"' +
@@ -935,11 +941,8 @@
             : '<span class="tile__missing">' + svg("image", 28) + "</span>") +
         "</span>" +
 
-        (m.sensitive ? '<span class="tile__veil">' + svg("eyeoff", 20) +
-          '<span class="m3e-label-small">Sensitive · tap to show</span></span>' : "") +
-
         (motion && !unplayable ? '<span class="m3e-tile__play">' + svg("play", 28) + "</span>" : "") +
-        (unplayable ? '<span class="m3e-tile__play tile__play--dead" title="Not playable here">' + svg("external", 24) + "</span>" : "") +
+        (quietStatus ? '<span class="tile__status m3e-label-medium">' + esc(quietStatus) + "</span>" : "") +
 
         (badge ? '<span class="m3e-tile__badge">' + esc(badge) + "</span>" : "") +
         (count > 1 && !badge
@@ -1173,52 +1176,136 @@
   /* ---------------------------------------------------------------------------
      Grid view
 
-     A justified, aspect-respecting grid. Media keeps its own shape — a
-     portrait screenshot stays portrait — because cropping everything to a
-     square is how a media browser turns into a contact sheet, and a contact
-     sheet of screenshots is unreadable.
-
-     Implemented as CSS columns rather than a JS masonry: no measurement pass,
-     no reflow storm on resize, and it degrades to a single column with no
-     media query. The tradeoff is reading order runs down each column rather
-     than across, which is the right tradeoff for a browsing surface where
-     there is no order to lose.
+     A virtualised justified masonry. Layout is computed for the full result
+     set in memory, in left-to-right reading order, but only rows near the
+     viewport are mounted. Unlike CSS columns this preserves sort order and
+     keeps DOM size bounded independently of library size.
      --------------------------------------------------------------------------- */
-  function renderGrid(list, append) {
-    const feed = $("feed");
-    feed.dataset.view = "grid";
-
-    if (!list.length) { feed.innerHTML = emptyStateHtml(); return; }
-
-    const from = append ? state.rendered : 0;
-    const slice = list.slice(from, from + CHUNK);
-    const html = slice.map((e) => tileHtml(e, { size: "small" })).join("");
-
-    if (append) {
-      const host = feed.querySelector(".grid");
-      if (host) host.insertAdjacentHTML("beforeend", html);
-    } else {
-      feed.innerHTML =
-        '<div class="grid" data-size="' + esc(state.settings.tileSize) + '">' + html + "</div>";
-    }
-    state.rendered = from + slice.length;
-
-    renderLoadMore(list);
+  function gridTargetHeight(width) {
+    const target = { small: 170, medium: 230, large: 310 }[state.settings.tileSize] || 230;
+    return Math.max(120, Math.min(target, width < 600 ? width * 0.62 : target));
   }
 
-  function renderLoadMore(list) {
-    const host = $("loadMoreHost");
-    if (!host) return;
-    const remaining = list.length - state.rendered;
-    if (state.view !== "grid" || remaining <= 0) { host.innerHTML = ""; return; }
+  function justifiedRows(entries, width) {
+    const gap = width < 600 ? 8 : 12;
+    const target = gridTargetHeight(width);
+    const rows = [];
+    let cursor = 0;
+    let top = 0;
 
-    host.innerHTML =
-      '<button class="m3e-button m3e-button--tonal m3e-button--m m3e-state" id="loadMore">' +
-      "<span>Show " + Math.min(CHUNK, remaining).toLocaleString() + " more</span></button>";
-    $("loadMore").addEventListener("click", () => {
-      renderGrid(list, true);
+    while (cursor < entries.length) {
+      const cells = [];
+      let ratioSum = 0;
+      while (cursor < entries.length) {
+        const entry = entries[cursor++];
+        const ratio = Number(M3EMedia.aspectRatio(entry.media)) || 1;
+        cells.push({ entry, ratio });
+        ratioSum += ratio;
+        const ideal = (width - gap * (cells.length - 1)) / ratioSum;
+        if (ideal <= target || cells.length >= 6) break;
+      }
+
+      const last = cursor >= entries.length;
+      const exact = (width - gap * (cells.length - 1)) / ratioSum;
+      const height = Math.max(1, Math.min(target * 1.35, last ? Math.min(target, exact) : exact));
+      let left = 0;
+      for (const cell of cells) {
+        cell.left = left;
+        cell.top = top;
+        cell.height = height;
+        cell.width = height * cell.ratio;
+        left += cell.width + gap;
+      }
+      rows.push({ top, bottom: top + height, cells });
+      top += height + gap;
+    }
+
+    return { rows, height: Math.max(0, top - (rows.length ? gap : 0)) };
+  }
+
+  function createVirtualGrid(host, entries) {
+    let layout = null;
+    let frame = 0;
+    let renderedKey = "";
+    let destroyed = false;
+
+    const paint = () => {
+      frame = 0;
+      if (destroyed || !layout) return;
+      const hostTop = host.getBoundingClientRect().top + window.scrollY;
+      const viewportTop = window.scrollY - hostTop;
+      const overscan = window.innerHeight * GRID_OVERSCAN;
+      const from = viewportTop - overscan;
+      const to = viewportTop + window.innerHeight + overscan;
+      /* Rows are monotonic, so binary-search the first visible one rather than
+         scanning the geometry of a 50,000-item library on every scroll frame. */
+      let low = 0, high = layout.rows.length;
+      while (low < high) {
+        const mid = (low + high) >> 1;
+        if (layout.rows[mid].bottom < from) low = mid + 1;
+        else high = mid;
+      }
+      let cells = [];
+      for (let row = low; row < layout.rows.length && layout.rows[row].top <= to; row++) {
+        cells.push(...layout.rows[row].cells);
+      }
+
+      if (cells.length > MAX_GRID_NODES) {
+        const centre = viewportTop + window.innerHeight / 2;
+        cells = cells
+          .sort((a, b) => Math.abs((a.top + a.height / 2) - centre) - Math.abs((b.top + b.height / 2) - centre))
+          .slice(0, MAX_GRID_NODES)
+          .sort((a, b) => a.top - b.top || a.left - b.left);
+      }
+
+      const key = cells.map((cell) => cell.entry.id).join("|");
+      if (key === renderedKey) return;
+      renderedKey = key;
+      host.innerHTML = cells.map((cell) =>
+        '<div class="grid-virtual__cell" role="listitem" style="transform:translate3d(' + cell.left.toFixed(2) + "px," +
+          cell.top.toFixed(2) + 'px,0);inline-size:' + cell.width.toFixed(2) + "px;block-size:" +
+          cell.height.toFixed(2) + 'px">' + tileHtml(cell.entry, { size: "small" }) + "</div>"
+      ).join("");
+      host.dataset.rendered = String(cells.length);
       if (autoplayer && autoplayer.rescan) autoplayer.rescan();
-    });
+    };
+
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(paint); };
+    const relayout = () => {
+      if (destroyed) return;
+      const width = Math.max(1, host.clientWidth);
+      layout = justifiedRows(entries, width);
+      host.style.blockSize = layout.height + "px";
+      renderedKey = "";
+      schedule();
+    };
+
+    window.addEventListener("scroll", schedule, { passive: true });
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(relayout) : null;
+    if (observer) observer.observe(host);
+    else window.addEventListener("resize", relayout);
+    relayout();
+
+    return {
+      destroy() {
+        destroyed = true;
+        if (frame) cancelAnimationFrame(frame);
+        window.removeEventListener("scroll", schedule);
+        window.removeEventListener("resize", relayout);
+        if (observer) observer.disconnect();
+      },
+    };
+  }
+
+  function renderGrid(list) {
+    const feed = $("feed");
+    feed.dataset.view = "grid";
+    if (!list.length) { feed.innerHTML = emptyStateHtml(); return; }
+
+    feed.innerHTML = '<div class="grid-virtual" data-size="' + esc(state.settings.tileSize) +
+      '" role="list" aria-label="Media grid"></div>';
+    state.rendered = list.length;
+    virtualGrid = createVirtualGrid(feed.querySelector(".grid-virtual"), list);
   }
 
   /* ---------------------------------------------------------------------------
@@ -1226,8 +1313,8 @@
 
      One item per screen, paged horizontally. This is the X-style gesture
      applied to a whole library rather than to the four photos inside one
-     post: swipe (or arrow, or scroll) and the next thing you saved is
-     already there, full size, playing.
+     post: swipe or scroll and the next thing you saved is already there,
+     full size, playing.
 
      Built on scroll-snap with `scroll-snap-stop: always`, so a fast flick
      advances exactly one item rather than skidding through six. Videos mount
@@ -1239,7 +1326,7 @@
     feed.dataset.view = "theater";
     if (!list.length) { feed.innerHTML = emptyStateHtml(); return; }
 
-    const slice = list.slice(0, CHUNK);
+    const slice = list.slice(0, THEATER_LIMIT);
     state.rendered = slice.length;
 
     feed.innerHTML =
@@ -1247,7 +1334,7 @@
         slice.map((e) => theaterSlideHtml(e)).join("") +
       "</div>" +
       '<div class="theater__hint m3e-label-medium" aria-hidden="true">' +
-        svg("prev", 16) + "<span>Swipe or use arrow keys</span>" + svg("next", 16) +
+        svg("prev", 16) + "<span>Swipe or scroll</span>" + svg("next", 16) +
       "</div>";
 
     const rail = $("theater");
@@ -1269,7 +1356,7 @@
 
     return (
       '<article class="slide" data-entry="' + esc(entry.id) + '" style="--_ar:' + ar + '">' +
-        '<div class="slide__stage"' + (m.sensitive ? ' data-sensitive="true"' : "") + '>' +
+        '<div class="slide__stage">' +
           (still
             ? '<img class="slide__media" src="' + esc(still) + '" alt="' + esc(m.alt || item.text.slice(0, 140) || "Saved media") +
               '" loading="lazy" decoding="async" referrerpolicy="no-referrer" data-media />'
@@ -1283,11 +1370,6 @@
               (item.url ? '<a class="m3e-button m3e-button--filled m3e-state" href="' + esc(item.url) +
                 '" target="_blank" rel="noopener noreferrer">' + svg("external", 18) + "<span>Watch on X</span></a>" : "") +
               "</div>"
-            : "") +
-          (m.sensitive
-            ? '<button type="button" class="slide__veil" data-reveal>' + svg("eyeoff", 28) +
-              '<span class="m3e-title-medium">Sensitive media</span>' +
-              '<span class="m3e-body-medium">Tap to show</span></button>'
             : "") +
         "</div>" +
 
@@ -1447,9 +1529,15 @@
   function render() {
     syncUrl();
 
+    /* Theater is a viewport mode, not a document-length view. Expose the
+       current renderer at the root so CSS can make the shell consume exactly
+       the dynamic viewport without relying on guessed header heights. */
+    document.documentElement.dataset.view = state.view;
+
     // Tear down anything the previous render owned, or its observers keep
     // firing against detached nodes for the life of the page.
     while (carousels.length) { const c = carousels.pop(); if (c && c.destroy) c.destroy(); }
+    if (virtualGrid) { virtualGrid.destroy(); virtualGrid = null; }
     if (autoplayer && autoplayer.disconnect) { autoplayer.disconnect(); autoplayer = null; }
     M3EMedia.stopAll();
 
@@ -1464,8 +1552,6 @@
     else if (state.view === "theater") renderTheater(list);
     else renderGrid(list, false);
 
-    renderLoadMore(list);
-
     // GIFs autoplay in place wherever they are visible: a still frame of a
     // looping GIF is an unreadable object, and the loop IS the content.
     if (state.view !== "theater" && state.settings.autoplay) {
@@ -1478,7 +1564,7 @@
     if (!feed) return;
     feed.dataset.view = "grid";
     feed.innerHTML =
-      '<div class="grid">' +
+      '<div class="grid-skeleton">' +
       Array.from({ length: n || 8 }, () =>
         '<div class="m3e-skeleton tile-skeleton" style="--_ar:' + (0.8 + Math.random() * 0.9).toFixed(2) + '"></div>'
       ).join("") +
@@ -1492,6 +1578,8 @@
     const item = entry.item;
     const meta = getMeta(item.tweet_id);
     const archived = meta.active === false;
+    const unplayable = M3EMedia.hlsOnly(entry.media);
+    const waybackUrl = item.url ? "https://web.archive.org/web/*/" + item.url : null;
 
     const others = item.media.filter((m) => m.position !== entry.media.position);
 
@@ -1540,6 +1628,19 @@
 
         (metrics ? '<div class="detail__metrics m3e-label-medium">' + metrics + "</div>" : "") +
 
+        (archived
+          ? '<div class="detail__availability">' +
+              '<span class="detail__availability-icon">' + svg("archive", 20) + "</span>" +
+              '<div><p class="m3e-title-small">Removed from library</p>' +
+              '<p class="m3e-body-small">This post is kept in Archive and hidden from active collections.</p></div></div>'
+          : "") +
+        (unplayable
+          ? '<div class="detail__availability">' +
+              '<span class="detail__availability-icon">' + svg("play", 20) + "</span>" +
+              '<div><p class="m3e-title-small">Preview only</p>' +
+              '<p class="m3e-body-small">The poster is saved, but this browser cannot play the available stream.</p></div></div>'
+          : "") +
+
         (others.length
           ? '<div class="detail__more">' +
               '<p class="m3e-label-medium detail__more-label">' + plural(others.length, "more item") + " in this post</p>" +
@@ -1561,10 +1662,15 @@
             ? '<a class="m3e-button m3e-button--outlined m3e-button--s m3e-state" href="' + esc(item.url) +
               '" target="_blank" rel="noopener noreferrer">' + svg("external", 18) + "<span>Open on X</span></a>"
             : "") +
+          (unplayable && waybackUrl
+            ? '<a class="m3e-button m3e-button--outlined m3e-button--s m3e-state" href="' + esc(waybackUrl) +
+              '" target="_blank" rel="noopener noreferrer">' + svg("clock", 18) + "<span>Find on Wayback</span></a>"
+            : "") +
           '<button class="m3e-button m3e-button--text m3e-button--s m3e-state" data-detail="copy">' +
             svg("copy", 18) + "<span>Copy link</span></button>" +
           '<button class="m3e-button m3e-button--text m3e-button--s m3e-state" data-detail="archive">' +
-            svg("archive", 18) + "<span>" + (archived ? "Restore" : "Archive") + "</span></button>" +
+            svg(archived ? "archive" : "trash", 18) + "<span>" +
+            (archived ? "Restore to library" : "Remove from library") + "</span></button>" +
         "</div>" +
       "</article>"
     );
@@ -1576,7 +1682,7 @@
       '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + hostOf(url) + "</a>");
   }
 
-  const isLargeWindow = () => window.innerWidth >= 1200;
+  const isLargeWindow = () => window.innerWidth >= 1024;
 
   function openDetail(entryId) {
     const entry = entryById(state.lastList, entryId);
@@ -1660,7 +1766,7 @@
     saveMeta();
     clearDetail();
     render();
-    snack.show(wasActive ? "Archived." : "Restored.", {
+    snack.show(wasActive ? "Removed from library." : "Restored to library.", {
       action: "Undo",
       onAction: () => {
         meta.active = wasActive;
@@ -1676,8 +1782,8 @@
 
      The lightbox is handed the WHOLE current index, not just the four photos
      inside one post. That is the single change that makes this a library
-     browser: open anything, then keep going with the arrow keys or a swipe
-     and you traverse everything you saved, in the order you are currently
+     browser: open anything, then use the visible controls, filmstrip or swipe
+     to traverse everything you saved in the order you are currently
      sorted by — across posts, across authors, across years.
      --------------------------------------------------------------------------- */
   function viewerContext(item) {
@@ -1771,6 +1877,89 @@
       });
   }
 
+  let mediaTypeMenu = null;
+  function openMediaTypeMenu(trigger) {
+    if (mediaTypeMenu) { mediaTypeMenu.close(); return; }
+
+    const selected = filters.photos && !filters.video && !filters.gif ? "photos"
+      : filters.video && !filters.photos && !filters.gif ? "video"
+      : filters.gif && !filters.photos && !filters.video ? "gif"
+      : !filters.photos && !filters.video && !filters.gif ? "all" : "multiple";
+    const types = [
+      { key: "all", label: "All media", describe: "Photos, videos and GIFs" },
+      { key: "photos", label: "Photos", describe: "Still images only" },
+      { key: "video", label: "Videos", describe: "Playable video only" },
+      { key: "gif", label: "GIFs", describe: "Looping animation only" },
+    ];
+
+    const menu = document.createElement("div");
+    menu.className = "m3e-menu m3e-menu--filter";
+    menu.setAttribute("role", "menu");
+    menu.setAttribute("aria-label", "Media type");
+    menu.innerHTML = types.map((type) =>
+      '<button class="m3e-menu__item m3e-state" role="menuitemradio" data-media-type="' + type.key + '"' +
+      ' aria-checked="' + (type.key === selected) + '" aria-selected="' + (type.key === selected) + '" tabindex="-1">' +
+        '<span class="m3e-menu__item-text"><span class="m3e-body-large">' + type.label + "</span>" +
+        '<span class="m3e-body-small">' + type.describe + "</span></span>" +
+        (type.key === selected ? svg("check", 20) : "") +
+      "</button>"
+    ).join("");
+
+    mediaTypeMenu = M3E.openMenu(trigger, menu, {
+      align: "start",
+      onClose: () => { mediaTypeMenu = null; },
+    });
+    menu.querySelectorAll("[data-media-type]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        filters.photos = btn.dataset.mediaType === "photos";
+        filters.video = btn.dataset.mediaType === "video";
+        filters.gif = btn.dataset.mediaType === "gif";
+        mediaTypeMenu.close();
+        render();
+      });
+    });
+  }
+
+  let moreFiltersMenu = null;
+  function openMoreFiltersMenu(trigger) {
+    if (moreFiltersMenu) { moreFiltersMenu.close(); return; }
+
+    const refine = (filters.minLikes ? 1 : 0) + (filters.minReposts ? 1 : 0) +
+      (filters.from ? 1 : 0) + (filters.to ? 1 : 0);
+    const menu = document.createElement("div");
+    menu.className = "m3e-menu m3e-menu--filter";
+    menu.setAttribute("role", "menu");
+    menu.setAttribute("aria-label", "More filters");
+    menu.innerHTML =
+      '<button class="m3e-menu__item m3e-state" role="menuitem" data-more-filter="author" aria-selected="' +
+        (filters.author !== "all") + '" tabindex="-1">' + svg("person", 20) +
+        '<span class="m3e-menu__item-text"><span class="m3e-body-large">Author</span>' +
+        '<span class="m3e-body-small">' + (filters.author === "all" ? "Anyone" : "@" + esc(filters.author)) + "</span></span></button>" +
+      '<button class="m3e-menu__item m3e-state" role="menuitem" data-more-filter="refine" aria-selected="' +
+        (refine > 0) + '" tabindex="-1">' + svg("tune", 20) +
+        '<span class="m3e-menu__item-text"><span class="m3e-body-large">Date & engagement</span>' +
+        '<span class="m3e-body-small">' + (refine ? plural(refine, "rule") + " active" : "Likes, reposts and date range") + "</span></span></button>" +
+      (activeFilterCount()
+        ? '<hr class="m3e-menu__divider"><button class="m3e-menu__item m3e-state" role="menuitem" data-more-filter="clear" tabindex="-1">' +
+          svg("close", 20) + '<span class="m3e-menu__item-text"><span class="m3e-body-large">Clear all filters</span>' +
+          '<span class="m3e-body-small">Return to the full collection</span></span></button>'
+        : "");
+
+    moreFiltersMenu = M3E.openMenu(trigger, menu, {
+      align: "end",
+      onClose: () => { moreFiltersMenu = null; },
+    });
+    menu.querySelectorAll("[data-more-filter]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const action = btn.dataset.moreFilter;
+        moreFiltersMenu.close();
+        if (action === "author") openAuthorPicker();
+        else if (action === "refine") openRefine();
+        else if (action === "clear") resetFilters();
+      });
+    });
+  }
+
   let sortMenu = null;
   function openSortMenu(trigger) {
     if (sortMenu) { sortMenu.close(); return; }
@@ -1815,6 +2004,74 @@
     });
   }
 
+  function metricHistogram(metric, current) {
+    const values = state.items
+      .filter((item) => {
+        if (!matchesCollection(item)) return false;
+        if (filters.search) {
+          const needle = searchable(filters.search);
+          if (needle && !item._search.includes(needle)) return false;
+        }
+        if (filters.author !== "all" && item.author_username !== filters.author) return false;
+        if (filters.from && item._ts && item._ts < new Date(filters.from).getTime()) return false;
+        if (filters.to && item._ts && item._ts > new Date(filters.to + "T23:59:59").getTime()) return false;
+        return item.media.some((media) => matchesMedia(media, item));
+      })
+      .map((item) => Math.max(0, Number(item[metric]) || 0));
+    const max = values.reduce((highest, value) => Math.max(highest, value), 0);
+    const bins = Array(28).fill(0);
+    const logMax = Math.log1p(max || 1);
+    for (const value of values) {
+      const at = max ? Math.min(bins.length - 1, Math.floor((Math.log1p(value) / logMax) * bins.length)) : 0;
+      bins[at]++;
+    }
+    const peak = Math.max(1, ...bins);
+    const position = max && current ? (Math.log1p(Math.min(current, max)) / logMax) * 100 : 0;
+    const label = metric === "likes" ? "Minimum likes" : "Minimum reposts";
+    const bars = bins.map((count, index) => {
+      const end = max ? Math.round(Math.expm1(logMax * ((index + 1) / bins.length))) : 0;
+      return '<span class="histogram__bar" data-bin-end="' + end + '" style="--_height:' +
+        (count ? Math.max(4, (count / peak) * 100) : 0).toFixed(1) + '%"></span>';
+    }).join("");
+
+    return (
+      '<div class="histogram" data-histogram="' + metric + '" data-max="' + max + '">' +
+        '<div class="histogram__head"><label class="m3e-label-large" for="hist-' + metric + '">' + label + "</label>" +
+        '<output class="histogram__value m3e-label-large m3e-tabular" for="hist-' + metric + '"></output></div>' +
+        '<div class="histogram__bars" aria-hidden="true">' + bars + "</div>" +
+        '<input class="histogram__range" id="hist-' + metric + '" type="range" min="0" max="100" step="0.25" value="' +
+          position.toFixed(2) + '" aria-label="' + label + '"' + (max ? "" : " disabled") + " />" +
+        '<div class="histogram__axis m3e-label-small"><span>Any</span><span>' + fmtCount(max) + "</span></div>" +
+      "</div>"
+    );
+  }
+
+  function histogramThreshold(control) {
+    const input = control.querySelector(".histogram__range");
+    const max = Number(control.dataset.max) || 0;
+    const position = Number(input.value) || 0;
+    return max && position > 0
+      ? Math.max(1, Math.round(Math.expm1(Math.log1p(max) * (position / 100))))
+      : 0;
+  }
+
+  function bindHistogram(control) {
+    const input = control.querySelector(".histogram__range");
+    const output = control.querySelector(".histogram__value");
+    const update = () => {
+      const value = histogramThreshold(control);
+      const position = Number(input.value) || 0;
+      control.style.setProperty("--_threshold", position + "%");
+      output.textContent = value ? "≥ " + fmtCount(value) : "Any";
+      input.setAttribute("aria-valuetext", value ? "At least " + value.toLocaleString() : "Any amount");
+      control.querySelectorAll(".histogram__bar").forEach((bar) => {
+        bar.dataset.below = String(value > 0 && Number(bar.dataset.binEnd) < value);
+      });
+    };
+    input.addEventListener("input", update);
+    update();
+  }
+
   function openRefine() {
     const field = (id, label, value, type, extra) =>
       '<label class="m3e-field"><span class="m3e-label-medium">' + esc(label) + "</span>" +
@@ -1823,10 +2080,10 @@
 
     openSheet("Refine",
       '<div class="refine">' +
-        '<p class="m3e-body-medium refine__help">Narrow by how the post performed, or when it was posted.</p>' +
-        '<div class="refine__row">' +
-          field("refLikes", "Minimum likes", filters.minLikes || "", "number", 'min="0" inputmode="numeric"') +
-          field("refReposts", "Minimum reposts", filters.minReposts || "", "number", 'min="0" inputmode="numeric"') +
+        '<p class="m3e-body-medium refine__help">Drag across the distributions to set engagement thresholds, then optionally narrow by date.</p>' +
+        '<div class="refine__histograms">' +
+          metricHistogram("likes", filters.minLikes) +
+          metricHistogram("reposts", filters.minReposts) +
         "</div>" +
         '<div class="refine__row">' +
           field("refFrom", "Posted after", filters.from, "date") +
@@ -1838,9 +2095,10 @@
         "</div>" +
       "</div>",
       (host) => {
+        host.querySelectorAll("[data-histogram]").forEach(bindHistogram);
         host.querySelector('[data-refine="apply"]').addEventListener("click", () => {
-          filters.minLikes = parseInt(host.querySelector("#refLikes").value, 10) || 0;
-          filters.minReposts = parseInt(host.querySelector("#refReposts").value, 10) || 0;
+          filters.minLikes = histogramThreshold(host.querySelector('[data-histogram="likes"]'));
+          filters.minReposts = histogramThreshold(host.querySelector('[data-histogram="reposts"]'));
           filters.from = host.querySelector("#refFrom").value || "";
           filters.to = host.querySelector("#refTo").value || "";
           sheet.close();
@@ -1878,7 +2136,7 @@
       "</div>";
 
     openDialog(
-      "Personalise",
+      "Settings",
       '<div class="settings">' +
         '<div class="settings__group">' +
           '<span class="m3e-label-medium settings__label">Theme colour</span>' +
@@ -1933,6 +2191,16 @@
         "</div>" +
 
         '<div class="settings__group">' +
+          '<span class="m3e-label-medium settings__label">Interface density</span>' +
+          '<p class="m3e-body-medium settings__help">Adjust spacing around controls without changing media size.</p>' +
+          seg("segDensity", [
+            { value: "compact", label: "Compact" },
+            { value: "comfortable", label: "Comfortable" },
+            { value: "spacious", label: "Spacious" },
+          ], s.density) +
+        "</div>" +
+
+        '<div class="settings__group">' +
           '<span class="m3e-label-medium settings__label">Playback</span>' +
           '<div class="m3e-switch-row"><span class="m3e-switch-row__text">' +
             '<span class="m3e-switch-row__title">Autoplay in view</span>' +
@@ -1952,17 +2220,6 @@
             '<span class="m3e-switch__handle">' + svg("check", 14) + "</span></button></div>" +
         "</div>" +
 
-        '<div class="settings__group">' +
-          '<span class="m3e-label-medium settings__label">Your data</span>' +
-          '<p class="m3e-body-medium settings__help">Everything lives in this browser only. Back it up before clearing site data.</p>' +
-          '<div class="settings__row">' +
-            '<button class="m3e-button m3e-button--tonal m3e-state" data-data="import">' + svg("download") + "<span>Import</span></button>" +
-            '<button class="m3e-button m3e-button--tonal m3e-state" data-data="backup">' + svg("upload") + "<span>Back up</span></button>" +
-            '<button class="m3e-button m3e-button--outlined m3e-state" data-data="restore">' + svg("upload") + "<span>Restore</span></button>" +
-            '<button class="m3e-button m3e-button--text m3e-state" data-data="clear" style="color:var(--md-sys-color-error)">' +
-              svg("trash") + "<span>Clear library</span></button>" +
-          "</div>" +
-        "</div>" +
       "</div>",
       [{ label: "Done", variant: "filled" }],
       (host) => {
@@ -2034,6 +2291,7 @@
         bindSeg("segScheme", "scheme", repaintSeeds);
         bindSeg("segContrast", "contrast", repaintSeeds);
         bindSeg("segTile", "tileSize", () => render());
+        bindSeg("segDensity", "density");
 
         M3E.bindSwitch(host.querySelector("#setAutoplay"), (on) => {
           applySettings({ autoplay: on });
@@ -2041,12 +2299,61 @@
         });
         M3E.bindSwitch(host.querySelector("#setMotion"), (on) => applySettings({ reducedMotion: on }));
 
-        host.querySelectorAll("[data-data]").forEach((btn) => {
+      }
+    );
+  }
+
+  function openVault() {
+    const mediaCount = state.items.reduce((total, item) => total + item.media.length, 0);
+    const visiblePosts = new Set(state.lastList.map((entry) => entry.item.tweet_id)).size;
+
+    openDialog(
+      "Data vault",
+      '<div class="vault">' +
+        '<div class="vault__summary">' + svg("vault", 28) +
+          '<div><p class="m3e-title-medium">Stored only in this browser</p>' +
+          '<p class="m3e-body-small">' + plural(state.items.length, "post") + " · " +
+            plural(mediaCount, "media item") + "</p></div>" +
+        "</div>" +
+
+        '<section class="vault__group" aria-labelledby="vaultBringIn">' +
+          '<h3 class="m3e-label-medium settings__label" id="vaultBringIn">Bring data in</h3>' +
+          '<div class="vault__actions">' +
+            '<button class="vault__action m3e-state" data-vault="import">' + svg("download", 22) +
+              '<span><strong>Import JSON</strong><small>Add new posts and update existing ones</small></span></button>' +
+            '<button class="vault__action m3e-state" data-vault="restore">' + svg("upload", 22) +
+              '<span><strong>Restore backup</strong><small>Replace this library from a dashboard backup</small></span></button>' +
+          "</div>" +
+        "</section>" +
+
+        '<section class="vault__group" aria-labelledby="vaultTakeOut">' +
+          '<h3 class="m3e-label-medium settings__label" id="vaultTakeOut">Take data out</h3>' +
+          '<div class="vault__actions">' +
+            '<button class="vault__action m3e-state" data-vault="export"' + (!visiblePosts ? " disabled" : "") + ">" +
+              svg("download", 22) + '<span><strong>Export current view</strong><small>' +
+              plural(visiblePosts, "post") + " after current filters</small></span></button>" +
+            '<button class="vault__action m3e-state" data-vault="backup"' + (!state.items.length ? " disabled" : "") + ">" +
+              svg("upload", 22) + '<span><strong>Back up everything</strong><small>Includes Archive and local viewing state</small></span></button>' +
+          "</div>" +
+        "</section>" +
+
+        '<section class="vault__group vault__danger" aria-labelledby="vaultDanger">' +
+          '<h3 class="m3e-label-medium settings__label" id="vaultDanger">Danger zone</h3>' +
+          '<p class="m3e-body-small">Clearing is permanent and always requires a separate confirmation.</p>' +
+          '<button class="m3e-button m3e-button--text m3e-state" data-vault="clear"' +
+            (!state.items.length ? " disabled" : "") + ' style="color:var(--md-sys-color-error)">' +
+            svg("trash", 18) + "<span>Clear library</span></button>" +
+        "</section>" +
+      "</div>",
+      [{ label: "Done", variant: "filled" }],
+      (host) => {
+        host.querySelectorAll("[data-vault]").forEach((btn) => {
           btn.addEventListener("click", () => {
-            const action = btn.dataset.data;
+            const action = btn.dataset.vault;
             if (action === "import") { dialog.close(); $("fileImport").click(); }
+            else if (action === "restore") { dialog.close(); $("fileRestore").click(); }
+            else if (action === "export") exportVisible();
             else if (action === "backup") backup();
-            else if (action === "restore") $("fileRestore").click();
             else if (action === "clear") { dialog.close(); confirmClear(); }
           });
         });
@@ -2365,13 +2672,6 @@
       }
 
       // Theater controls
-      const reveal = event.target.closest("[data-reveal]");
-      if (reveal) {
-        const stage = reveal.closest(".slide__stage");
-        if (stage) stage.dataset.sensitive = "false";
-        reveal.remove();
-        return;
-      }
       const slidePlay = event.target.closest("[data-play-slide]");
       if (slidePlay) {
         const slide = slidePlay.closest(".slide");
@@ -2396,39 +2696,22 @@
       const tile = event.target.closest(".tile[data-entry]");
       if (!tile) return;
 
-      // Sensitive media reveals on first tap; the second opens it. Going
-      // straight to full screen from a blurred thumbnail is exactly the
-      // ambush the blur exists to prevent.
-      if (tile.dataset.sensitive === "true" && tile.dataset.revealed !== "true") {
-        tile.dataset.revealed = "true";
-        const veil = tile.querySelector(".tile__veil");
-        if (veil) veil.remove();
-        return;
-      }
-
       const entry = entryById(state.lastList, tile.dataset.entry);
-      if (entry) openViewer(entry);
+      if (entry) {
+        // A poster-only stream has no useful full-screen playback. Go straight
+        // to the inspector where its explanation and recovery actions live.
+        if (M3EMedia.hlsOnly(entry.media)) openDetail(tile.dataset.entry);
+        else openViewer(entry);
+      }
     });
 
-    /* Right-click / long-press equivalent: opening the post rather than the
-       media. A secondary action needs a discoverable route, so it is also on
-       the inspector button and on `i`. */
+    /* Right-click / long-press opens the post behind the media without
+       introducing a global shortcut system. */
     feed.addEventListener("contextmenu", (event) => {
       const tile = event.target.closest(".tile[data-entry]");
       if (!tile) return;
       event.preventDefault();
       openDetail(tile.dataset.entry);
-    });
-
-    feed.addEventListener("keydown", (event) => {
-      const tile = event.target.closest(".tile[data-entry]");
-      if (!tile) return;
-      // `i` inspects without opening: the keyboard route to the post behind
-      // the picture.
-      if (event.key === "i" || event.key === "I") {
-        event.preventDefault();
-        openDetail(tile.dataset.entry);
-      }
     });
 
     // Broken remote images degrade to a neutral placeholder, never a broken
@@ -2447,63 +2730,6 @@
         img.replaceWith(span);
       }
     }, true);
-  }
-
-  function bindGlobalKeys() {
-    document.addEventListener("keydown", (event) => {
-      const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement && document.activeElement.tagName);
-      const viewing = !!(window.XLightbox && XLightbox.isOpen);
-
-      if (event.key === "/" && !typing && !viewing) {
-        event.preventDefault();
-        const search = $("search");
-        if (search) { search.focus(); search.select(); }
-        return;
-      }
-      if (event.key === "Escape") {
-        // Innermost surface wins. The lightbox sits above the sheet, so it
-        // must swallow Escape before the inspector sees it.
-        if (window.XLightbox && XLightbox.isOpen) return;
-        if (dialog.isOpen) return;      // the overlay handles its own Escape
-        if (sheet.isOpen) return;
-        if (state.selectedId && isLargeWindow()) clearDetail();
-        else if (typing && document.activeElement === $("search")) {
-          $("search").value = "";
-          filters.search = "";
-          render();
-        }
-        return;
-      }
-      if (typing || viewing) return;
-
-      // "s" re-deals a shuffle, or starts one. The single most repeated
-      // action in this feature deserves a single key.
-      if (event.key === "s" || event.key === "S") {
-        event.preventDefault();
-        const already = isShuffle();
-        if (!already) state.sort = "random";
-        reshuffle();
-        render();
-        snack.show(already ? "Shuffled." : "Shuffling your library.");
-        return;
-      }
-
-      // "v" cycles the view. Switching between grazing, searching and
-      // watching is the most frequent thing anyone does here.
-      if (event.key === "v" || event.key === "V") {
-        event.preventDefault();
-        setView(VIEWS[(VIEWS.indexOf(state.view) + 1) % VIEWS.length]);
-        snack.show(state.view[0].toUpperCase() + state.view.slice(1) + " view");
-        return;
-      }
-
-      // Number keys jump between collections — power-user affordance.
-      const index = parseInt(event.key, 10);
-      if (index >= 1 && index <= COLLECTIONS.length) {
-        event.preventDefault();
-        selectCollection(COLLECTIONS[index - 1].id);
-      }
-    });
   }
 
   function init() {
@@ -2533,7 +2759,7 @@
        a window mid-read silently lost your place. The content is identical
        in both containers; only the container changes, which is the entire
        promise of an adaptive layout. */
-    M3E.bindWindowClass(() => {
+    const rehostInspector = () => {
       if (!state.selectedId) return;
       const body = $("detailBody");
       const paneShowing = body && !body.hidden;
@@ -2545,7 +2771,14 @@
         clearDetailPaneOnly();
         openDetail(state.selectedId);   // reopens as a sheet
       }
-    });
+    };
+    M3E.bindWindowClass(rehostInspector);
+    /* 1024 sits inside M3's expanded class, so it needs its own re-host signal.
+       The virtual grid's ResizeObserver then recomputes rows after the drawer
+       takes its column, preserving spatial context instead of covering media. */
+    const inspectorBreakpoint = matchMedia("(min-width: 1024px)");
+    if (inspectorBreakpoint.addEventListener) inspectorBreakpoint.addEventListener("change", rehostInspector);
+    else if (inspectorBreakpoint.addListener) inspectorBreakpoint.addListener(rehostInspector);
     M3E.bindScrollChrome({ appBar: $("appBar"), toolbar: $("navBar") });
 
     readUrl();
@@ -2592,35 +2825,19 @@
       });
     }
 
-    const toggleChip = (id, key) => {
-      const el = $(id);
-      if (el) el.addEventListener("click", () => { filters[key] = !filters[key]; render(); });
-    };
-    toggleChip("chipVideo", "video");
-    toggleChip("chipPhotos", "photos");
-    toggleChip("chipGif", "gif");
-
-    if ($("chipAuthor")) $("chipAuthor").addEventListener("click", openAuthorPicker);
-    if ($("chipRefine")) $("chipRefine").addEventListener("click", openRefine);
-    if ($("chipSort")) $("chipSort").addEventListener("click", (e) => openSortMenu(e.currentTarget));
-    if ($("chipShuffle")) {
-      $("chipShuffle").addEventListener("click", () => {
-        reshuffle();
-        render();
-        // The feed has just been re-dealt beneath the reader; say so, and put
-        // the top of it back in view so the change is legible rather than
-        // just disorienting.
-        scrollFeedTop();
-        snack.show("Shuffled.");
-      });
+    if ($("chipMediaType")) {
+      $("chipMediaType").addEventListener("click", (e) => openMediaTypeMenu(e.currentTarget));
     }
-    if ($("chipReset")) $("chipReset").addEventListener("click", resetFilters);
+    if ($("chipSort")) $("chipSort").addEventListener("click", (e) => openSortMenu(e.currentTarget));
+    if ($("chipMoreFilters")) {
+      $("chipMoreFilters").addEventListener("click", (e) => openMoreFiltersMenu(e.currentTarget));
+    }
 
     document.querySelectorAll("#viewSeg [data-view]").forEach((btn) => {
       btn.addEventListener("click", () => setView(btn.dataset.view));
     });
 
-    if ($("railFab")) $("railFab").addEventListener("click", () => $("fileImport").click());
+    if ($("railFab")) $("railFab").addEventListener("click", openVault);
     [$("railSettings"), $("appBarSettings")].forEach((btn) => {
       if (btn) btn.addEventListener("click", openSettings);
     });
@@ -2645,7 +2862,7 @@
       // means the first press of a system-light user changes nothing on screen
       // (system already resolved to light), which reads as a broken button.
       // Instead: flip to the opposite of what is currently *rendered*.
-      // "Follow system" remains available in Personalise, where a three-way
+      // "Follow system" remains available in Settings, where a three-way
       // choice can be labelled properly.
       $("railTheme").addEventListener("click", () => {
         const next = M3ETheme.resolveDark(state.settings) ? "light" : "dark";
@@ -2673,7 +2890,6 @@
     if ($("fileRestore")) $("fileRestore").addEventListener("change", (e) => handleFile(e.target, { restore: true }));
 
     bindFeed();
-    bindGlobalKeys();
     bindCaptureBanner();
   }
 

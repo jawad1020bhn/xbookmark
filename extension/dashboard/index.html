@@ -31,7 +31,7 @@
      Three window classes, one DOM:
        compact   (<600)   full-bleed feed + floating bottom bar
        medium    (600+)   navigation rail + feed
-       expanded  (1200+)  navigation rail + feed + persistent inspector
+       wide      (1024+)  navigation rail + feed + persistent inspector
      ========================================================================== -->
 <div class="shell">
 
@@ -49,9 +49,9 @@
     </div>
 
     <button class="m3e-fab m3e-fab--primary m3e-state rail__fab" id="railFab"
-      aria-label="Add bookmarks" data-tooltip="Import">
+      aria-label="Open data vault" data-tooltip="Vault">
       <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
-        <path d="M11 13.2V3h2v10.2l3.6-3.6L18 11l-6 6-6-6 1.4-1.4L11 13.2ZM5 19h14v2H5v-2Z"/>
+        <path d="M4 4h16v5H4V4Zm0 7h16v9H4v-9Zm3 3v2h2v-2H7Z"/>
       </svg>
     </button>
 
@@ -97,14 +97,13 @@
           aria-label="Search your media" aria-describedby="searchHint"
           autocomplete="off" spellcheck="false" />
         <span id="searchHint" class="m3e-visually-hidden">
-          Results update as you type. Press slash to return here.
+          Results update as you type.
         </span>
         <button class="m3e-icon-button m3e-icon-button--s m3e-state" id="searchClear" aria-label="Clear search" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
             <path d="M18.3 7.1 16.9 5.7 12 10.6 7.1 5.7 5.7 7.1l4.9 4.9-4.9 4.9 1.4 1.4 4.9-4.9 4.9 4.9 1.4-1.4-4.9-4.9 4.9-4.9Z"/>
           </svg>
         </button>
-        <kbd class="m3e-search__kbd" aria-hidden="true">/</kbd>
       </div>
 
       <div class="app-bar__actions">
@@ -153,63 +152,33 @@
         <div class="capture__actions" id="captureActions"></div>
       </section>
 
-      <!-- Filter bar: a horizontally scrolling chip set. Selected chips change
-           SHAPE as well as colour, so state survives greyscale. -->
+      <!-- Progressive filter bar: only the three decisions used constantly
+           remain visible. Type is one menu; author, dates and thresholds live
+           under More filters; Shuffle is an option in Sort. -->
       <div class="filterbar" id="filterBar">
-        <div class="filterbar__scroll" role="group" aria-label="Filters">
-          <button class="m3e-chip m3e-state filterbar__chip" id="chipVideo" aria-pressed="false">
+        <div class="filterbar__scroll" role="group" aria-label="Filter and sort media">
+          <button class="m3e-chip m3e-state filterbar__chip" id="chipMediaType"
+            aria-haspopup="menu" aria-expanded="false" aria-pressed="false">
             <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
-              <path d="M4 5h11a1 1 0 0 1 1 1v3.4l4.3-2.5a.8.8 0 0 1 1.2.7v8.8a.8.8 0 0 1-1.2.7L16 14.6V18a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z"/>
+              <path d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm1 13h14v-2.2l-3.5-3.5-2.6 2.6-3.4-4.2L5 15.4V17Z"/>
             </svg>
-            <span>Video</span>
-          </button>
-          <button class="m3e-chip m3e-state filterbar__chip" id="chipPhotos" aria-pressed="false">
-            <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
-              <path d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm1 13h14v-2.2l-3.5-3.5-2.6 2.6-3.4-4.2L5 15.4V17Zm10.5-6a1.8 1.8 0 1 0-1.8-1.8A1.8 1.8 0 0 0 15.5 11Z"/>
-            </svg>
-            <span>Photos</span>
-          </button>
-          <button class="m3e-chip m3e-state filterbar__chip" id="chipGif" aria-pressed="false">
-            <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
-              <path d="M3 5h18a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm7.4 5.2H8.6a1.4 1.4 0 0 0-1.4 1.4v1a1.4 1.4 0 0 0 1.4 1.4h1.8v-1.6H9.4M12.6 9.8v4.6M15 14.4V9.8h2.6M15 12.3h2.2"/>
-            </svg>
-            <span>GIF</span>
+            <span class="filterbar__label" id="mediaTypeLabel">Media type</span>
           </button>
 
-          <span class="filterbar__divider" aria-hidden="true"></span>
-
-          <button class="m3e-chip m3e-state filterbar__chip" id="chipAuthor" aria-haspopup="dialog">
-            <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
-              <path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0 2c-4 0-7 2-7 4.6V21h14v-2.4C19 16 16 14 12 14Z"/>
-            </svg>
-            <span id="chipAuthorLabel">All authors</span>
-          </button>
-          <button class="m3e-chip m3e-state filterbar__chip" id="chipRefine" aria-haspopup="dialog">
-            <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
-              <path d="M10 18h4v-2h-4v2Zm-7-6v2h18v-2H3ZM6 6v2h12V6H6Z"/>
-            </svg>
-            <span>Refine</span>
-            <span class="m3e-chip__badge m3e-tabular" id="refineBadge" hidden>0</span>
-          </button>
           <button class="m3e-chip m3e-state filterbar__chip" id="chipSort" aria-haspopup="menu" aria-expanded="false">
             <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
               <path d="M3 6h12v2H3V6Zm0 5h9v2H3v-2Zm0 5h6v2H3v-2Zm15 2.6V10h2v8.6l2.3-2.3 1.4 1.4L19 22.1l-4.7-4.4 1.4-1.4 2.3 2.3Z"/>
             </svg>
-            <span id="chipSortLabel">Newest</span>
+            <span class="filterbar__label" id="chipSortLabel">Newest</span>
           </button>
-          <!-- Only shown while a shuffle is active: re-deals the order.
-               Reaching into a menu for a repeated action is too slow. -->
-          <button class="m3e-chip m3e-state filterbar__chip" id="chipShuffle" hidden aria-label="Shuffle again">
+
+          <button class="m3e-chip m3e-state filterbar__chip" id="chipMoreFilters"
+            aria-label="More filters" aria-haspopup="menu" aria-expanded="false" aria-pressed="false">
             <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
-              <path d="M17 4.5 21.5 9 17 13.5V10.4h-2.1c-1 0-1.6.4-2.4 1.6l-.6 1-1.4-2.3.4-.6C12 8.3 13.2 7.6 15 7.6H17V4.5ZM3 8h3.2c1.6 0 2.8.6 3.9 2.2l3 4.6c.7 1 1.2 1.3 2 1.3H17v-3.1L21.5 17 17 21.5v-3.1h-1.9c-1.7 0-2.9-.7-4-2.4l-3-4.6C7.4 10.3 6.9 10 6.2 10H3V8Zm0 8h3.2c.6 0 1-.2 1.5-.8l.4-.6 1.4 2.3-.2.3c-.9 1.2-1.9 1.8-3.1 1.8H3v-3Z"/>
+              <path d="M10 18h4v-2h-4v2Zm-7-6v2h18v-2H3ZM6 6v2h12V6H6Z"/>
             </svg>
-            <span>Shuffle again</span>
-          </button>
-          <button class="m3e-chip m3e-state filterbar__chip filterbar__chip--reset" id="chipReset" hidden>
-            <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
-              <path d="M18.3 7.1 16.9 5.7 12 10.6 7.1 5.7 5.7 7.1l4.9 4.9-4.9 4.9 1.4 1.4 4.9-4.9 4.9 4.9 1.4-1.4-4.9-4.9 4.9-4.9Z"/>
-            </svg>
-            <span>Clear all</span>
+            <span class="filterbar__label">More</span>
+            <span class="m3e-chip__badge m3e-tabular" id="moreFilterBadge" hidden>0</span>
           </button>
         </div>
       </div>
@@ -221,14 +190,12 @@
            rather than inside a view so the reference can never dangle when
            the view changes. -->
       <p id="tileHint" class="m3e-visually-hidden">
-        Opens the full-size viewer. Press i to see the post it came from.
+        Opens the full-size viewer. Right-click or long-press for post details.
       </p>
 
       <!-- The feed. Its contents are entirely view-dependent: rails, grid or
            theater. One region, three renderers. -->
       <main class="feed" id="feed" tabindex="-1"></main>
-
-      <div class="feed__more" id="loadMoreHost"></div>
 
       <footer class="pane__foot m3e-body-small">
         <span>All data lives in this browser. Nothing is uploaded.</span>
@@ -237,7 +204,7 @@
   </div>
 
   <!-- ---------------------------------------------------------------------
-       Inspector — persistent on expanded windows, a sheet below that.
+       Inspector — persistent from 1024 px, a sheet below that.
        Deliberately NOT called "detail": it holds the post behind whatever
        media is selected, which is context, not the main event. The pane is
        collapsed entirely while nothing is selected — the feed keeps the room.
@@ -278,7 +245,7 @@
   <div class="m3e-sheet__content" id="sheetContent"></div>
 </div>
 
-<!-- Settings / confirm dialog -->
+<!-- Settings / Data Vault / confirm dialog -->
 <div class="m3e-dialog dialog" id="dialog" role="dialog" aria-modal="true"
   aria-labelledby="dialogTitle" aria-hidden="true" data-open="false">
   <div class="m3e-dialog__header">

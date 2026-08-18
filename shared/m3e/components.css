@@ -1803,11 +1803,6 @@ body {
   background: var(--md-sys-color-surface-container-highest);
 }
 
-/* Sensitive media is blurred until asked for. The blur is on the image, not
-   the tile, so the overlay chrome and the reveal button stay sharp. */
-.m3e-tile[data-sensitive="true"] .m3e-tile__media > * { filter: blur(28px) saturate(0.7); }
-.m3e-tile[data-revealed="true"] .m3e-tile__media > * { filter: none; }
-
 .m3e-tile__scrim {
   position: absolute;
   inset-inline: 0;

@@ -14,8 +14,8 @@
 
      compact    (<600)      floating toolbar · single pane · bottom sheet
      medium     (600–839)   nav rail         · single pane · side sheet
-     expanded   (840–1199)  nav rail         · wider feed  · side sheet
-     large      (1200–1599) nav rail         · feed + persistent inspector
+     expanded   (840–1023)  nav rail         · wider feed  · side sheet
+     wide       (≥1024)     nav rail         · feed + persistent inspector
      extra-large(≥1600)     nav rail         · feed + inspector, wider
 
    The inspector is the same content in all classes; only its container
@@ -58,11 +58,11 @@
    The third column is `auto`, not a fixed track: while nothing is selected
    the inspector is display:none and the feed takes the whole width. There is
    no permanent empty grey column waiting for a selection. */
-@media (min-width: 1200px) {
+@media (min-width: 1024px) {
   .shell { grid-template-columns: auto minmax(0, 1fr) auto; }
   .shell__detail[data-open="true"] {
     display: block;
-    width: 400px;
+    width: 360px;
     position: sticky;
     top: 0;
     height: 100dvh;
@@ -71,6 +71,9 @@
     background: var(--md-sys-color-surface-container-low);
     border-inline-start: 1px solid var(--md-sys-color-outline-variant);
   }
+}
+@media (min-width: 1200px) {
+  .shell__detail[data-open="true"] { width: 400px; }
 }
 @media (min-width: 1600px) {
   .shell__detail[data-open="true"] { width: 460px; }
@@ -247,10 +250,9 @@
 /* =============================================================================
    Filter bar
 
-   Horizontally scrollable chips. Selected chips change SHAPE as well as
-   colour — a selected chip is fully rounded, an unselected one is only
-   partly so — which is what keeps state legible in greyscale and for a
-   colour-blind reader (WCAG 1.4.1: colour is never the only channel).
+   Progressive disclosure keeps this to three stable controls: media type,
+   sort, and more filters. Selected chips change shape as well as colour, so
+   active state remains legible in greyscale (WCAG 1.4.1).
    ============================================================================= */
 .filterbar {
   display: flex;
@@ -263,29 +265,22 @@
   gap: var(--md-sys-spacing-2);
   flex: 1;
   min-width: 0;
-  overflow-x: auto;
   padding-block: var(--md-sys-spacing-1);
-  /* Clears the fade below, so the last chip is fully legible once the row is
-     scrolled to its end instead of staying half-erased forever. */
-  padding-inline-end: var(--md-sys-spacing-7);
-  scrollbar-width: none;
-  /* Fade the trailing edge so a clipped chip reads as "more this way"
-     rather than as a rendering bug. */
-  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%);
 }
-.filterbar__scroll::-webkit-scrollbar { display: none; }
 .filterbar__chip { flex: none; }
 .filterbar__chip[aria-pressed="true"] { border-radius: var(--md-sys-shape-corner-full); }
-.filterbar__chip--reset {
-  --_container: var(--md-sys-color-error-container);
-  color: var(--md-sys-color-on-error-container);
-}
-.filterbar__divider {
-  flex: none;
-  align-self: center;
-  width: 1px;
-  height: 24px;
-  background: var(--md-sys-color-outline-variant);
+.filterbar__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* Three controls fit without horizontal scrolling even on compact screens.
+   Equal flexing keeps their hit targets predictable as labels change. */
+@media (max-width: 599px) {
+  .filterbar__scroll { gap: var(--md-sys-spacing-1); }
+  .filterbar__chip {
+    flex: 1 1 0;
+    min-width: 0;
+    justify-content: center;
+    padding-inline: var(--md-sys-spacing-2);
+  }
 }
 
 /* =============================================================================
@@ -293,7 +288,6 @@
    ============================================================================= */
 .feed { min-width: 0; }
 .feed:focus-visible { outline: none; }
-.feed__more { display: flex; justify-content: center; padding-block: var(--md-sys-spacing-4); }
 
 /* -----------------------------------------------------------------------------
    Rails view
@@ -371,36 +365,36 @@
 }
 
 /* -----------------------------------------------------------------------------
-   Grid view
+   Virtual justified masonry
 
-   CSS columns, not a JS masonry. No measurement pass, no reflow storm on
-   resize, and it degrades to one column with no media query at all. The
-   tradeoff — reading order runs down each column rather than across — is the
-   right one for a browsing surface, where there is no sequence to lose.
+   Rows are positioned by app.js in left-to-right sort order. The host carries
+   the full scroll height while only a bounded viewport window is mounted.
    -------------------------------------------------------------------------- */
-.grid {
-  columns: 3 var(--_col, 240px);
-  column-gap: var(--md-sys-spacing-3);
-}
-.grid[data-size="small"]  { --_col: 180px; }
-.grid[data-size="medium"] { --_col: 240px; }
-.grid[data-size="large"]  { --_col: 340px; }
-
-.grid > .tile,
-.grid > .tile-skeleton {
-  /* `break-inside: avoid` is what stops a tile being sliced across a column
-     boundary; without it the whole approach falls apart. */
-  break-inside: avoid;
-  margin-block-end: var(--md-sys-spacing-3);
-  /* An inline-block inside a multicol container is the reliable way to get
-     the element to participate in column flow across engines. */
-  display: inline-block;
+.grid-virtual {
+  position: relative;
   inline-size: 100%;
+  min-block-size: 1px;
+  contain: layout style;
 }
-
+.grid-virtual__cell {
+  position: absolute;
+  inset: 0 auto auto 0;
+  contain: layout paint style;
+}
+.grid-virtual__cell > .tile {
+  inline-size: 100%;
+  block-size: 100%;
+  max-block-size: none;
+  aspect-ratio: auto;
+}
+.grid-skeleton {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--md-sys-spacing-3);
+}
+.grid-skeleton > .tile-skeleton { min-block-size: 180px; }
 @media (max-width: 599px) {
-  .grid { columns: 2 auto; column-gap: var(--md-sys-spacing-2); }
-  .grid > .tile { margin-block-end: var(--md-sys-spacing-2); }
+  .grid-skeleton { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--md-sys-spacing-2); }
 }
 
 /* =============================================================================
@@ -435,21 +429,27 @@
   color: var(--md-sys-color-on-surface-variant);
   background: var(--md-sys-color-surface-container-highest);
 }
-.tile__veil {
+
+/* Availability never competes with the poster. It appears as quiet text only
+   when a pointer hovers or the tile has keyboard focus; the inspector carries
+   the explanation and recovery actions. */
+.tile__status {
   position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--md-sys-spacing-2);
-  padding: var(--md-sys-spacing-3);
+  inset-block-start: var(--md-sys-spacing-2);
+  inset-inline-start: var(--md-sys-spacing-2);
+  max-inline-size: calc(100% - 76px);
+  padding: 4px 10px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: rgb(0 0 0 / 0.66);
   color: #fff;
-  background: rgb(0 0 0 / 0.34);
-  text-align: center;
+  opacity: 0;
+  translate: 0 -4px;
   pointer-events: none;
+  transition: opacity var(--md-sys-motion-spring-fast-effects),
+              translate var(--md-sys-motion-spring-fast-spatial);
 }
-.tile__play--dead { background: rgb(0 0 0 / 0.7); }
+.tile:hover .tile__status,
+.tile:focus-visible .tile__status { opacity: 1; translate: 0; }
 
 .tile[data-selected="true"] {
   outline: 3px solid var(--md-sys-color-primary);
@@ -546,6 +546,55 @@
   object-fit: contain;
   border-radius: var(--md-sys-shape-corner-large);
 }
+
+/* Theater is constrained by the real dynamic viewport, including whatever
+   room the app bar, filters and optional capture banner currently consume.
+   Flexing the feed's remaining room avoids the old `vh` estimate that pushed
+   the author bar and the bottom of portrait media below a desktop screen. */
+html[data-view="theater"],
+html[data-view="theater"] body {
+  block-size: 100%;
+  overflow: hidden;
+}
+html[data-view="theater"] .shell {
+  block-size: 100dvh;
+  min-block-size: 0;
+}
+html[data-view="theater"] .shell__main {
+  block-size: 100%;
+  min-block-size: 0;
+  overflow: hidden;
+}
+html[data-view="theater"] .pane {
+  min-block-size: 0;
+  overflow: hidden;
+}
+html[data-view="theater"] .feed[data-view="theater"] {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-block-size: 0;
+}
+html[data-view="theater"] .theater {
+  flex: 1 1 0;
+  min-block-size: 0;
+}
+html[data-view="theater"] .slide {
+  block-size: 100%;
+  min-block-size: 0;
+}
+html[data-view="theater"] .slide__stage {
+  flex: 1 1 0;
+  min-block-size: 0;
+}
+/* The document footer is irrelevant in immersive theater; removing it gives
+   that space back to the media and keeps the whole slide visible. */
+html[data-view="theater"] .pane__foot { display: none; }
+
+@media (min-width: 600px) {
+  html[data-view="theater"] .pane { padding-block-end: var(--md-sys-spacing-4); }
+}
+
 .slide__video { inline-size: auto; }
 .slide__missing { display: grid; place-items: center; color: var(--md-sys-color-on-surface-variant); }
 .slide__play {
@@ -584,21 +633,6 @@
   text-align: center;
 }
 .slide__dead p { margin: 0; }
-
-.slide__stage[data-sensitive="true"] .slide__media { filter: blur(36px) saturate(0.7); }
-.slide__veil {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--md-sys-spacing-2);
-  border: none;
-  background: rgb(0 0 0 / 0.4);
-  color: #fff;
-  cursor: pointer;
-}
 
 .slide__bar {
   display: flex;
@@ -677,6 +711,27 @@
   color: var(--md-sys-color-on-surface-variant);
 }
 .detail__metric { display: inline-flex; align-items: center; gap: 5px; }
+.detail__availability {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--md-sys-spacing-3);
+  padding: var(--md-sys-spacing-3);
+  border-radius: var(--md-sys-shape-corner-large);
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+}
+.detail__availability-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+}
+.detail__availability p { margin: 0; }
+.detail__availability .m3e-body-small { margin-block-start: 2px; color: var(--md-sys-color-on-surface-variant); }
 
 .detail__more { display: flex; flex-direction: column; gap: var(--md-sys-spacing-2); }
 .detail__more-label { color: var(--md-sys-color-on-surface-variant); }
@@ -725,7 +780,7 @@
 
 /* The sheet becomes a side sheet from medium up — same content, different
    container, which is the whole point of the adaptive layout. */
-@media (min-width: 600px) and (max-width: 1199px) {
+@media (min-width: 600px) and (max-width: 1023px) {
   .sheet {
     inset: 0 0 0 auto;
     width: min(420px, 92vw);
@@ -748,12 +803,57 @@
 /* Refine sheet */
 .refine { display: flex; flex-direction: column; gap: var(--md-sys-spacing-5); }
 .refine__help { margin: 0; color: var(--md-sys-color-on-surface-variant); }
+.refine__histograms { display: grid; gap: var(--md-sys-spacing-5); }
 .refine__row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: var(--md-sys-spacing-3);
 }
 .refine__actions { display: flex; justify-content: flex-end; gap: var(--md-sys-spacing-2); }
+
+.histogram {
+  --_threshold: 0%;
+  display: grid;
+  gap: var(--md-sys-spacing-2);
+  min-width: 0;
+}
+.histogram__head,
+.histogram__axis { display: flex; align-items: center; justify-content: space-between; gap: var(--md-sys-spacing-3); }
+.histogram__value {
+  padding: 3px 10px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+.histogram__bars {
+  display: flex;
+  align-items: end;
+  gap: 2px;
+  block-size: 88px;
+  padding: var(--md-sys-spacing-2) var(--md-sys-spacing-2) 0;
+  border-radius: var(--md-sys-shape-corner-large) var(--md-sys-shape-corner-large) 0 0;
+  background: linear-gradient(to right,
+    var(--md-sys-color-surface-container-high) 0 var(--_threshold),
+    var(--md-sys-color-secondary-container) var(--_threshold) 100%);
+}
+.histogram__bar {
+  flex: 1 1 0;
+  min-inline-size: 2px;
+  block-size: var(--_height);
+  border-radius: 3px 3px 0 0;
+  background: var(--md-sys-color-primary);
+  transition: opacity var(--md-sys-motion-spring-fast-effects), block-size var(--md-sys-motion-spring-fast-spatial);
+}
+.histogram__bar[data-below="true"] { opacity: 0.2; }
+.histogram__range {
+  inline-size: 100%;
+  block-size: 28px;
+  margin-block-start: -15px;
+  accent-color: var(--md-sys-color-primary);
+  cursor: ew-resize;
+}
+.histogram__range:disabled { cursor: default; opacity: var(--md-sys-state-disabled-content-opacity); }
+.histogram__axis { color: var(--md-sys-color-on-surface-variant); }
 
 /* =============================================================================
    Print — the library as a readable contact sheet
@@ -768,7 +868,8 @@
   .m3e-scrim { display: none !important; }
   .shell { grid-template-columns: 1fr; }
   .app-bar { position: static; background: none; backdrop-filter: none; }
-  .grid { columns: 3 auto; }
+  .grid-virtual { block-size: auto !important; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .grid-virtual__cell { position: static; transform: none !important; inline-size: auto !important; block-size: auto !important; }
   .tile { break-inside: avoid; }
   .m3e-tile__scrim { position: static; background: none; color: #000; }
 }
@@ -783,7 +884,50 @@
   letter-spacing: 0.08em;
 }
 .settings__help { margin: 0; color: var(--md-sys-color-on-surface-variant); }
-.settings__row { display: flex; flex-wrap: wrap; gap: var(--md-sys-spacing-2); }
+
+/* Data management is deliberately a separate surface from visual settings. */
+.vault { display: flex; flex-direction: column; gap: var(--md-sys-spacing-6); }
+.vault__summary {
+  display: flex;
+  align-items: center;
+  gap: var(--md-sys-spacing-4);
+  padding: var(--md-sys-spacing-4);
+  border-radius: var(--md-sys-shape-corner-large-increased);
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+.vault__summary > svg { flex: none; }
+.vault__summary p { margin: 0; }
+.vault__group { display: flex; flex-direction: column; gap: var(--md-sys-spacing-2); }
+.vault__group h3 { margin: 0; }
+.vault__actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--md-sys-spacing-2); }
+.vault__action {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--md-sys-spacing-3);
+  min-width: 0;
+  padding: var(--md-sys-spacing-4);
+  border: none;
+  border-radius: var(--md-sys-shape-corner-large);
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  text-align: start;
+  cursor: pointer;
+}
+.vault__action > svg { flex: none; color: var(--md-sys-color-primary); }
+.vault__action > span { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.vault__action strong { font: var(--md-sys-typescale-title-small-weight) var(--md-sys-typescale-title-small-size) / 1.25 var(--md-ref-typeface-plain); }
+.vault__action small { color: var(--md-sys-color-on-surface-variant); font-size: var(--md-sys-typescale-body-small-size); line-height: 1.35; }
+.vault__action:disabled { opacity: var(--md-sys-state-disabled-content-opacity); cursor: default; }
+.vault__danger {
+  padding-block-start: var(--md-sys-spacing-4);
+  border-block-start: 1px solid var(--md-sys-color-outline);
+}
+.vault__danger p { margin: 0; color: var(--md-sys-color-on-surface-variant); }
+.vault__danger .m3e-button { align-self: flex-start; }
+@media (max-width: 599px) {
+  .vault__actions { grid-template-columns: 1fr; }
+}
 
 /* Seed swatches — personalisation made tangible. */
 .seedgrid { display: flex; flex-wrap: wrap; gap: var(--md-sys-spacing-3); }
@@ -914,6 +1058,7 @@
   padding: var(--md-sys-spacing-2);
   overflow: auto;
   overscroll-behavior: contain;
+  touch-action: none;
 }
 .lb__media {
   display: block;
@@ -1113,12 +1258,14 @@
 .deadletter__why { color: var(--md-sys-color-on-surface-variant); }
 
 
+.m3e-menu--filter { min-inline-size: min(300px, calc(100vw - 16px)); }
+
 /* -----------------------------------------------------------------------------
    Sort menu grouping
 
    Seventeen sorts in one flat column is a wall, not a menu. M3E's Nov-2025
    menu guidance permits gaps and headers to categorise related actions; the
-   groups here are Time / Reach / Content / Yours / Chance.
+   groups here are Time / Reach / Content / Media / Chance.
    -------------------------------------------------------------------------- */
 .m3e-menu__header {
   margin: var(--md-sys-spacing-3) 0 var(--md-sys-spacing-1);

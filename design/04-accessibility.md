@@ -65,7 +65,6 @@ Every state that matters is encoded at least twice:
 | Filter chip on | secondary container | **radius partial → full** | `aria-pressed` |
 | Motion vs still | — | **play glyph** | duration or `GIF` badge |
 | Unplayable video | — | **glyph is "open", not "play"** | explanatory card on open |
-| Sensitive media | — | **blur** | veil label "Sensitive · tap to show" |
 | Capture paused | tertiary container | **dot becomes a square** | word "Paused" |
 | Capture error | error container | **dot becomes a rotated square** | word + reason |
 | Zero-value stat | dimmed to `outline` | the numeral is `0` | — |
@@ -99,10 +98,8 @@ decoratively.
   keeps scrolling instead of the pointer being trapped in a rail — a
   **2.1.2 (No Keyboard Trap)** problem in spirit even when it is a pointer
   doing the scrolling.
-- **`i` inspects the focused tile**, so the post behind a picture is reachable
-  without the pointer-only context-menu gesture that also exposes it.
 - **Focus trap** in modal overlays only (dialog, bottom sheet, side sheet), via
-  `M3E.createOverlay`. The persistent detail pane at ≥1200 px is deliberately
+  `M3E.createOverlay`. The persistent detail pane at ≥1024 px is deliberately
   *not* trapped — it is part of the page.
 - **Focus restoration** — closing an overlay returns focus to whatever opened
   it.
@@ -171,7 +168,7 @@ Because motion is never the sole carrier of meaning, nothing is lost: the wave
 still reads as a wave, the status word still says "Capturing", and every video
 still plays the moment it is asked to.
 
-Autoplay additionally has its own switch in Personalise, independent of the
+Autoplay additionally has its own switch in Settings, independent of the
 motion setting, because bandwidth is a legitimate reason to want it off and
 those two preferences should not be welded together.
 
@@ -192,8 +189,6 @@ A dedicated `@media (forced-colors: active)` block:
 
 ## 7. Media-specific concerns
 
-- **Sensitive media** is blurred, and the first activation only reveals it.
-  Opening is a second, deliberate action. Nothing marked sensitive autoplays.
 - **No seizure risk from autoplay**: only one item plays at a time, it is
   always muted, and it stops the moment it leaves the viewport.
 - **Layout never shifts as media loads.** Intrinsic `width`/`height` plus the
@@ -204,8 +199,6 @@ A dedicated `@media (forced-colors: active)` block:
 - **Video controls are the browser's own**, which are already keyboard
   complete, screen-reader labelled and localised. A bespoke control bar is a
   large amount of code whose best possible outcome is parity with them.
-- **`Space` plays and pauses in the viewer**, because native controls auto-hide
-  and would otherwise have to be summoned back before they could be used.
 - **Unplayable video says so.** An HLS-only item renders an explanation and a
   "Watch on X" link rather than a play button that leads nowhere. A control
   that does nothing is worse for a screen-reader user than an absent one,

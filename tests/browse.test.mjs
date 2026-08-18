@@ -50,9 +50,9 @@ test("an entry id addresses a single item inside a post", () => {
   assert.match(app, /id: item\.tweet_id \+ ":" \+ media\.position/);
 });
 
-test("type filters are a union, not an intersection", () => {
-  // Ticking Video AND GIF must mean "either", or the two most obvious chips
-  // in the bar render an empty screen when used together.
+test("legacy multi-type URLs remain a union, not an intersection", () => {
+  // The new menu is single-choice, but older shared URLs may carry several
+  // type flags. They must still mean "either" rather than rendering nothing.
   const fn = app.slice(app.indexOf("function matchesMedia"), app.indexOf("function mediaIndex"));
   assert.match(fn, /filters\.video && isVideo\(media\)/);
   assert.match(fn, /\|\|\s*\n?\s*\(filters\.photos && isPhoto\(media\)\)/);
@@ -103,11 +103,37 @@ test("archive state survives the removal of tags and notes", () => {
   assert.match(collections, /"archived"/);
 });
 
+test("the filter bar uses progressive disclosure", () => {
+  const bar = html.slice(html.indexOf('class="filterbar"'), html.indexOf("Result summary"));
+  for (const id of ["chipMediaType", "chipSort", "chipMoreFilters"]) {
+    assert.match(bar, new RegExp('id="' + id + '"'));
+  }
+  assert.equal((bar.match(/<button/g) || []).length, 3, "only three filter controls should stay visible");
+  assert.doesNotMatch(bar, /chipVideo|chipPhotos|chipGif|chipAuthor|chipRefine|chipShuffle|chipReset/);
+
+  assert.match(app, /function openMediaTypeMenu/);
+  assert.match(app, /function openMoreFiltersMenu/);
+  const sort = app.slice(app.indexOf("function openSortMenu"), app.indexOf("function openRefine"));
+  assert.match(sort, /SORTS\.filter/); // Shuffle remains reachable as a sort option.
+});
+
+test("data management is isolated from visual settings", () => {
+  const settings = app.slice(app.indexOf("function openSettings"), app.indexOf("function openVault"));
+  const vault = app.slice(app.indexOf("function openVault"), app.indexOf("function confirmClear"));
+
+  assert.doesNotMatch(settings, /data-vault|Import JSON|Clear library|Back up everything/);
+  assert.match(settings, /segDensity/);
+  for (const action of ["import", "restore", "export", "backup", "clear"]) {
+    assert.match(vault, new RegExp('data-vault=\\"' + action + '\\"'));
+  }
+  assert.match(html, /aria-label="Open data vault"/);
+});
+
 /* ---------------------------------------------------------------------------
    Horizontal browsing
    --------------------------------------------------------------------------- */
 
-test("every browsing view is horizontally scrollable", () => {
+test("horizontal browsing surfaces remain scrollable", () => {
   // The brief's central requirement. Rails and theater are both x-scrollers,
   // and both must snap, or a flick lands between items.
   for (const sel of [".m3e-carousel", ".theater"]) {
@@ -222,7 +248,6 @@ test("the scraper keeps the whole variant ladder and the poster", () => {
   const fn = content.slice(content.indexOf("function buildMediaItems"), content.indexOf("function normalizeTweet"));
   assert.match(fn, /mp4_variants: mp4Variants/);
   assert.match(fn, /poster: still/);
-  assert.match(fn, /sensitive:/);
 
   // And the dashboard normalizer must not drop them again on the way in.
   const norm = app.slice(app.indexOf("function normalizeMedia"), app.indexOf("function normalize("));
@@ -253,6 +278,20 @@ test("tiles render a poster, never a video element", () => {
   const fn = app.slice(app.indexOf("function tileHtml"), app.indexOf("function buildRails"));
   assert.doesNotMatch(fn, /<video/);
   assert.match(fn, /loading="lazy"/);
+});
+
+test("unplayable media stays quiet until hover or inspection", () => {
+  const tile = app.slice(app.indexOf("function tileHtml"), app.indexOf("function buildRails"));
+  const detail = app.slice(app.indexOf("function detailHtml"), app.indexOf("function linkify"));
+
+  assert.doesNotMatch(tile + layout, /tile__play--dead|Not playable here/);
+  assert.match(tile, /tile__status/);
+  assert.match(layout, /\.tile__status[\s\S]{0,500}opacity:\s*0/);
+  assert.match(layout, /\.tile:hover \.tile__status/);
+  assert.match(detail, /Find on Wayback/);
+  assert.match(detail, /Remove from library/);
+  const feed = app.slice(app.indexOf("function bindFeed"), app.indexOf("function init()"));
+  assert.match(feed, /M3EMedia\.hlsOnly\(entry\.media\)\) openDetail/);
 });
 
 /* ---------------------------------------------------------------------------
@@ -290,7 +329,7 @@ test("the filmstrip is windowed, not materialised in full", () => {
    --------------------------------------------------------------------------- */
 
 test("all three window classes are served", () => {
-  for (const bp of ["600px", "1200px"]) {
+  for (const bp of ["600px", "1024px", "1200px"]) {
     assert.ok(layout.includes("(min-width: " + bp + ")"), "missing breakpoint " + bp);
   }
   // Compact gets a floating toolbar, not a docked bar that permanently costs
@@ -309,12 +348,30 @@ test("media keeps its own aspect ratio", () => {
   assert.match(app, /style="--_ar:' \+ ar/);
 });
 
-test("sensitive media is gated behind a deliberate reveal", () => {
-  const fn = app.slice(app.indexOf("function bindFeed"), app.indexOf("function bindGlobalKeys"));
-  // First tap reveals, second opens: going straight to full screen from a
-  // blurred thumbnail is the exact ambush the blur exists to prevent.
-  assert.match(fn, /dataset\.sensitive === "true" && tile\.dataset\.revealed !== "true"/);
-  assert.match(components, /\.m3e-tile\[data-sensitive="true"\][\s\S]{0,120}filter: blur/);
+test("theater media fits inside the dynamic viewport", () => {
+  // The available height must come from flex layout, not a guessed vh band;
+  // otherwise the slide's lower edge falls below shorter desktop windows.
+  assert.match(app, /document\.documentElement\.dataset\.view = state\.view/);
+  assert.match(layout, /html\[data-view="theater"\] \.shell[\s\S]{0,120}block-size: 100dvh/);
+  assert.match(layout, /html\[data-view="theater"\] \.feed\[data-view="theater"\][\s\S]{0,180}flex: 1 1 0/);
+  assert.match(layout, /html\[data-view="theater"\] \.slide__stage[\s\S]{0,120}flex: 1 1 0/);
+
+  const media = layout.slice(layout.indexOf(".slide__media {"), layout.indexOf(".slide__video"));
+  assert.match(media, /max-block-size: 100%/);
+  assert.match(media, /object-fit: contain/);
+});
+
+test("the private dashboard has no sensitive-content gate", () => {
+  const tile = app.slice(app.indexOf("function tileHtml"), app.indexOf("function buildRails"));
+  const theater = app.slice(app.indexOf("function theaterSlideHtml"), app.indexOf("function mountTheaterPlayers"));
+  const feed = app.slice(app.indexOf("function bindFeed"), app.indexOf("function init()"));
+
+  // Every media item renders normally and the first activation opens it.
+  for (const src of [tile, theater, feed, components, layout]) {
+    assert.doesNotMatch(src, /data-sensitive|data-revealed|data-reveal|tile__veil|slide__veil/);
+  }
+  assert.doesNotMatch(tile + theater, /m\.sensitive|possibly_sensitive/);
+  assert.match(feed, /else openViewer\(entry\)/);
 });
 
 test("reduced motion is honoured by the new surfaces", () => {
@@ -332,7 +389,7 @@ test("every tile is a real button with a meaningful label", () => {
   // Not "image": the label leads with the ACTION, then the subject, then the
   // source, because a screen-reader user decides whether to keep listening
   // during the first few words.
-  assert.match(fn, /const label = \(motion \? "Play " : "Open "\) \+ what \+ " by " \+ who/);
+  assert.match(fn, /const label = \(unplayable \? "Inspect " : motion \? "Play " : "Open "\) \+ what \+ " by " \+ who/);
   // Alt text falls back to the post's own words, which usually describe the
   // picture better than any generic string.
   assert.match(fn, /m\.alt \|\| \(item\.text/);
@@ -345,7 +402,7 @@ test("every tile is a real button with a meaningful label", () => {
 test("the feed uses one delegated listener, not one per tile", () => {
   // Several hundred tiles are recreated on every keystroke of the search box;
   // per-tile handlers would mean a thousand closures per render.
-  const fn = app.slice(app.indexOf("function bindFeed"), app.indexOf("function bindGlobalKeys"));
+  const fn = app.slice(app.indexOf("function bindFeed"), app.indexOf("function init()"));
   const listeners = fn.match(/feed\.addEventListener/g) || [];
   assert.ok(listeners.length >= 3, "expected delegated listeners on the feed");
   assert.doesNotMatch(fn, /querySelectorAll\("\.tile"\)[\s\S]{0,80}addEventListener/);
@@ -356,6 +413,7 @@ test("a render disposes of what the previous render owned", () => {
   // keep firing for the life of the page otherwise.
   const fn = app.slice(app.indexOf("function render()"), app.indexOf("function showSkeletons"));
   assert.match(fn, /carousels\.pop\(\)/);
+  assert.match(fn, /virtualGrid\.destroy\(\)/);
   assert.match(fn, /autoplayer\.disconnect\(\)/);
   assert.match(fn, /M3EMedia\.stopAll\(\)/);
 });
@@ -368,8 +426,9 @@ test("selection survives crossing the inspector breakpoint, both ways", () => {
   // The previous build closed the pane on the way down and did not reopen the
   // sheet, so resizing a window mid-read silently lost your place. The content
   // is identical in both containers; only the container changes.
-  const fn = app.slice(app.indexOf("M3E.bindWindowClass("), app.indexOf("M3E.bindScrollChrome"));
+  const fn = app.slice(app.indexOf("const rehostInspector"), app.indexOf("M3E.bindScrollChrome"));
   assert.match(fn, /if \(!state\.selectedId\) return;/);
+  assert.match(fn, /min-width: 1024px/);
   assert.match(fn, /if \(!paneShowing\) openDetail\(state\.selectedId\);/);
   assert.match(fn, /clearDetailPaneOnly\(\);\s*\n\s*openDetail\(state\.selectedId\)/);
 });

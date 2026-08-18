@@ -41,22 +41,20 @@ test("the lightbox sits above every other layer", () => {
   assert.match(lb, /z-index:\s*var\(--md-sys-z-immersive\)/);
 });
 
-test("lightbox keys are bound on the document, not the root element", () => {
-  // Clicking a non-focusable <img> moves focus to <body>. A listener on the
-  // viewer root then never fires, and Escape appears dead.
-  const src = read("dashboard/lightbox.js");
-  assert.match(src, /document\.addEventListener\("keydown"/);
-  assert.match(src, /case "Escape"/);
-  assert.match(src, /if \(!overlay \|\| !overlay\.isOpen\) return;/);
+test("the custom keyboard shortcut system is absent", () => {
+  const lightbox = read("dashboard/lightbox.js");
+  const app = read("dashboard/app.js");
+  const html = read("dashboard/index.html");
+  assert.doesNotMatch(lightbox, /addEventListener\("keydown"|event\.key/);
+  assert.doesNotMatch(app, /bindGlobalKeys|event\.key/);
+  assert.doesNotMatch(html, /<kbd|Press slash|Press i/);
 });
 
-test("the dashboard defers Escape to the lightbox when it is open", () => {
-  const app = read("dashboard/app.js");
-  const esc = app.slice(app.indexOf('if (event.key === "Escape")'));
-  const guard = esc.indexOf("XLightbox && XLightbox.isOpen");
-  const sheet = esc.indexOf("sheet.isOpen");
-  assert.ok(guard > -1, "Escape must check the lightbox");
-  assert.ok(guard < sheet, "the innermost surface must be checked first");
+test("modal Escape remains owned by the shared overlay primitive", () => {
+  const interactions = read("shared/m3e/interactions.js");
+  const overlay = interactions.slice(interactions.indexOf("function createOverlay"), interactions.indexOf("Snackbar queue"));
+  assert.match(overlay, /event\.key === "Escape"/);
+  assert.match(overlay, /event\.stopPropagation\(\); close\(\)/);
 });
 
 test("the lightbox escapes user content rather than interpolating it", () => {

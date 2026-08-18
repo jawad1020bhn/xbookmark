@@ -10,10 +10,10 @@
    · The viewer is a single reused DOM subtree, built on first open. Media is
      swapped in and out of it. Building it per-open would mean re-running the
      focus trap and re-laying out the chrome every time.
-   · Zoom uses native overflow scrolling rather than a JS drag-pan: the image
-     is allowed to exceed the stage and the stage scrolls. That gives
-     momentum, trackpad gestures, keyboard scrolling and touch panning for
-     free, all of which a hand-rolled pan handler gets wrong.
+   · The stage supports swipe navigation plus two-finger pinch zoom and
+     one-finger panning. Desktop click-to-zoom still uses native overflow.
+   · The next three items in the direction of travel are prefetched without
+     mounting hidden players.
    · Only one video plays at a time, and navigating away stops it — the same
      M3EMedia manager the grid uses, so the two surfaces cannot fight.
 
@@ -45,6 +45,8 @@
   let onCopy = null;
   let onChange = null;
   let contextAt = null;
+  let ignoreClickUntil = 0;
+  const prefetchCache = new Map();
 
   /**
    * The per-item context.
@@ -144,70 +146,176 @@
       els.full.hidden = true;
     }
 
-    /* Space is the universal play/pause in every video surface anyone has
-       used. Without it the only way to pause is to hit a native control that
-       may have auto-hidden, which reads as the player ignoring you. */
-    root.addEventListener("keydown", (event) => {
-      if (event.key !== " " && event.key !== "Spacebar") return;
-      const video = els.stage.querySelector("video");
-      if (!video) return;
-      // Let the native controls keep the key when they already have focus.
-      if (document.activeElement === video) return;
-      event.preventDefault();
-      if (video.paused) video.play().catch(() => {});
-      else video.pause();
-    });
-
     // Clicking the backdrop closes; clicking the media itself does not.
     root.addEventListener("click", (event) => {
+      if (performance.now() < ignoreClickUntil) return;
       if (event.target === root || event.target === els.stage) close();
     });
 
-    /* Keys are bound on the document, not the root element. Clicking a
-       non-focusable <img> moves focus to <body>, and a listener on the root
-       would then never see the keystroke — Escape appeared dead after any
-       click on the media itself. Guarded by `isOpen` so it costs nothing when
-       the viewer is closed. */
-    document.addEventListener("keydown", (event) => {
-      if (!overlay || !overlay.isOpen) return;
-      switch (event.key) {
-        case "Escape":     event.preventDefault(); event.stopPropagation(); close(); break;
-        case "ArrowRight": event.preventDefault(); step(1); break;
-        case "ArrowLeft":  event.preventDefault(); step(-1); break;
-        case "Home":       event.preventDefault(); show(0); break;
-        case "End":        event.preventDefault(); show(items.length - 1); break;
-        case "z": case "Z": event.preventDefault(); toggleZoomCentre(); break;
-        case "f": case "F": event.preventDefault(); toggleFullscreen(); break;
-        default: break;
-      }
-    }, true);
-
-    bindSwipe();
+    bindGestures();
   }
 
   /**
-   * Horizontal swipe navigates; vertical is left to the browser so a zoomed
-   * image can still be panned by dragging.
+   * Touch interaction is self-contained inside the immersive stage: one finger
+   * swipes between items (or pans while zoomed), two fingers pinch around their
+   * midpoint. Pointer events keep the same code working for touch and pen.
    */
-  function bindSwipe() {
-    let x0 = null, y0 = null, id = null;
-    els.stage.addEventListener("pointerdown", (e) => {
-      if (e.pointerType === "mouse") return;
-      x0 = e.clientX; y0 = e.clientY; id = e.pointerId;
+  function bindGestures() {
+    const pointers = new Map();
+    let single = null;
+    let pinch = null;
+    let pinched = false;
+
+    const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+    const midpoint = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+    const beginSingle = (point) => {
+      single = {
+        x: point.x, y: point.y,
+        scrollLeft: els.stage.scrollLeft,
+        scrollTop: els.stage.scrollTop,
+        zoomed: els.stage.dataset.zoom === "true",
+      };
+    };
+
+    els.stage.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "mouse") return;
+      const point = { x: event.clientX, y: event.clientY };
+      pointers.set(event.pointerId, point);
+      if (els.stage.setPointerCapture) els.stage.setPointerCapture(event.pointerId);
+
+      if (pointers.size === 1) {
+        pinched = false;
+        beginSingle(point);
+      } else if (pointers.size === 2) {
+        const [a, b] = Array.from(pointers.values());
+        const img = els.stage.querySelector(".lb__img");
+        if (!img) return;
+        const rect = img.getBoundingClientRect();
+        if (!img.dataset.fitWidth) img.dataset.fitWidth = String(rect.width);
+        pinch = {
+          img,
+          distance: Math.max(1, distance(a, b)),
+          width: rect.width,
+          fitWidth: Number(img.dataset.fitWidth) || rect.width,
+          maxWidth: Math.max(img.naturalWidth || 0, (Number(img.dataset.fitWidth) || rect.width) * 4),
+        };
+        pinched = true;
+      }
     });
-    els.stage.addEventListener("pointerup", (e) => {
-      if (id !== e.pointerId || x0 === null) return;
-      const dx = e.clientX - x0;
-      const dy = e.clientY - y0;
-      x0 = y0 = id = null;
-      if (Math.abs(dx) > 56 && Math.abs(dx) > Math.abs(dy) * 1.5) step(dx < 0 ? 1 : -1);
-    });
+
+    els.stage.addEventListener("pointermove", (event) => {
+      if (!pointers.has(event.pointerId)) return;
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+      if (pointers.size === 2 && pinch) {
+        event.preventDefault();
+        const [a, b] = Array.from(pointers.values());
+        const mid = midpoint(a, b);
+        const stageRect = els.stage.getBoundingClientRect();
+        const localX = mid.x - stageRect.left;
+        const localY = mid.y - stageRect.top;
+        const oldWidth = Math.max(1, els.stage.scrollWidth);
+        const oldHeight = Math.max(1, els.stage.scrollHeight);
+        const contentX = (els.stage.scrollLeft + localX) / oldWidth;
+        const contentY = (els.stage.scrollTop + localY) / oldHeight;
+        const width = Math.max(pinch.fitWidth, Math.min(pinch.maxWidth, pinch.width * distance(a, b) / pinch.distance));
+
+        if (width <= pinch.fitWidth * 1.02) {
+          pinch.img.style.removeProperty("width");
+          els.stage.dataset.zoom = "false";
+        } else {
+          pinch.img.style.width = width + "px";
+          els.stage.dataset.zoom = "true";
+        }
+        els.stage.scrollLeft = contentX * els.stage.scrollWidth - localX;
+        els.stage.scrollTop = contentY * els.stage.scrollHeight - localY;
+        return;
+      }
+
+      if (pointers.size === 1 && single && single.zoomed) {
+        event.preventDefault();
+        els.stage.scrollLeft = single.scrollLeft - (event.clientX - single.x);
+        els.stage.scrollTop = single.scrollTop - (event.clientY - single.y);
+      }
+    }, { passive: false });
+
+    const finish = (event) => {
+      if (!pointers.has(event.pointerId)) return;
+      const last = pointers.get(event.pointerId);
+      pointers.delete(event.pointerId);
+
+      if (pointers.size === 1) {
+        pinch = null;
+        beginSingle(Array.from(pointers.values())[0]);
+        return;
+      }
+      if (pointers.size) return;
+
+      if (pinched) {
+        ignoreClickUntil = performance.now() + 350;
+      } else if (single && !single.zoomed) {
+        const dx = last.x - single.x;
+        const dy = last.y - single.y;
+        if (Math.abs(dx) > 56 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+          ignoreClickUntil = performance.now() + 350;
+          step(dx < 0 ? 1 : -1);
+        }
+      }
+      single = null;
+      pinch = null;
+    };
+    els.stage.addEventListener("pointerup", finish);
+    els.stage.addEventListener("pointercancel", finish);
+  }
+
+  /* Directional prefetch keeps a three-item runway in front of navigation.
+     Images are decoded through Image; video playlists and the first MP4 range
+     are fetched into the browser cache without mounting extra players. */
+  function rememberPrefetch(key, value) {
+    if (prefetchCache.has(key)) return;
+    prefetchCache.set(key, value);
+    while (prefetchCache.size > 24) prefetchCache.delete(prefetchCache.keys().next().value);
+  }
+
+  function prefetchUrl(url, kind) {
+    if (!url || prefetchCache.has(kind + ":" + url)) return;
+    if (kind === "image") {
+      const img = new Image();
+      img.decoding = "async";
+      img.referrerPolicy = "no-referrer";
+      img.src = url;
+      rememberPrefetch(kind + ":" + url, img);
+      return;
+    }
+
+    const hls = /\.m3u8(?:$|\?)/i.test(url);
+    const request = fetch(url, {
+      cache: "force-cache",
+      credentials: "omit",
+      headers: hls ? {} : { Range: "bytes=0-65535" },
+    }).then((response) => hls ? response.text() : response.arrayBuffer()).catch(() => null);
+    rememberPrefetch(kind + ":" + url, request);
+  }
+
+  function prefetchDirectional(direction) {
+    const sign = direction < 0 ? -1 : 1;
+    for (let offset = 1; offset <= 3; offset++) {
+      const media = items[index + sign * offset];
+      if (!media) break;
+      const poster = window.M3EMedia.sizedImage(media.poster || media.url, "large");
+      if (poster) prefetchUrl(poster, "image");
+      if (window.M3EMedia.isMotion(media)) {
+        const source = window.M3EMedia.playableSource(media, { width: els.stage.clientWidth || 1280 });
+        const mediaUrl = (source && source.src) || media.mp4 || media.hls;
+        if (mediaUrl) prefetchUrl(mediaUrl, /\.m3u8(?:$|\?)/i.test(mediaUrl) ? "manifest" : "video");
+      }
+    }
   }
 
   /* ---------------------------------------------------------------------------
      Rendering one item
      --------------------------------------------------------------------------- */
-  function show(i) {
+  function show(i, direction) {
     if (!items.length) return;
     index = Math.max(0, Math.min(items.length - 1, i));
     const m = items[index];
@@ -263,6 +371,7 @@
     }
 
     renderChrome();
+    prefetchDirectional(direction || 1);
     if (onChange) onChange(index);
   }
 
@@ -355,7 +464,7 @@
         dot.innerHTML = svg("play", 12);
         cell.appendChild(dot);
       }
-      cell.addEventListener("click", () => show(i));
+      cell.addEventListener("click", () => show(i, i < index ? -1 : 1));
       els.strip.appendChild(cell);
     }
 
@@ -370,6 +479,7 @@
    * was clicked, so the pixel under the cursor stays under the cursor.
    */
   function toggleZoom(event, img) {
+    if (performance.now() < ignoreClickUntil) return;
     if (els.stage.dataset.zoom === "true") { unzoom(); return; }
 
     /* Zoom to whichever is larger: the image's natural size, or 2.5× what is
@@ -377,6 +487,7 @@
        for an image smaller than the stage — which is most screenshots on a
        desktop monitor, i.e. exactly the case zoom exists for. */
     const rect = img.getBoundingClientRect();
+    img.dataset.fitWidth = String(rect.width);
     const target = Math.max(img.naturalWidth || 0, rect.width * 2.5);
     const rx = (event.clientX - rect.left) / rect.width;
     const ry = (event.clientY - rect.top) / rect.height;
@@ -390,16 +501,11 @@
 
   function unzoom() {
     const img = els.stage.querySelector(".lb__img");
-    if (img) img.style.removeProperty("width");
+    if (img) {
+      img.style.removeProperty("width");
+      delete img.dataset.fitWidth;
+    }
     els.stage.dataset.zoom = "false";
-  }
-
-  /** Keyboard zoom, centred — there is no pointer to zoom towards. */
-  function toggleZoomCentre() {
-    const img = els.stage.querySelector(".lb__img");
-    if (!img) return;
-    const rect = img.getBoundingClientRect();
-    toggleZoom({ clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 }, img);
   }
 
   function toggleFullscreen() {
@@ -415,7 +521,7 @@
     if (items.length < 2) return;
     const to = index + delta;
     if (to < 0 || to >= items.length) return;
-    show(to);
+    show(to, delta);
   }
 
   function teardown() {
@@ -443,7 +549,7 @@
     onCopy = context.onCopy || null;
     onChange = context.onChange || null;
     contextAt = context.contextAt || null;
-    show(Number(start) || 0);
+    show(Number(start) || 0, 1);
     overlay.open();
     // After the trap installs, not before — it focuses the first tabbable
     // child itself, which is the copy button.

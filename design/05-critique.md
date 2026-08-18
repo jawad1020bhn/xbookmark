@@ -111,9 +111,9 @@ greyscale and forced-colours mode.
 *Traces to:* M3 **adaptive layout** window classes and the list-detail
 canonical layout.
 
-Five window classes with genuinely different navigation and detail models — the
-1200 px boundary switches the detail view from modal to persistent, which is a
-change of interaction model, not of width.
+Adaptive navigation and detail models change with available room — the 1024 px
+boundary switches the inspector from a modal sheet to a persistent push drawer,
+which is a change of interaction model, not just width.
 
 ### 2.5 Motion given a physics model
 
@@ -356,19 +356,16 @@ is why every application built for looking at pictures — Lightroom, Photos,
 Preview, X's own image viewer — darkens the room. Defaulting to system means
 roughly half of first runs frame photographs in white.
 
-"System" is one tap away in Personalise, and the rail toggle is always visible.
+"System" is one tap away in Settings, and the rail toggle is always visible.
 Only a genuinely first-time user gets the opinionated default; anyone who has
 ever set a preference keeps it.
 
 ### 4c.5 "CSS columns are the wrong masonry"
 
-Reading order runs down each column rather than across, which is a real cost.
-
-It is the right trade *here* because the grid is sorted by recency or shuffled,
-so there is no sequence for the reader to lose — and the alternative is a
-measurement pass, a reflow storm on every resize, and a JS dependency on the
-critical path of a build-free repository. In a ranked list I would have paid
-for the JS.
+That criticism was correct. CSS columns read top-to-bottom and eventually mount
+every tile. The replacement computes justified rows left-to-right and
+virtualises a small viewport window. It remains dependency-free, and a
+`ResizeObserver` limits measurement work to actual width changes.
 
 ---
 
@@ -379,9 +376,9 @@ Honest list of what is not finished, after this round.
 **Resolved by this round** (kept here so the record is legible): the
 `window.__commitTag` global went with the tag system; the dead saved-views
 persistence went with `KEYS.views`; the generic empty states are now specific
-per collection; selection loss when shrinking past 1200 px is fixed —
-`bindWindowClass` now re-hosts the open inspector into a sheet instead of
-discarding it.
+per collection; selection loss when shrinking past the inspector boundary is
+fixed — the selected item is re-hosted between a push drawer at 1024 px and a
+sheet below it.
 
 Still open:
 
@@ -394,14 +391,12 @@ Still open:
    changed the `meta` shape again (tags/note dropped, `openedAt` added). Old
    metadata is read leniently, but a returning user from the `bm-*` era still
    sees an empty library until re-import.
-3. **The grid is not virtualised.** Chunks of 120 with a "show more" control
-   are fine into the thousands; nobody has tried 50 000. The media index is
-   rebuilt in full on every render, which is O(posts × media) — cheap now,
-   linear later. An index cache keyed on the filter state is the obvious fix
-   and it is not written.
-4. **No pinch-zoom in the viewer.** Tap-to-zoom, `z`, swipe and native pan
-   all work; a two-finger pinch is not wired up. The sandbox has no
-   touchscreen, and emulated touch is not evidence.
+3. **The media index is still rebuilt in full on every render.** Virtualisation
+   bounds DOM work, but filtering and sorting remain O(posts × media). An index
+   cache keyed on filter state is the next scaling step.
+4. **Pinch-zoom needs real-device validation.** Pointer-event pinch, pan and
+   swipe are implemented, but the sandbox has no touchscreen and emulation is
+   not evidence for gesture feel.
 5. **The rails composition is heuristic, not evaluated.** Thresholds (≥3 opened
    items, ≥2 motion items, ≥4 per author, 10-item floor for grouping) are
    considered guesses that look right against a 7-post sample and a synthetic
@@ -441,12 +436,12 @@ In priority order:
    reasoning about the code, this is the highest-leverage addition available.
 3. **Cache the media index** between renders, keyed on the filter/sort state.
    Cheap, and it removes the only super-linear path in the app.
-4. **Paginate theater**, or make it stream from the same chunking the grid
-   uses.
+4. **Paginate theater**, or give it its own virtual slide window instead of a
+   fixed 120-item slice.
 5. **Test on Firefox and WebKit** — specifically the HLS branch on Safari, the
    only path no test here can execute, and `scroll-snap-stop`, which the whole
    theater view depends on.
 6. **Instrument the rails.** Which rails get scrolled, how far, and which
    produce an open. Every threshold in `buildRails` is currently a guess, and
    they are exactly the kind of guess that data settles in a week.
-7. **Pinch-zoom**, on a real device.
+7. **Validate pinch, pan and swipe**, on real iOS and Android devices.
