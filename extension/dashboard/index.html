@@ -37,9 +37,10 @@
 
   <!-- ---------------------------------------------------------------------
        Navigation rail — medium and up.
-       Five destinations, each a different way INTO the media, never a
-       different kind of object. Icons carry a filled indicator pill when
-       selected (M3E's active-indicator), so selection survives greyscale.
+       Browse destinations plus computed smart lenses. Each is a different
+       way INTO the media, never a different kind of object — there is
+       nothing to file. Icons carry a filled indicator pill when selected
+       (M3E's active-indicator), so selection survives greyscale.
        --------------------------------------------------------------------- -->
   <nav class="shell__rail m3e-rail" id="rail" aria-label="Primary">
     <div class="rail__brand" aria-hidden="true">
@@ -85,7 +86,14 @@
             <path d="M4 5h7v6H4V5Zm9 0h7v10h-7V5ZM4 13h7v6H4v-6Zm9 4h7v2h-7v-2Z"/>
           </svg>
         </span>
-        <h1 class="m3e-title-large m3e-title-large--emphasized app-bar__title" id="paneTitle">Browse</h1>
+        <button type="button" class="app-bar__destination m3e-state" id="paneDestination"
+          aria-haspopup="dialog" aria-controls="sheet"
+          aria-label="Browse. Choose a collection or smart lens">
+          <h1 class="m3e-title-large m3e-title-large--emphasized app-bar__title" id="paneTitle">Browse</h1>
+          <svg class="app-bar__destination-caret" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="currentColor">
+            <path d="M7.4 8.6 6 10l6 6 6-6-1.4-1.4L12 13.2 7.4 8.6Z"/>
+          </svg>
+        </button>
       </div>
 
       <div class="m3e-search app-bar__search" role="search">
@@ -186,6 +194,8 @@
       <!-- Result summary, announced to assistive tech --------------------- -->
       <p class="m3e-body-medium pane__summary" id="resultSummary" role="status" aria-live="polite"></p>
 
+      <div class="filtertokens" id="filterTokens" hidden></div>
+
       <!-- Every tile points its aria-describedby here. It lives in the shell
            rather than inside a view so the reference can never dangle when
            the view changes. -->
@@ -277,6 +287,7 @@
 <script src="../shared/m3e/video-controls.js"></script>
 <script src="bridge.js"></script>
 <script src="lightbox.js"></script>
+<script src="lenses.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

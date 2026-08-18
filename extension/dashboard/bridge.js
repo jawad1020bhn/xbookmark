@@ -62,10 +62,12 @@
       [KEY_ITEMS]: [],
       [KEY_DEAD]: [],
     });
+    const items = Array.isArray(got[KEY_ITEMS]) ? got[KEY_ITEMS] : [];
     return {
       available: true,
       state: got[KEY_STATE] || null,
-      count: Array.isArray(got[KEY_ITEMS]) ? got[KEY_ITEMS].length : 0,
+      count: items.length,
+      ids: items.map((row) => row && row.tweet_id).filter(Boolean).map(String),
       dead: Array.isArray(got[KEY_DEAD]) ? got[KEY_DEAD].length : 0,
     };
   }

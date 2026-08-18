@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "X Bookmarks Exporter",
   "version": "0.3.0",
-  "description": "Capture your own X bookmarks while you browse, then browse, search and tag them in a local dashboard.",
+  "description": "Capture your own X bookmarks while you browse, then browse them in a local dashboard — with computed smart lenses instead of tags.",
   "permissions": [
     "storage",
     "downloads"

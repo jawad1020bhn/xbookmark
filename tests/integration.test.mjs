@@ -166,7 +166,7 @@ test("no new permissions were added for the capture bridge", () => {
 });
 
 test("the dashboard is mirrored into the extension, without the sample data", () => {
-  for (const f of ["index.html", "app.js", "layout.css", "bridge.js", "lightbox.js"]) {
+  for (const f of ["index.html", "app.js", "layout.css", "bridge.js", "lightbox.js", "lenses.js"]) {
     assert.ok(existsSync(join(root, "extension/dashboard", f)), "missing mirror: " + f);
   }
   // 1.3 MB of demo media must not ship inside the extension package.
@@ -214,6 +214,27 @@ test("the sample library is not fetched inside the extension", () => {
   const app = read("extension/dashboard/app.js");
   const seed = app.slice(app.indexOf("seed with the sample file"), app.indexOf('fetch("bookmarks.json")'));
   assert.match(seed, /XBridge && XBridge\.available/);
+  // First run is opt-in: the empty state names the action, init does not fetch.
+  assert.match(app, /data-empty="sample"/);
+  assert.match(app, /function loadSampleLibrary/);
+  const boot = app.slice(app.indexOf("readUrl();"), app.indexOf("function loadSampleLibrary"));
+  assert.doesNotMatch(boot, /fetch\\("bookmarks\\.json"\\)/);
+});
+
+test("capture pending count is an id diff, not a length subtraction", () => {
+  const app = read("extension/dashboard/app.js");
+  const fn = app.slice(app.indexOf("function pendingCount"), app.indexOf("function renderCaptureBanner"));
+  assert.match(fn, /info\.ids/);
+  assert.match(fn, /have\.has\(String\(id\)\)/);
+  const bridge = read("extension/dashboard/bridge.js");
+  assert.match(bridge, /ids:/);
+});
+
+test("the vault reports how full browser storage is", () => {
+  const app = read("extension/dashboard/app.js");
+  assert.match(app, /function storageHealth/);
+  const vault = app.slice(app.indexOf("function openVault"), app.indexOf("function confirmClear"));
+  assert.match(vault, /vault__health/);
 });
 
 test("captured posts reach the dashboard through the normal import path", () => {
