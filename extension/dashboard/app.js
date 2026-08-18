@@ -971,6 +971,51 @@
 
     const sortDef = SORTS.find((s) => s.key === state.sort);
     if ($("chipSortLabel")) $("chipSortLabel").textContent = sortDef ? sortDef.label : "Newest";
+    renderFilterTokens();
+  }
+
+  /** Removable tokens for every active filter, so a selection is visible
+      after the menus close. Lives outside the three-chip bar on purpose. */
+  function renderFilterTokens() {
+    const host = $("filterTokens");
+    if (!host) return;
+    const tokens = [];
+    if (filters.search) tokens.push({ id: "search", label: "“" + filters.search.slice(0, 24) + (filters.search.length > 24 ? "…" : "") + "”" });
+    if (filters.author !== "all") tokens.push({ id: "author", label: "@" + filters.author });
+    if (filters.photos) tokens.push({ id: "photos", label: "Photos" });
+    if (filters.video) tokens.push({ id: "video", label: "Videos" });
+    if (filters.gif) tokens.push({ id: "gif", label: "GIFs" });
+    if (filters.minLikes) tokens.push({ id: "likes", label: "≥ " + fmtCount(filters.minLikes) + " likes" });
+    if (filters.minReposts) tokens.push({ id: "reposts", label: "≥ " + fmtCount(filters.minReposts) + " reposts" });
+    if (filters.from) tokens.push({ id: "from", label: "After " + filters.from });
+    if (filters.to) tokens.push({ id: "to", label: "Before " + filters.to });
+    host.hidden = !tokens.length;
+    host.innerHTML = tokens.map((t) =>
+      '<button type="button" class="m3e-chip m3e-chip--input m3e-state filtertokens__chip" data-clear-filter="' + t.id + '">' +
+        "<span>" + esc(t.label) + "</span>" +
+        '<span class="m3e-chip__remove" aria-hidden="true">' + svg("close", 16) + "</span>" +
+        '<span class="m3e-visually-hidden">Remove ' + esc(t.label) + " filter</span>" +
+      "</button>"
+    ).join("");
+    host.querySelectorAll("[data-clear-filter]").forEach((btn) => {
+      btn.addEventListener("click", () => clearOneFilter(btn.dataset.clearFilter));
+    });
+  }
+
+  function clearOneFilter(id) {
+    if (id === "search") {
+      filters.search = "";
+      if ($("search")) $("search").value = "";
+      if ($("searchClear")) $("searchClear").hidden = true;
+    } else if (id === "author") filters.author = "all";
+    else if (id === "photos") filters.photos = false;
+    else if (id === "video") filters.video = false;
+    else if (id === "gif") filters.gif = false;
+    else if (id === "likes") filters.minLikes = 0;
+    else if (id === "reposts") filters.minReposts = 0;
+    else if (id === "from") filters.from = "";
+    else if (id === "to") filters.to = "";
+    render();
   }
 
   function renderSummary(list) {
@@ -1166,15 +1211,18 @@
       }
       settle = setTimeout(() => {
         scrolling = false;
-        /* Resume only what the scroll itself paused — a video the reader
-           paused by hand stays paused, or a swipe becomes hostile. */
-        if (pausedByScroll && active && active.video && active.video.paused) {
-          const attempt = active.video.play();
-          if (attempt && attempt.catch) attempt.catch(() => {});
-        }
-        pausedByScroll = false;
-        choose();
-      }, 140);
+        /* One more frame so IntersectionObserver can report the settled
+           ratios before we pick and resume. Resume only what the scroll
+           itself paused — a video the reader paused by hand stays paused. */
+        requestAnimationFrame(() => {
+          choose();
+          if (pausedByScroll && active && active.video && active.video.paused && !active.video.ended) {
+            const attempt = active.video.play();
+            if (attempt && attempt.catch) attempt.catch(() => {});
+          }
+          pausedByScroll = false;
+        });
+      }, 180);
     };
 
     const observer = new IntersectionObserver(
@@ -1186,7 +1234,7 @@
         }
         if (!scrolling) choose();
       },
-      { threshold: [0, 0.4, 0.55, 0.7, 1] }
+      { threshold: [0, 0.3, 0.5, 0.7, 1] }
     );
 
     function choose() {
@@ -1199,7 +1247,7 @@
 
       let best = null;
       for (const rec of records.values()) {
-        if (rec.ratio >= 0.55 && (!best || rec.ratio > best.ratio)) best = rec;
+        if (rec.ratio >= 0.3 && (!best || rec.ratio > best.ratio)) best = rec;
       }
 
       if (!best) {
@@ -1672,8 +1720,9 @@
         '<button type="button" class="theater__close m3e-state" data-theater-close' +
         ' aria-label="Exit theater view" title="Exit theater (Esc)">' + svg("close", 22) + "</button>" +
       "</div>" +
-      '<div class="theater__hint m3e-label-medium" aria-hidden="true">' +
+      '<div class="theater__hint m3e-label-medium">' +
         svg("prev", 16) + "<span>" + hintText + "</span>" + svg("next", 16) +
+        '<span class="theater__pos m3e-tabular" id="theaterPos" aria-live="polite"></span>' +
       "</div>";
 
     const rail = $("theater");
@@ -1681,6 +1730,7 @@
     carousels.push(M3E.bindCarousel(rail, {}));
     carousels.push({ destroy: bindTheaterDismiss(rail, shell) });
     carousels.push({ destroy: bindTheaterScrollPause(rail) });
+    carousels.push({ destroy: bindTheaterPosition(rail, list.length) });
 
     /* Mount the real player for whichever slide is centred, and tear down the
        ones that are not. A hundred <video> elements on one page is how a tab
@@ -1861,6 +1911,26 @@
     };
   })();
 
+  /** Live "3 / 240" for the centred slide. The hint already owns the cap
+      when the list is truncated; this is just where you are. */
+  function bindTheaterPosition(rail, total) {
+    const el = $("theaterPos");
+    if (!rail || !el) return function () {};
+    const update = () => {
+      const nodes = rail.querySelectorAll(".slide");
+      if (!nodes.length) { el.textContent = ""; return; }
+      const mid = rail.scrollLeft + rail.clientWidth / 2;
+      let at = 0;
+      for (let i = 0; i < nodes.length; i++) {
+        if (mid >= nodes[i].offsetLeft) at = i;
+      }
+      el.textContent = (at + 1) + " / " + total.toLocaleString();
+    };
+    rail.addEventListener("scroll", update, { passive: true });
+    update();
+    return () => rail.removeEventListener("scroll", update);
+  }
+
   /** Pause theater playback while the rail scrolls; resume the centred slide
       when it settles. Returns a teardown that is disposed with the view. */
   function bindTheaterScrollPause(rail) {
@@ -2002,6 +2072,7 @@
     const filtered = activeFilterCount() > 0 || state.collection !== "all";
 
     if (!state.items.length) {
+      const demo = !(window.XBridge && XBridge.available);
       return (
         '<div class="m3e-empty">' +
           '<div class="m3e-empty__glyph">' + svg("image", 40) + "</div>" +
@@ -2010,6 +2081,10 @@
           '<div class="m3e-empty__actions">' +
             '<button class="m3e-button m3e-button--filled m3e-button--m m3e-state" data-empty="import">' +
               svg("download") + "<span>Import a file</span></button>" +
+            (demo
+              ? '<button class="m3e-button m3e-button--tonal m3e-button--m m3e-state" data-empty="sample">' +
+                svg("image") + "<span>Try a sample library</span></button>"
+              : "") +
           "</div>" +
         "</div>"
       );
@@ -2947,9 +3022,25 @@
     );
   }
 
+  function storageHealth() {
+    let used = 0;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i) || "";
+        const value = localStorage.getItem(key) || "";
+        used += (key.length + value.length) * 2;
+      }
+    } catch (_) { /* private mode */ }
+    const quota = 5 * 1024 * 1024;
+    const ratio = Math.min(1, used / quota);
+    const mb = (n) => (n / 1048576).toFixed(n >= 1048576 ? 1 : 2);
+    return { used, quota, ratio, label: mb(used) + " / ~" + mb(quota) + " MB" };
+  }
+
   function openVault() {
     const mediaCount = state.items.reduce((total, item) => total + item.media.length, 0);
     const visiblePosts = new Set(state.lastList.map((entry) => entry.item.tweet_id)).size;
+    const health = storageHealth();
 
     openDialog(
       "Data vault",
@@ -2958,6 +3049,16 @@
           '<div><p class="m3e-title-medium">Stored only in this browser</p>' +
           '<p class="m3e-body-small">' + plural(state.items.length, "post") + " · " +
             plural(mediaCount, "media item") + "</p></div>" +
+        "</div>" +
+        '<div class="vault__health" data-warn="' + String(health.ratio >= 0.7) + '">' +
+          '<div class="vault__health-head"><span class="m3e-label-medium">Browser storage</span>' +
+          '<span class="m3e-label-medium m3e-tabular">' + health.label + "</span></div>" +
+          '<div class="vault__health-track" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' +
+            Math.round(health.ratio * 100) + '" aria-label="Local storage used">' +
+            '<span class="vault__health-bar" style="inline-size:' + (health.ratio * 100).toFixed(1) + '%"></span></div>' +
+          (health.ratio >= 0.7
+            ? '<p class="m3e-body-small">This browser is running low on room. Export a backup before you capture more.</p>'
+            : '<p class="m3e-body-small">A backup is the only copy that survives clearing this browser.</p>') +
         "</div>" +
 
         '<section class="vault__group" aria-labelledby="vaultBringIn">' +
@@ -3170,8 +3271,15 @@
     idle:             { title: "Extension connected", tone: "idle" },
   };
 
-  function pendingCount(captured) {
-    return Math.max(0, (Number(captured) || 0) - state.items.length);
+  function pendingCount(info) {
+    const ids = info && Array.isArray(info.ids) ? info.ids : null;
+    if (ids && ids.length) {
+      const have = new Set(state.items.map((item) => item.tweet_id));
+      let n = 0;
+      for (const id of ids) if (id && !have.has(String(id))) n++;
+      return n;
+    }
+    return Math.max(0, (Number(info && info.count) || 0) - state.items.length);
   }
 
   function renderCaptureBanner(info) {
@@ -3182,7 +3290,7 @@
 
     const status = (info.state && info.state.status) || "idle";
     const copy = CAPTURE_COPY[status] || CAPTURE_COPY.idle;
-    const pending = pendingCount(info.count);
+    const pending = pendingCount(info);
     const live = status === "capturing";
 
     // Nothing running and nothing waiting: say nothing. A permanent "connected"
@@ -3322,6 +3430,7 @@
         if (what === "import") $("fileImport").click();
         else if (what === "clear") resetFilters();
         else if (what === "all") { resetFilters(); selectCollection("all"); }
+        else if (what === "sample") loadSampleLibrary();
         return;
       }
 
@@ -3396,22 +3505,29 @@
       }
     }, true);
 
-    /* Hover-to-play. pointerenter/pointerleave don't bubble, so these are
-       registered in the capture phase to work as a single delegated pair over
-       every tile, however many renders recreate them. Touch devices fail the
-       canHover gate and rely on the settled-in-view autoplayer instead. */
-    feed.addEventListener("pointerenter", (event) => {
-      const tile = event.target.closest && event.target.closest(".tile[data-motion='true']");
-      if (!tile || !canHover) return;
+    /* Hover-to-play. pointerenter does not travel the capture path of
+       descendants — a listener on the feed only fires when the pointer
+       first enters the feed itself, which is why hover previews never
+       started. pointerover/out bubble, so one delegated pair covers every
+       tile, and relatedTarget keeps moves inside the same tile quiet.
+       Touch pointers are ignored; they use the settled-in-view autoplayer. */
+    feed.addEventListener("pointerover", (event) => {
+      if (event.pointerType === "touch") return;
+      const tile = event.target.closest && event.target.closest(".tile");
+      if (!tile || tile.dataset.motion !== "true") return;
+      if (event.relatedTarget && tile.contains(event.relatedTarget)) return;
       if (!state.settings.autoplay || M3E.reducedMotion()) return;
       const entry = entryById(state.lastList, tile.dataset.entry);
       if (entry) mountTilePreview(tile, entry);
-    }, true);
+    });
 
-    feed.addEventListener("pointerleave", (event) => {
-      const tile = event.target.closest && event.target.closest(".tile[data-motion='true']");
-      if (tile && canHover) unmountTilePreview(tile);
-    }, true);
+    feed.addEventListener("pointerout", (event) => {
+      if (event.pointerType === "touch") return;
+      const tile = event.target.closest && event.target.closest(".tile");
+      if (!tile || tile.dataset.motion !== "true") return;
+      if (event.relatedTarget && tile.contains(event.relatedTarget)) return;
+      unmountTilePreview(tile);
+    });
 
     /* Keyboard activation for role="button" tiles. This is standard button
        behaviour (Enter/Space), not a shortcut system: it only fires when the
@@ -3488,24 +3604,27 @@
     syncViewSeg();
     render();
 
-    /* ---- seed with the sample file on a truly empty first run -------------
-       Skipped inside the extension: the sample library isn't mirrored into the
-       package (1.3 MB of demo media has no business shipping to users), and
-       there a first run means "go capture something", not "here's a demo". */
-    if (!state.items.length && !(window.XBridge && XBridge.available)) {
-      fetch("bookmarks.json")
-        .then((r) => (r.ok ? r.json() : Promise.reject(new Error("no sample"))))
-        .then((data) => {
-          const rows = Array.isArray(data) ? data : data.bookmarks || [];
-          merge(normalize(rows));
-          saveItems();
-          render();
-          snack.show("Loaded a sample library so you can explore. Import your own file to replace it.", { duration: 7000 });
-        })
-        .catch(() => {});
-    }
-
     bindEvents();
+  }
+
+  /* ---- seed with the sample file on a truly empty first run -------------
+     Skipped inside the extension: the sample library isn't mirrored into the
+     package (1.3 MB of demo media has no business shipping to users), and
+     there a first run means "go capture something", not "here's a demo".
+     Outside the extension the empty state offers "Try a sample library"
+     instead of loading it unasked. */
+  function loadSampleLibrary() {
+    if (window.XBridge && XBridge.available) return;
+    fetch("bookmarks.json")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("no sample"))))
+      .then((data) => {
+        const rows = Array.isArray(data) ? data : data.bookmarks || [];
+        merge(normalize(rows));
+        saveItems();
+        render();
+        snack.show("Loaded a sample library so you can explore. Import your own file to replace it.", { duration: 7000 });
+      })
+      .catch(() => snack.show("No sample library is available here.", { error: true }));
   }
 
   function bindEvents() {

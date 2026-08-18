@@ -178,6 +178,20 @@ test("the theater says when the item cap truncates the list", () => {
   assert.match(app, /"<span>" \+ hintText \+ "<\/span>"/);
 });
 
+test("theater shows a live position counter", () => {
+  assert.match(app, /function bindTheaterPosition/);
+  assert.match(app, /id="theaterPos"/);
+  assert.match(app, /bindTheaterPosition\(rail, list\.length\)/);
+});
+
+test("active filters render as removable tokens outside the three-chip bar", () => {
+  assert.match(app, /function renderFilterTokens/);
+  assert.match(app, /function clearOneFilter/);
+  assert.match(html, /id="filterTokens"/);
+  const bar = html.slice(html.indexOf('class="filterbar"'), html.indexOf("Result summary"));
+  assert.doesNotMatch(bar, /filterTokens/);
+});
+
 test("a carousel is operable from the keyboard", () => {
   // A horizontally scrolling region drivable only by wheel or swipe fails
   // WCAG 2.1.1. The controller owns arrows, Home and End.
@@ -311,9 +325,13 @@ test("motion tiles preview on hover, muted, with native controls for unmute", ()
   assert.match(fn, /muted: true/);
   assert.match(fn, /controls: !gif/);
   assert.match(fn, /loop: gif/);
-  assert.match(app, /pointerenter/);
+  assert.match(app, /pointerover/);
+  assert.match(app, /pointerout/);
   assert.match(app, /canHover/);
   assert.match(app, /data-playing/);
+  // pointerenter on the feed never sees child tiles; over/out bubble.
+  assert.match(app, /pointerType === "touch"/);
+  assert.match(app, /relatedTarget/);
   // The tile click must not fire when the click is on a video's own controls;
   // a GIF preview (no controls) still opens the viewer when clicked.
   assert.match(app, /closest\("\.tile__video\[controls\]"\)/);
@@ -328,6 +346,8 @@ test("touch playback plays the centred tile and pauses while scrolling", () => {
   assert.match(fn, /window\.addEventListener\("scroll"/);
   assert.match(fn, /setTimeout/);
   assert.match(fn, /pausedByScroll/);
+  assert.match(fn, /requestAnimationFrame/);
+  assert.match(fn, /rec\.ratio >= 0\.3/);
 });
 
 test("theater holds playback while the rail is mid-swipe", () => {
