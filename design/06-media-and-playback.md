@@ -164,7 +164,14 @@ memory leak with extra steps. The theater's IntersectionObserver mounts a
 player when a slide becomes centred and **removes the element entirely** when
 it leaves, rather than pausing it.
 
-### 4.5 Failure is handled, then admitted
+### 4.5 Directional prefetch
+
+The lightbox keeps a three-item runway in the direction of travel. Image assets
+are decoded ahead of time; HLS playlists and the first 64 KiB range of MP4
+sources are fetched into cache. Prefetch never mounts a hidden `<video>`, so it
+warms network data without allocating extra decoders.
+
+### 4.6 Failure is handled, then admitted
 
 A source that 404s or is codec-rejected fires `error` on the element and then
 does nothing at all. `createVideo` attaches an error handler that:
@@ -183,8 +190,8 @@ thing they saved, even when this tool cannot render it.
 
 Automated, in `tests/`:
 
-* `run-tests.mjs` — the scraper emits the full ladder, the poster, the
-  sensitivity flag and stable positions, from a real captured GraphQL fixture.
+* `run-tests.mjs` — the scraper emits the full ladder, poster and stable
+  positions from a real captured GraphQL fixture.
 * `media.test.mjs` — MP4 beats HLS; Chromium's false `"maybe"` is disbelieved;
   `hlsOnly` flags exactly the unplayable case; aspect ratios clamp; the
   normaliser preserves every field playback depends on.

@@ -43,11 +43,11 @@ on the page.
 |---|---|---|---|
 | **Rails** | Horizontal carousels, grouped | *"What have I got?"* — grazing | First open |
 | **Grid** | Justified, aspect-respecting columns | *"Where is that one thing?"* — searching | After a filter or search |
-| **Theater** | One item per screen, paged horizontally | *"Show me."* — watching | Reached by `v`, or from a rail |
+| **Theater** | One item per screen, paged horizontally | *"Show me."* — watching | Reached from the view switch or a rail |
 
-All three scroll horizontally at the point of interaction, which is the
-brief's central requirement and the interaction model of X itself. Rails
-scroll x within a y-scrolling page; theater is pure x.
+Rails scroll horizontally within the document and theater is a pure horizontal
+pager. Grid uses native vertical document scrolling with a virtualised,
+left-to-right justified layout.
 
 ---
 
@@ -135,7 +135,7 @@ no build step, every mirrored text file carries an
 | `01-foundations.md` | Colour, type, shape, space, elevation, motion — every token and the reasoning, including deliberate deviations from M3's reference implementation |
 | `02-components.md` | Component inventory, anatomy, states, and the M3E guideline each maps to |
 | `03-layout-and-navigation.md` | Adaptive strategy across the window classes, the three views, navigation model, information architecture |
-| `04-accessibility.md` | Contrast maths, keyboard model, screen-reader semantics, reduced motion, forced colours |
+| `04-accessibility.md` | Contrast maths, focus and input semantics, screen-reader behaviour, reduced motion, forced colours |
 | `05-critique.md` | Design critique: what was wrong before, what changed, what each decision traces to, and what remains open |
 | `06-media-and-playback.md` | The media pipeline end to end: scrape → normalise → select a source → play. The video correctness argument |
 
@@ -161,6 +161,6 @@ personalisation space (6 seeds × 4 variants × 3 contrast levels × light/dark 
 2 160 pairs) drops below 4.5:1, if a control border uses a decorative colour
 role, if two curated seeds collapse to the same scheme, if the extension mirror
 is stale, if either surface references a file that does not exist, if a
-browsing view stops scrolling horizontally or snapping, if a carousel loses its
-keyboard controls, if the viewer stops traversing the whole library, or if the
-tag/note systems reappear anywhere in the source.
+carousel or theater stops scrolling horizontally or snapping, if a carousel
+loses its keyboard controls, if the viewer stops traversing the whole library,
+or if the tag/note systems reappear anywhere in the source.

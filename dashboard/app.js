@@ -45,11 +45,12 @@
      1 · Constants
      =========================================================================== */
 
-  /* How many media items a grid renders before "Show more". Media is far
-     cheaper per item than the old post cards were — a tile is one <img> with
-     a fixed aspect box, no text layout, no metrics row — so the chunk is
-     bigger than the old 60 and still paints faster. */
-  const CHUNK = 120;
+  /* The masonry computes positions for the full result set but only mounts a
+     small viewport window. Keeping this below 200 protects scroll performance
+     even when the library contains tens of thousands of media items. */
+  const MAX_GRID_NODES = 180;
+  const GRID_OVERSCAN = 1.5;
+  const THEATER_LIMIT = 120;
 
   const KEYS = {
     items: "xbm.items",
@@ -219,6 +220,7 @@
   let sheet = null;
   let dialog = null;
   let autoplayer = null;
+  let virtualGrid = null;
   const carousels = [];
 
   const readJSON = (key, fallback) => {
@@ -529,7 +531,7 @@
      Shuffling
 
      A shuffle has to be *stable within a viewing session*. If the order were
-     redrawn on every render, opening an item or loading the next chunk would
+     redrawn on every render, opening an item or changing a filter would
      reshuffle the list under the reader's cursor — the tile they were aiming
      at moves as they click. So the order is a pure function of a seed, and
      the seed only changes when the user asks for a new one.
@@ -1174,52 +1176,136 @@
   /* ---------------------------------------------------------------------------
      Grid view
 
-     A justified, aspect-respecting grid. Media keeps its own shape — a
-     portrait screenshot stays portrait — because cropping everything to a
-     square is how a media browser turns into a contact sheet, and a contact
-     sheet of screenshots is unreadable.
-
-     Implemented as CSS columns rather than a JS masonry: no measurement pass,
-     no reflow storm on resize, and it degrades to a single column with no
-     media query. The tradeoff is reading order runs down each column rather
-     than across, which is the right tradeoff for a browsing surface where
-     there is no order to lose.
+     A virtualised justified masonry. Layout is computed for the full result
+     set in memory, in left-to-right reading order, but only rows near the
+     viewport are mounted. Unlike CSS columns this preserves sort order and
+     keeps DOM size bounded independently of library size.
      --------------------------------------------------------------------------- */
-  function renderGrid(list, append) {
-    const feed = $("feed");
-    feed.dataset.view = "grid";
-
-    if (!list.length) { feed.innerHTML = emptyStateHtml(); return; }
-
-    const from = append ? state.rendered : 0;
-    const slice = list.slice(from, from + CHUNK);
-    const html = slice.map((e) => tileHtml(e, { size: "small" })).join("");
-
-    if (append) {
-      const host = feed.querySelector(".grid");
-      if (host) host.insertAdjacentHTML("beforeend", html);
-    } else {
-      feed.innerHTML =
-        '<div class="grid" data-size="' + esc(state.settings.tileSize) + '">' + html + "</div>";
-    }
-    state.rendered = from + slice.length;
-
-    renderLoadMore(list);
+  function gridTargetHeight(width) {
+    const target = { small: 170, medium: 230, large: 310 }[state.settings.tileSize] || 230;
+    return Math.max(120, Math.min(target, width < 600 ? width * 0.62 : target));
   }
 
-  function renderLoadMore(list) {
-    const host = $("loadMoreHost");
-    if (!host) return;
-    const remaining = list.length - state.rendered;
-    if (state.view !== "grid" || remaining <= 0) { host.innerHTML = ""; return; }
+  function justifiedRows(entries, width) {
+    const gap = width < 600 ? 8 : 12;
+    const target = gridTargetHeight(width);
+    const rows = [];
+    let cursor = 0;
+    let top = 0;
 
-    host.innerHTML =
-      '<button class="m3e-button m3e-button--tonal m3e-button--m m3e-state" id="loadMore">' +
-      "<span>Show " + Math.min(CHUNK, remaining).toLocaleString() + " more</span></button>";
-    $("loadMore").addEventListener("click", () => {
-      renderGrid(list, true);
+    while (cursor < entries.length) {
+      const cells = [];
+      let ratioSum = 0;
+      while (cursor < entries.length) {
+        const entry = entries[cursor++];
+        const ratio = Number(M3EMedia.aspectRatio(entry.media)) || 1;
+        cells.push({ entry, ratio });
+        ratioSum += ratio;
+        const ideal = (width - gap * (cells.length - 1)) / ratioSum;
+        if (ideal <= target || cells.length >= 6) break;
+      }
+
+      const last = cursor >= entries.length;
+      const exact = (width - gap * (cells.length - 1)) / ratioSum;
+      const height = Math.max(1, Math.min(target * 1.35, last ? Math.min(target, exact) : exact));
+      let left = 0;
+      for (const cell of cells) {
+        cell.left = left;
+        cell.top = top;
+        cell.height = height;
+        cell.width = height * cell.ratio;
+        left += cell.width + gap;
+      }
+      rows.push({ top, bottom: top + height, cells });
+      top += height + gap;
+    }
+
+    return { rows, height: Math.max(0, top - (rows.length ? gap : 0)) };
+  }
+
+  function createVirtualGrid(host, entries) {
+    let layout = null;
+    let frame = 0;
+    let renderedKey = "";
+    let destroyed = false;
+
+    const paint = () => {
+      frame = 0;
+      if (destroyed || !layout) return;
+      const hostTop = host.getBoundingClientRect().top + window.scrollY;
+      const viewportTop = window.scrollY - hostTop;
+      const overscan = window.innerHeight * GRID_OVERSCAN;
+      const from = viewportTop - overscan;
+      const to = viewportTop + window.innerHeight + overscan;
+      /* Rows are monotonic, so binary-search the first visible one rather than
+         scanning the geometry of a 50,000-item library on every scroll frame. */
+      let low = 0, high = layout.rows.length;
+      while (low < high) {
+        const mid = (low + high) >> 1;
+        if (layout.rows[mid].bottom < from) low = mid + 1;
+        else high = mid;
+      }
+      let cells = [];
+      for (let row = low; row < layout.rows.length && layout.rows[row].top <= to; row++) {
+        cells.push(...layout.rows[row].cells);
+      }
+
+      if (cells.length > MAX_GRID_NODES) {
+        const centre = viewportTop + window.innerHeight / 2;
+        cells = cells
+          .sort((a, b) => Math.abs((a.top + a.height / 2) - centre) - Math.abs((b.top + b.height / 2) - centre))
+          .slice(0, MAX_GRID_NODES)
+          .sort((a, b) => a.top - b.top || a.left - b.left);
+      }
+
+      const key = cells.map((cell) => cell.entry.id).join("|");
+      if (key === renderedKey) return;
+      renderedKey = key;
+      host.innerHTML = cells.map((cell) =>
+        '<div class="grid-virtual__cell" role="listitem" style="transform:translate3d(' + cell.left.toFixed(2) + "px," +
+          cell.top.toFixed(2) + 'px,0);inline-size:' + cell.width.toFixed(2) + "px;block-size:" +
+          cell.height.toFixed(2) + 'px">' + tileHtml(cell.entry, { size: "small" }) + "</div>"
+      ).join("");
+      host.dataset.rendered = String(cells.length);
       if (autoplayer && autoplayer.rescan) autoplayer.rescan();
-    });
+    };
+
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(paint); };
+    const relayout = () => {
+      if (destroyed) return;
+      const width = Math.max(1, host.clientWidth);
+      layout = justifiedRows(entries, width);
+      host.style.blockSize = layout.height + "px";
+      renderedKey = "";
+      schedule();
+    };
+
+    window.addEventListener("scroll", schedule, { passive: true });
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(relayout) : null;
+    if (observer) observer.observe(host);
+    else window.addEventListener("resize", relayout);
+    relayout();
+
+    return {
+      destroy() {
+        destroyed = true;
+        if (frame) cancelAnimationFrame(frame);
+        window.removeEventListener("scroll", schedule);
+        window.removeEventListener("resize", relayout);
+        if (observer) observer.disconnect();
+      },
+    };
+  }
+
+  function renderGrid(list) {
+    const feed = $("feed");
+    feed.dataset.view = "grid";
+    if (!list.length) { feed.innerHTML = emptyStateHtml(); return; }
+
+    feed.innerHTML = '<div class="grid-virtual" data-size="' + esc(state.settings.tileSize) +
+      '" role="list" aria-label="Media grid"></div>';
+    state.rendered = list.length;
+    virtualGrid = createVirtualGrid(feed.querySelector(".grid-virtual"), list);
   }
 
   /* ---------------------------------------------------------------------------
@@ -1227,8 +1313,8 @@
 
      One item per screen, paged horizontally. This is the X-style gesture
      applied to a whole library rather than to the four photos inside one
-     post: swipe (or arrow, or scroll) and the next thing you saved is
-     already there, full size, playing.
+     post: swipe or scroll and the next thing you saved is already there,
+     full size, playing.
 
      Built on scroll-snap with `scroll-snap-stop: always`, so a fast flick
      advances exactly one item rather than skidding through six. Videos mount
@@ -1240,7 +1326,7 @@
     feed.dataset.view = "theater";
     if (!list.length) { feed.innerHTML = emptyStateHtml(); return; }
 
-    const slice = list.slice(0, CHUNK);
+    const slice = list.slice(0, THEATER_LIMIT);
     state.rendered = slice.length;
 
     feed.innerHTML =
@@ -1248,7 +1334,7 @@
         slice.map((e) => theaterSlideHtml(e)).join("") +
       "</div>" +
       '<div class="theater__hint m3e-label-medium" aria-hidden="true">' +
-        svg("prev", 16) + "<span>Swipe or use arrow keys</span>" + svg("next", 16) +
+        svg("prev", 16) + "<span>Swipe or scroll</span>" + svg("next", 16) +
       "</div>";
 
     const rail = $("theater");
@@ -1451,6 +1537,7 @@
     // Tear down anything the previous render owned, or its observers keep
     // firing against detached nodes for the life of the page.
     while (carousels.length) { const c = carousels.pop(); if (c && c.destroy) c.destroy(); }
+    if (virtualGrid) { virtualGrid.destroy(); virtualGrid = null; }
     if (autoplayer && autoplayer.disconnect) { autoplayer.disconnect(); autoplayer = null; }
     M3EMedia.stopAll();
 
@@ -1465,8 +1552,6 @@
     else if (state.view === "theater") renderTheater(list);
     else renderGrid(list, false);
 
-    renderLoadMore(list);
-
     // GIFs autoplay in place wherever they are visible: a still frame of a
     // looping GIF is an unreadable object, and the loop IS the content.
     if (state.view !== "theater" && state.settings.autoplay) {
@@ -1479,7 +1564,7 @@
     if (!feed) return;
     feed.dataset.view = "grid";
     feed.innerHTML =
-      '<div class="grid">' +
+      '<div class="grid-skeleton">' +
       Array.from({ length: n || 8 }, () =>
         '<div class="m3e-skeleton tile-skeleton" style="--_ar:' + (0.8 + Math.random() * 0.9).toFixed(2) + '"></div>'
       ).join("") +
@@ -1597,7 +1682,7 @@
       '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + hostOf(url) + "</a>");
   }
 
-  const isLargeWindow = () => window.innerWidth >= 1200;
+  const isLargeWindow = () => window.innerWidth >= 1024;
 
   function openDetail(entryId) {
     const entry = entryById(state.lastList, entryId);
@@ -1697,8 +1782,8 @@
 
      The lightbox is handed the WHOLE current index, not just the four photos
      inside one post. That is the single change that makes this a library
-     browser: open anything, then keep going with the arrow keys or a swipe
-     and you traverse everything you saved, in the order you are currently
+     browser: open anything, then use the visible controls, filmstrip or swipe
+     to traverse everything you saved in the order you are currently
      sorted by — across posts, across authors, across years.
      --------------------------------------------------------------------------- */
   function viewerContext(item) {
@@ -1919,6 +2004,74 @@
     });
   }
 
+  function metricHistogram(metric, current) {
+    const values = state.items
+      .filter((item) => {
+        if (!matchesCollection(item)) return false;
+        if (filters.search) {
+          const needle = searchable(filters.search);
+          if (needle && !item._search.includes(needle)) return false;
+        }
+        if (filters.author !== "all" && item.author_username !== filters.author) return false;
+        if (filters.from && item._ts && item._ts < new Date(filters.from).getTime()) return false;
+        if (filters.to && item._ts && item._ts > new Date(filters.to + "T23:59:59").getTime()) return false;
+        return item.media.some((media) => matchesMedia(media, item));
+      })
+      .map((item) => Math.max(0, Number(item[metric]) || 0));
+    const max = values.reduce((highest, value) => Math.max(highest, value), 0);
+    const bins = Array(28).fill(0);
+    const logMax = Math.log1p(max || 1);
+    for (const value of values) {
+      const at = max ? Math.min(bins.length - 1, Math.floor((Math.log1p(value) / logMax) * bins.length)) : 0;
+      bins[at]++;
+    }
+    const peak = Math.max(1, ...bins);
+    const position = max && current ? (Math.log1p(Math.min(current, max)) / logMax) * 100 : 0;
+    const label = metric === "likes" ? "Minimum likes" : "Minimum reposts";
+    const bars = bins.map((count, index) => {
+      const end = max ? Math.round(Math.expm1(logMax * ((index + 1) / bins.length))) : 0;
+      return '<span class="histogram__bar" data-bin-end="' + end + '" style="--_height:' +
+        (count ? Math.max(4, (count / peak) * 100) : 0).toFixed(1) + '%"></span>';
+    }).join("");
+
+    return (
+      '<div class="histogram" data-histogram="' + metric + '" data-max="' + max + '">' +
+        '<div class="histogram__head"><label class="m3e-label-large" for="hist-' + metric + '">' + label + "</label>" +
+        '<output class="histogram__value m3e-label-large m3e-tabular" for="hist-' + metric + '"></output></div>' +
+        '<div class="histogram__bars" aria-hidden="true">' + bars + "</div>" +
+        '<input class="histogram__range" id="hist-' + metric + '" type="range" min="0" max="100" step="0.25" value="' +
+          position.toFixed(2) + '" aria-label="' + label + '"' + (max ? "" : " disabled") + " />" +
+        '<div class="histogram__axis m3e-label-small"><span>Any</span><span>' + fmtCount(max) + "</span></div>" +
+      "</div>"
+    );
+  }
+
+  function histogramThreshold(control) {
+    const input = control.querySelector(".histogram__range");
+    const max = Number(control.dataset.max) || 0;
+    const position = Number(input.value) || 0;
+    return max && position > 0
+      ? Math.max(1, Math.round(Math.expm1(Math.log1p(max) * (position / 100))))
+      : 0;
+  }
+
+  function bindHistogram(control) {
+    const input = control.querySelector(".histogram__range");
+    const output = control.querySelector(".histogram__value");
+    const update = () => {
+      const value = histogramThreshold(control);
+      const position = Number(input.value) || 0;
+      control.style.setProperty("--_threshold", position + "%");
+      output.textContent = value ? "≥ " + fmtCount(value) : "Any";
+      input.setAttribute("aria-valuetext", value ? "At least " + value.toLocaleString() : "Any amount");
+      control.querySelectorAll(".histogram__bar").forEach((bar) => {
+        bar.dataset.below = String(value > 0 && Number(bar.dataset.binEnd) < value);
+      });
+    };
+    input.addEventListener("input", update);
+    update();
+  }
+
   function openRefine() {
     const field = (id, label, value, type, extra) =>
       '<label class="m3e-field"><span class="m3e-label-medium">' + esc(label) + "</span>" +
@@ -1927,10 +2080,10 @@
 
     openSheet("Refine",
       '<div class="refine">' +
-        '<p class="m3e-body-medium refine__help">Narrow by how the post performed, or when it was posted.</p>' +
-        '<div class="refine__row">' +
-          field("refLikes", "Minimum likes", filters.minLikes || "", "number", 'min="0" inputmode="numeric"') +
-          field("refReposts", "Minimum reposts", filters.minReposts || "", "number", 'min="0" inputmode="numeric"') +
+        '<p class="m3e-body-medium refine__help">Drag across the distributions to set engagement thresholds, then optionally narrow by date.</p>' +
+        '<div class="refine__histograms">' +
+          metricHistogram("likes", filters.minLikes) +
+          metricHistogram("reposts", filters.minReposts) +
         "</div>" +
         '<div class="refine__row">' +
           field("refFrom", "Posted after", filters.from, "date") +
@@ -1942,9 +2095,10 @@
         "</div>" +
       "</div>",
       (host) => {
+        host.querySelectorAll("[data-histogram]").forEach(bindHistogram);
         host.querySelector('[data-refine="apply"]').addEventListener("click", () => {
-          filters.minLikes = parseInt(host.querySelector("#refLikes").value, 10) || 0;
-          filters.minReposts = parseInt(host.querySelector("#refReposts").value, 10) || 0;
+          filters.minLikes = histogramThreshold(host.querySelector('[data-histogram="likes"]'));
+          filters.minReposts = histogramThreshold(host.querySelector('[data-histogram="reposts"]'));
           filters.from = host.querySelector("#refFrom").value || "";
           filters.to = host.querySelector("#refTo").value || "";
           sheet.close();
@@ -2551,25 +2705,13 @@
       }
     });
 
-    /* Right-click / long-press equivalent: opening the post rather than the
-       media. A secondary action needs a discoverable route, so it is also on
-       the inspector button and on `i`. */
+    /* Right-click / long-press opens the post behind the media without
+       introducing a global shortcut system. */
     feed.addEventListener("contextmenu", (event) => {
       const tile = event.target.closest(".tile[data-entry]");
       if (!tile) return;
       event.preventDefault();
       openDetail(tile.dataset.entry);
-    });
-
-    feed.addEventListener("keydown", (event) => {
-      const tile = event.target.closest(".tile[data-entry]");
-      if (!tile) return;
-      // `i` inspects without opening: the keyboard route to the post behind
-      // the picture.
-      if (event.key === "i" || event.key === "I") {
-        event.preventDefault();
-        openDetail(tile.dataset.entry);
-      }
     });
 
     // Broken remote images degrade to a neutral placeholder, never a broken
@@ -2588,63 +2730,6 @@
         img.replaceWith(span);
       }
     }, true);
-  }
-
-  function bindGlobalKeys() {
-    document.addEventListener("keydown", (event) => {
-      const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement && document.activeElement.tagName);
-      const viewing = !!(window.XLightbox && XLightbox.isOpen);
-
-      if (event.key === "/" && !typing && !viewing) {
-        event.preventDefault();
-        const search = $("search");
-        if (search) { search.focus(); search.select(); }
-        return;
-      }
-      if (event.key === "Escape") {
-        // Innermost surface wins. The lightbox sits above the sheet, so it
-        // must swallow Escape before the inspector sees it.
-        if (window.XLightbox && XLightbox.isOpen) return;
-        if (dialog.isOpen) return;      // the overlay handles its own Escape
-        if (sheet.isOpen) return;
-        if (state.selectedId && isLargeWindow()) clearDetail();
-        else if (typing && document.activeElement === $("search")) {
-          $("search").value = "";
-          filters.search = "";
-          render();
-        }
-        return;
-      }
-      if (typing || viewing) return;
-
-      // "s" re-deals a shuffle, or starts one. The single most repeated
-      // action in this feature deserves a single key.
-      if (event.key === "s" || event.key === "S") {
-        event.preventDefault();
-        const already = isShuffle();
-        if (!already) state.sort = "random";
-        reshuffle();
-        render();
-        snack.show(already ? "Shuffled." : "Shuffling your library.");
-        return;
-      }
-
-      // "v" cycles the view. Switching between grazing, searching and
-      // watching is the most frequent thing anyone does here.
-      if (event.key === "v" || event.key === "V") {
-        event.preventDefault();
-        setView(VIEWS[(VIEWS.indexOf(state.view) + 1) % VIEWS.length]);
-        snack.show(state.view[0].toUpperCase() + state.view.slice(1) + " view");
-        return;
-      }
-
-      // Number keys jump between collections — power-user affordance.
-      const index = parseInt(event.key, 10);
-      if (index >= 1 && index <= COLLECTIONS.length) {
-        event.preventDefault();
-        selectCollection(COLLECTIONS[index - 1].id);
-      }
-    });
   }
 
   function init() {
@@ -2674,7 +2759,7 @@
        a window mid-read silently lost your place. The content is identical
        in both containers; only the container changes, which is the entire
        promise of an adaptive layout. */
-    M3E.bindWindowClass(() => {
+    const rehostInspector = () => {
       if (!state.selectedId) return;
       const body = $("detailBody");
       const paneShowing = body && !body.hidden;
@@ -2686,7 +2771,14 @@
         clearDetailPaneOnly();
         openDetail(state.selectedId);   // reopens as a sheet
       }
-    });
+    };
+    M3E.bindWindowClass(rehostInspector);
+    /* 1024 sits inside M3's expanded class, so it needs its own re-host signal.
+       The virtual grid's ResizeObserver then recomputes rows after the drawer
+       takes its column, preserving spatial context instead of covering media. */
+    const inspectorBreakpoint = matchMedia("(min-width: 1024px)");
+    if (inspectorBreakpoint.addEventListener) inspectorBreakpoint.addEventListener("change", rehostInspector);
+    else if (inspectorBreakpoint.addListener) inspectorBreakpoint.addListener(rehostInspector);
     M3E.bindScrollChrome({ appBar: $("appBar"), toolbar: $("navBar") });
 
     readUrl();
@@ -2798,7 +2890,6 @@
     if ($("fileRestore")) $("fileRestore").addEventListener("change", (e) => handleFile(e.target, { restore: true }));
 
     bindFeed();
-    bindGlobalKeys();
     bindCaptureBanner();
   }
 

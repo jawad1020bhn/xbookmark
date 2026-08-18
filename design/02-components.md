@@ -46,7 +46,6 @@ adopts the ones that fit, and — importantly — leaves out the ones that don't
 
 - **Docked toolbar** — the compact surface already floats one toolbar; a second
   persistent bar would eat the room this redesign exists to reclaim.
-- **Sliders** — nothing here is a continuous quantity.
 - **Wavy *determinate* progress** — the capture genuinely doesn't know its total
   ahead of time. Showing a determinate bar would be a lie.
 - **Split button** — the previous build's `Import ▾` split button is gone.
@@ -168,6 +167,11 @@ single-choice menu. More holds author, dates and engagement thresholds, plus a
 contextual clear action. Shuffle stays in Sort rather than becoming a fourth
 standalone control.
 
+**Refine uses visual distributions, not number fields.** Likes and reposts are
+shown as 28-bin logarithmic histograms with an overlaid range input. Dragging a
+threshold dims excluded bars and updates a formatted value, so users explore
+their actual library instead of guessing a number.
+
 ### 2.4 Inspector
 
 The post *behind* the selected media. Deliberately not called a detail view:
@@ -175,9 +179,9 @@ the media is the main event and this is context.
 
 One HTML builder, two presentations:
 
-- **≥ 1200 px** — a persistent third column. No scrim, no focus trap: it is
-  part of the page, and trapping focus in an always-visible region is hostile.
-- **< 1200 px** — a bottom sheet (compact) or side sheet (medium) with scrim,
+- **≥ 1024 px** — a persistent third column that pushes and reflows the feed.
+  No scrim or focus trap: it is part of the page.
+- **< 1024 px** — a bottom sheet (compact) or side sheet (medium) with scrim,
   focus trap and Escape.
 
 It holds the author, text, metrics, sibling media and recovery actions. A media
@@ -281,7 +285,7 @@ capture, normalisation, source selection, playback and failure — has its own
 document, **`06-media-and-playback.md`**, because it crosses every layer of the
 project. What follows is only the presentation side.
 
-### 5.1 There is no media grid any more
+### 5.1 There is no in-post collage any more
 
 The previous build reproduced X's 1/2/3/4 in-post arrangement inside each card.
 That made sense when the unit was a post. It does not now: a post with four
@@ -292,14 +296,14 @@ full size, each with its own place in the sort order.
 What is retained from that arrangement is the `n/m` badge, so an item that came
 from a multi-photo post still says so, and the inspector lists its siblings.
 
-### 5.2 Sizing
+### 5.2 Sizing and virtualisation
 
-**Every tile is sized by ratio, never by pixel height.** The intrinsic ratio
-rides a `--_ar` custom property set from the captured `width`/`height`, and
-images additionally carry real `width`/`height` attributes. The space is
-therefore correct before any bytes arrive, and the feed does not reflow as it
-loads — a media-heavy surface that jumps while scrolling is unusable, and
-cumulative layout shift is the usual cause.
+**Every tile is sized from its captured ratio.** The virtual grid groups items
+into justified left-to-right rows, computes all rectangles in memory, then
+mounts only the rows near the viewport. The result keeps sort order, never
+crops media, and caps mounted cells below 200 even for very large libraries.
+Images still carry intrinsic `width`/`height`, so mounted rows do not shift as
+bytes arrive.
 
 Where cropping is and is not permitted is tabulated in
 `03-layout-and-navigation.md` §3. The short version: only the hero rail crops,
@@ -337,9 +341,9 @@ is not a flourish; it is the only way the content is legible at all.
 
 **It traverses the whole library.** This is the change that turns the viewer
 from a per-post gallery into a browser: it is handed the entire current index,
-not the handful of attachments inside one post. Open anything, then keep going
-with the arrow keys or a swipe, and you move across posts, across authors and
-across years, in whatever order you are currently sorted by. `contextAt(i)`
+not the handful of attachments inside one post. Open anything, then use the
+visible navigation, filmstrip or a swipe to move across posts, authors and
+years in the current sort order. `contextAt(i)`
 relabels the top bar as you cross a post boundary.
 
 **Anatomy.** Top bar (author, date, counter, copy link, open on X, close) ·
@@ -358,23 +362,15 @@ bar would cost more than the photograph being looked at.
 I first tried, the app chrome was still legible behind the photo and competed
 with it. The residual 3% plus a 4px blur keeps it from reading as a flat void.
 
-**Zoom** is native overflow scrolling, not a JS drag-pan: the image is allowed
-to exceed the stage and the stage scrolls. That inherits momentum, trackpad
-gestures, keyboard scrolling and touch panning, all of which a hand-rolled pan
-handler gets subtly wrong. Clicking zooms toward the clicked point, so the
-pixel under the cursor stays under the cursor. Zoom targets `max(natural size,
-2.5× displayed)` — zooming only to natural size does nothing for an image
-smaller than the stage, which is most screenshots on a desktop monitor, i.e.
-precisely the case zoom exists for.
+**Gestures.** A horizontal one-finger swipe navigates. Pinching with two
+fingers zooms around the gesture midpoint, and one finger pans while zoomed.
+Desktop click-to-zoom still targets `max(natural size, 2.5× displayed)` and
+uses the stage's native overflow.
 
-**Keyboard.** `←` `→` navigate, `Home`/`End` jump, `z` zooms (centred, since
-there is no pointer to zoom toward), `Space` plays/pauses, `Escape` closes.
-`Space` matters more than it looks: native video controls auto-hide, so
-without it the only way to pause is to make a hidden control reappear first,
-which reads as the player ignoring you. Keys are bound on the
-document rather than the viewer root: clicking a non-focusable `<img>` moves
-focus to `<body>`, and a root listener would then never fire — Escape appeared
-dead after any click on the media itself.
+**Directional prefetch.** After each navigation the next three items in that
+direction are warmed: high-resolution images decode through `Image`, HLS
+playlists are fetched, and the first 64 KiB range of MP4 sources enters the
+browser cache. No hidden video elements or extra decoders are created.
 
 **Layering.** `--md-sys-z-immersive: 1200`, above the snackbar. A toast
 floating over a full-bleed photo is both illegible and unreachable. The first
@@ -382,8 +378,7 @@ attempt used a hand-picked `z-index: 60` and lost to the sticky chrome at 100 �
 which is the argument for the z-scale existing at all.
 
 **Below 600px** the arrows are hidden and swipe takes over, matching the
-gesture X's own viewer uses. Vertical drag is left alone so a zoomed image can
-still be panned.
+gesture X's own viewer uses. The same pointer gesture layer owns pinch and pan.
 
 **Playback** goes through the same `M3EMedia` single-player manager as the
 grid, so an inline video stops when the viewer opens and cannot play behind it.
@@ -497,8 +492,8 @@ another deterministic sort.
 
 **The hard requirement is that a shuffle be random between sessions and
 perfectly stable within one.** If the order were redrawn on every render,
-opening an item or loading the next chunk would reshuffle the list under the
-reader's cursor and the tile they were aiming at would move as they clicked.
+opening an item or changing a filter would reshuffle the list under the reader's
+cursor and the tile they were aiming at would move as they clicked.
 
 So the order is a pure function of a seed:
 
@@ -513,11 +508,9 @@ So the order is a pure function of a seed:
 - The seed travels in the URL, so a copied link reproduces the exact order the
   sender saw — the same promise every other filter in this app makes.
 
-Re-dealing stays inside the sorting model: press **`s`** anywhere, or re-pick
-Shuffle in the Sort menu. There is no standalone Shuffle chip competing with
-filters. Re-dealing scrolls back to the top and announces itself — the list has
-just changed underneath the reader, and silence there is disorienting rather
-than delightful.
+Re-dealing stays inside the sorting model: re-pick Shuffle in the Sort menu.
+There is no standalone Shuffle chip or global shortcut competing with filters.
+The list changes only after an explicit menu choice.
 
 > **Two menu bugs this exposed.** Both predate the feature and were invisible
 > with seven options. (1) The capture-phase scroll listener that closes a menu

@@ -28,7 +28,7 @@
      Three window classes, one DOM:
        compact   (<600)   full-bleed feed + floating bottom bar
        medium    (600+)   navigation rail + feed
-       expanded  (1200+)  navigation rail + feed + persistent inspector
+       wide      (1024+)  navigation rail + feed + persistent inspector
      ========================================================================== -->
 <div class="shell">
 
@@ -94,14 +94,13 @@
           aria-label="Search your media" aria-describedby="searchHint"
           autocomplete="off" spellcheck="false" />
         <span id="searchHint" class="m3e-visually-hidden">
-          Results update as you type. Press slash to return here.
+          Results update as you type.
         </span>
         <button class="m3e-icon-button m3e-icon-button--s m3e-state" id="searchClear" aria-label="Clear search" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
             <path d="M18.3 7.1 16.9 5.7 12 10.6 7.1 5.7 5.7 7.1l4.9 4.9-4.9 4.9 1.4 1.4 4.9-4.9 4.9 4.9 1.4-1.4-4.9-4.9 4.9-4.9Z"/>
           </svg>
         </button>
-        <kbd class="m3e-search__kbd" aria-hidden="true">/</kbd>
       </div>
 
       <div class="app-bar__actions">
@@ -188,14 +187,12 @@
            rather than inside a view so the reference can never dangle when
            the view changes. -->
       <p id="tileHint" class="m3e-visually-hidden">
-        Opens the full-size viewer. Press i to see the post it came from.
+        Opens the full-size viewer. Right-click or long-press for post details.
       </p>
 
       <!-- The feed. Its contents are entirely view-dependent: rails, grid or
            theater. One region, three renderers. -->
       <main class="feed" id="feed" tabindex="-1"></main>
-
-      <div class="feed__more" id="loadMoreHost"></div>
 
       <footer class="pane__foot m3e-body-small">
         <span>All data lives in this browser. Nothing is uploaded.</span>
@@ -204,7 +201,7 @@
   </div>
 
   <!-- ---------------------------------------------------------------------
-       Inspector — persistent on expanded windows, a sheet below that.
+       Inspector — persistent from 1024 px, a sheet below that.
        Deliberately NOT called "detail": it holds the post behind whatever
        media is selected, which is context, not the main event. The pane is
        collapsed entirely while nothing is selected — the feed keeps the room.

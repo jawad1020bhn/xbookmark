@@ -17,11 +17,12 @@ never a second design.
 
 | Class | Width | Navigation | Feed | Inspector |
 |---|---|---|---|---|
-| compact | < 600 | Floating toolbar (bottom) | Full-bleed, 2-col grid | Bottom sheet |
+| compact | < 600 | Floating toolbar (bottom) | Full-bleed justified grid | Bottom sheet |
 | medium | 600–839 | Navigation rail | Wider rails | Side sheet |
-| expanded | 840–1199 | Navigation rail | Wider rails, taller cells | Side sheet |
-| large | 1200–1599 | Navigation rail | Feed | **Persistent, 400 px** |
-| extra-large | ≥ 1600 | Navigation rail | Feed | **Persistent, 460 px** |
+| expanded | 840–1023 | Navigation rail | Wider rails, taller cells | Side sheet |
+| wide | 1024–1199 | Navigation rail | Feed resizes around drawer | **Persistent, 360 px** |
+| large | 1200–1599 | Navigation rail | Feed resizes around drawer | **Persistent, 400 px** |
+| extra-large | ≥ 1600 | Navigation rail | Feed resizes around drawer | **Persistent, 460 px** |
 
 ### 1.1 Why compact gets a floating toolbar, not a navigation bar
 
@@ -35,9 +36,8 @@ hides on scroll-down and returns on scroll-up, driven by
 at all while the user is actually browsing.
 
 This is the pattern every media app converged on independently, for the same
-reason. The primary action (Import) rides in the same pill as a small FAB, so
-compact does not need a separate floating action button competing for the
-same corner.
+reason. The Data Vault rides in the same pill as a small FAB, so compact does
+not need a separate floating action button competing for the same corner.
 
 ### 1.2 Why the app bar is glass
 
@@ -56,16 +56,15 @@ Two details that matter:
 
 ### 1.3 The inspector, not a detail pane
 
-At ≥ 1200 px a third column appears. It is deliberately **not** called a detail
+At ≥ 1024 px a third column appears. It is deliberately **not** called a detail
 view: it holds the post *behind* whichever media is selected, which is context,
-not the main event. It is narrower than the previous build's detail pane
-(400 px vs 420 px) because it now holds less — no tag editor, no note field,
-no media grid, since the media is already on screen at full size.
+not the main event. The drawer is a real grid track, so opening it pushes and
+reflows the feed instead of covering media. A `ResizeObserver` immediately
+recomputes virtual masonry rows at the new width.
 
-Below 1200 px the same markup is rendered into a sheet: a bottom sheet on
-compact, a side sheet from medium up. `bindWindowClass` re-hosts an open
-inspector across that boundary, so resizing the window never loses the
-selection.
+Below 1024 px the same markup is rendered into a sheet: a bottom sheet on
+compact, a side sheet from medium up. A dedicated breakpoint listener re-hosts
+an open inspector across 1024 px, so resizing never loses the selection.
 
 ---
 
@@ -106,18 +105,16 @@ grouping is not.
 
 ### 2.2 Grid — searching
 
-CSS multi-column, not a JS masonry. No measurement pass, no reflow storm on
-resize, and it degrades to a single column with no media query.
+A Flickr-style justified masonry computes rows in left-to-right sort order,
+using each item's captured aspect ratio without cropping. The full geometry is
+cheap in-memory data; only rows within 1.5 viewports of the screen are mounted.
+The window is hard-capped at 180 media cells, so a 50,000-item result does not
+create a 50,000-node wall.
 
-The tradeoff is that reading order runs *down* each column rather than across.
-That is the right tradeoff here: in a browsing surface sorted by recency or
-shuffled, there is no sequence to lose. It would be the wrong tradeoff in a
-ranked list.
-
-Column width is user-controllable (Dense 180 px / Medium 240 px / Large 340 px)
-in Settings, because how much detail you need per item depends entirely on
-whether you are hunting for a screenshot of text or flipping through
-photographs.
+Tile size controls the target row height (Dense / Medium / Large). A
+`ResizeObserver` recalculates geometry when the viewport changes or when the
+persistent inspector takes a column. Scroll position remains in the document,
+so native browser scrolling, restoration and find behaviour still work.
 
 ### 2.3 Theater — watching
 
@@ -146,7 +143,7 @@ The rule is applied by surface, according to what that surface is *for*:
 
 | Surface | Sizing | Crops? | Why |
 |---|---|---|---|
-| Grid tile | `aspect-ratio: --_ar`, max 78 vh | No | The grid is for finding things; a cropped screenshot cannot be found |
+| Grid tile | Justified row height × captured ratio | No | Row geometry preserves ratio and left-to-right order |
 | Multi-browse cell | Fixed height, **width** derived from ratio | No | Uniform height is what makes a strip read as a strip; varying width preserves the ratio |
 | Hero cell | Fixed height *and* width | **Yes** | Letting each hero self-size leaves a ragged column of dead space beside every landscape item. The hero's job is to invite a tap |
 | Theater stage | Flexes into the remaining dynamic viewport, `object-fit: contain` | No | The whole frame stays visible while preserving the media's ratio |
@@ -189,27 +186,7 @@ reproduces exactly what the sender was looking at, shuffle order included.
 
 ---
 
-## 5. Keyboard model
-
-| Key | Action |
-|---|---|
-| `/` | Focus search |
-| `s` | Shuffle, or re-deal the current shuffle |
-| `v` | Cycle view: rails → grid → theater |
-| `1`–`5` | Jump to destination |
-| `i` | Inspect the focused tile (the post behind it) |
-| `←` `→` `Home` `End` | Page the focused rail or theater |
-| `Enter` / `Space` | Open the focused tile in the viewer |
-| `Escape` | Close the innermost surface: viewer → dialog → sheet → inspector → search |
-| **In the viewer** | `←` `→` traverse the whole library · `Home` `End` jump · `z` zoom · `Space` play/pause · `Escape` close |
-
-A horizontally scrolling region that can only be driven by a wheel or a swipe
-fails WCAG 2.1.1, so every carousel is focusable and arrow-operable, and the
-rail hands the scroll back to the page at its ends rather than trapping it.
-
----
-
-## 6. Density
+## 5. Density
 
 Three scalars over the 4 dp grid — comfortable (1), compact (0.75), spacious
 (1.25) — plus the independent grid tile-size control. They are separate on

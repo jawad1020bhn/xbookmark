@@ -133,7 +133,7 @@ test("data management is isolated from visual settings", () => {
    Horizontal browsing
    --------------------------------------------------------------------------- */
 
-test("every browsing view is horizontally scrollable", () => {
+test("horizontal browsing surfaces remain scrollable", () => {
   // The brief's central requirement. Rails and theater are both x-scrollers,
   // and both must snap, or a flick lands between items.
   for (const sel of [".m3e-carousel", ".theater"]) {
@@ -290,7 +290,7 @@ test("unplayable media stays quiet until hover or inspection", () => {
   assert.match(layout, /\.tile:hover \.tile__status/);
   assert.match(detail, /Find on Wayback/);
   assert.match(detail, /Remove from library/);
-  const feed = app.slice(app.indexOf("function bindFeed"), app.indexOf("function bindGlobalKeys"));
+  const feed = app.slice(app.indexOf("function bindFeed"), app.indexOf("function init()"));
   assert.match(feed, /M3EMedia\.hlsOnly\(entry\.media\)\) openDetail/);
 });
 
@@ -329,7 +329,7 @@ test("the filmstrip is windowed, not materialised in full", () => {
    --------------------------------------------------------------------------- */
 
 test("all three window classes are served", () => {
-  for (const bp of ["600px", "1200px"]) {
+  for (const bp of ["600px", "1024px", "1200px"]) {
     assert.ok(layout.includes("(min-width: " + bp + ")"), "missing breakpoint " + bp);
   }
   // Compact gets a floating toolbar, not a docked bar that permanently costs
@@ -364,7 +364,7 @@ test("theater media fits inside the dynamic viewport", () => {
 test("the private dashboard has no sensitive-content gate", () => {
   const tile = app.slice(app.indexOf("function tileHtml"), app.indexOf("function buildRails"));
   const theater = app.slice(app.indexOf("function theaterSlideHtml"), app.indexOf("function mountTheaterPlayers"));
-  const feed = app.slice(app.indexOf("function bindFeed"), app.indexOf("function bindGlobalKeys"));
+  const feed = app.slice(app.indexOf("function bindFeed"), app.indexOf("function init()"));
 
   // Every media item renders normally and the first activation opens it.
   for (const src of [tile, theater, feed, components, layout]) {
@@ -402,7 +402,7 @@ test("every tile is a real button with a meaningful label", () => {
 test("the feed uses one delegated listener, not one per tile", () => {
   // Several hundred tiles are recreated on every keystroke of the search box;
   // per-tile handlers would mean a thousand closures per render.
-  const fn = app.slice(app.indexOf("function bindFeed"), app.indexOf("function bindGlobalKeys"));
+  const fn = app.slice(app.indexOf("function bindFeed"), app.indexOf("function init()"));
   const listeners = fn.match(/feed\.addEventListener/g) || [];
   assert.ok(listeners.length >= 3, "expected delegated listeners on the feed");
   assert.doesNotMatch(fn, /querySelectorAll\("\.tile"\)[\s\S]{0,80}addEventListener/);
@@ -413,6 +413,7 @@ test("a render disposes of what the previous render owned", () => {
   // keep firing for the life of the page otherwise.
   const fn = app.slice(app.indexOf("function render()"), app.indexOf("function showSkeletons"));
   assert.match(fn, /carousels\.pop\(\)/);
+  assert.match(fn, /virtualGrid\.destroy\(\)/);
   assert.match(fn, /autoplayer\.disconnect\(\)/);
   assert.match(fn, /M3EMedia\.stopAll\(\)/);
 });
@@ -425,8 +426,9 @@ test("selection survives crossing the inspector breakpoint, both ways", () => {
   // The previous build closed the pane on the way down and did not reopen the
   // sheet, so resizing a window mid-read silently lost your place. The content
   // is identical in both containers; only the container changes.
-  const fn = app.slice(app.indexOf("M3E.bindWindowClass("), app.indexOf("M3E.bindScrollChrome"));
+  const fn = app.slice(app.indexOf("const rehostInspector"), app.indexOf("M3E.bindScrollChrome"));
   assert.match(fn, /if \(!state\.selectedId\) return;/);
+  assert.match(fn, /min-width: 1024px/);
   assert.match(fn, /if \(!paneShowing\) openDetail\(state\.selectedId\);/);
   assert.match(fn, /clearDetailPaneOnly\(\);\s*\n\s*openDetail\(state\.selectedId\)/);
 });

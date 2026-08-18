@@ -98,10 +98,8 @@ decoratively.
   keeps scrolling instead of the pointer being trapped in a rail — a
   **2.1.2 (No Keyboard Trap)** problem in spirit even when it is a pointer
   doing the scrolling.
-- **`i` inspects the focused tile**, so the post behind a picture is reachable
-  without the pointer-only context-menu gesture that also exposes it.
 - **Focus trap** in modal overlays only (dialog, bottom sheet, side sheet), via
-  `M3E.createOverlay`. The persistent detail pane at ≥1200 px is deliberately
+  `M3E.createOverlay`. The persistent detail pane at ≥1024 px is deliberately
   *not* trapped — it is part of the page.
 - **Focus restoration** — closing an overlay returns focus to whatever opened
   it.
@@ -201,8 +199,6 @@ A dedicated `@media (forced-colors: active)` block:
 - **Video controls are the browser's own**, which are already keyboard
   complete, screen-reader labelled and localised. A bespoke control bar is a
   large amount of code whose best possible outcome is parity with them.
-- **`Space` plays and pauses in the viewer**, because native controls auto-hide
-  and would otherwise have to be summoned back before they could be used.
 - **Unplayable video says so.** An HLS-only item renders an explanation and a
   "Watch on X" link rather than a play button that leads nowhere. A control
   that does nothing is worse for a screen-reader user than an absent one,
