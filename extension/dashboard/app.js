@@ -72,14 +72,32 @@
     tileSize: "medium",
   });
 
-  /** Destinations. Each is a lens over the same media index. */
+  /** Destinations. Each is a lens over the same media index.
+      `kind: "lens"` marks a computed smart collection — never filed into,
+      never stored. The compact bar keeps the four browse destinations;
+      the rail and the title picker expose the rest. */
   const COLLECTIONS = [
-    { id: "all", label: "All", icon: "grid", describe: "Everything you've saved" },
-    { id: "video", label: "Video", icon: "play", describe: "Video and GIFs" },
-    { id: "photos", label: "Photos", icon: "image", describe: "Still images" },
-    { id: "recent", label: "Recent", icon: "clock", describe: "What you looked at last" },
-    { id: "archived", label: "Archive", icon: "archive", describe: "Removed from your active set" },
+    { id: "all",      kind: "browse", label: "All",       icon: "grid",    describe: "Everything you've saved" },
+    { id: "video",    kind: "browse", label: "Video",     icon: "play",    describe: "Video and GIFs" },
+    { id: "photos",   kind: "browse", label: "Photos",    icon: "image",   describe: "Still images" },
+    { id: "recent",   kind: "browse", label: "Recent",    icon: "clock",   describe: "What you looked at last" },
+    { id: "archived", kind: "browse", label: "Archive",   icon: "archive", describe: "Removed from your active set" },
+
+    { id: "unseen",      kind: "lens", label: "Unseen",     icon: "unseen",   describe: "Saved but not opened yet" },
+    { id: "captured",    kind: "lens", label: "Captured",   icon: "inbox",    describe: "Added in the last two weeks", sort: "captured" },
+    { id: "engagement",  kind: "lens", label: "Popular",    icon: "heart",    describe: "Posts that punched above their reach", sort: "engagement" },
+    { id: "long",        kind: "lens", label: "Long",       icon: "film",     describe: "Videos of 30 seconds or more", sort: "duration" },
+    { id: "portrait",    kind: "lens", label: "Portrait",   icon: "portrait", describe: "Tall stills and screenshots" },
+    { id: "wide",        kind: "lens", label: "Wide",       icon: "wide",     describe: "Landscapes and panoramic stills", sort: "widest" },
+    { id: "alt",         kind: "lens", label: "Alt text",   icon: "alt",      describe: "Media that arrived with a caption" },
+    { id: "forgotten",   kind: "lens", label: "Forgotten",  icon: "gem",      describe: "Older saves you have not gone back to", sort: "oldest" },
+    { id: "gifs",        kind: "lens", label: "GIFs",       icon: "gif",      describe: "Looping animations" },
+    { id: "resume",      kind: "lens", label: "Watching",   icon: "resume",   describe: "Videos with a saved place" },
   ];
+
+  const BROWSE_COLLECTIONS = COLLECTIONS.filter((c) => c.kind !== "lens");
+  const SMART_LENSES = COLLECTIONS.filter((c) => c.kind === "lens");
+  const collectionById = (id) => COLLECTIONS.find((c) => c.id === id) || null;
 
   /* Sorts are grouped, because a flat list of seventeen is a wall rather than
      a menu. M3E's menu guidance allows gaps and headers to categorise related
@@ -157,6 +175,15 @@
     expand: '<path d="M4 4h6v2H6v4H4V4Zm10 0h6v6h-2V6h-4V4ZM4 14h2v4h4v2H4v-6Zm14 0h2v6h-6v-2h4v-4Z"/>',
     fullscreen: '<path d="M5 5h5v2H7v3H5V5Zm9 0h5v5h-2V7h-3V5ZM5 14h2v3h3v2H5v-5Zm12 0h2v5h-5v-2h3v-3Z"/>',
     shuffle: '<path d="M17 4.5 21.5 9 17 13.5V10.4h-2.1c-1 0-1.6.4-2.4 1.6l-.6 1-1.4-2.3.4-.6C12 8.3 13.2 7.6 15 7.6H17V4.5ZM3 8h3.2c1.6 0 2.8.6 3.9 2.2l3 4.6c.7 1 1.2 1.3 2 1.3H17v-3.1L21.5 17 17 21.5v-3.1h-1.9c-1.7 0-2.9-.7-4-2.4l-3-4.6C7.4 10.3 6.9 10 6.2 10H3V8Zm0 8h3.2c.6 0 1-.2 1.5-.8l.4-.6 1.4 2.3-.2.3c-.9 1.2-1.9 1.8-3.1 1.8H3v-3Z"/>',
+    unseen: '<path d="M2.1 4.5 3.5 3.1 21 20.6 19.6 22 16.2 18.6C14.9 19.1 13.5 19.4 12 19.4 7 19.4 2.7 16.4 1 12.4c.7-1.7 1.8-3.2 3.2-4.4L2.1 4.5Zm5.6 5.6A4.2 4.2 0 0 0 12 16.4c.5 0 1-.1 1.4-.2l-5.7-5.7Zm11.6 5.2-1.6-1.6c.5-.7.8-1.5.8-2.3A4.2 4.2 0 0 0 12 7.2c-.7 0-1.4.2-2 .5L8.4 6.1C9.5 5.6 10.7 5.4 12 5.4c5 0 9.3 3 11 7-.6 1.5-1.5 2.8-2.7 3.9Z"/>',
+    inbox: '<path d="M4 4h16v6h-5.2L12 13.2 9.2 10H4V4Zm0 8h4.4l2.2 2.5a2 2 0 0 0 3 0L15.8 12H20v8H4v-8Z"/>',
+    film: '<path d="M4 4h16v16H4V4Zm2 2v2h2V6H6Zm10 0v2h2V6h-2ZM6 16v2h2v-2H6Zm10 0v2h2v-2h-2ZM8 8h8v8H8V8Z"/>',
+    portrait: '<path d="M8 3h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm1 3v10h6V6H9Z"/>',
+    wide: '<path d="M3 8h18v8H3V8Zm2 2v4h14v-4H5Z"/>',
+    alt: '<path d="M4 5h16v3H4V5Zm0 6h10v2H4v-2Zm0 5h14v2H4v-2Z"/>',
+    gem: '<path d="M12 2 21 9l-9 13L3 9l9-7Zm0 3.2L6.4 9 12 17.5 17.6 9 12 5.2Z"/>',
+    gif: '<path d="M5 7h14v10H5V7Zm2 2v6h3v-2H9v-2h2V9H7Zm6 0v6h2V9h-2Zm3 0v6h2V9h-2Z"/>',
+    resume: '<path d="M5 5h3v14H5V5Zm6 0 11 7-11 7V5Z"/>',
   };
 
   const svg = (name, size) =>
@@ -517,12 +544,50 @@
   const isGif = (m) => m.type === "animated_gif";
   const isPhoto = (m) => !isVideo(m) && !isGif(m);
 
+  /* Engagement cutoff is a property of the whole library, not of one item.
+     Computed once per index pass so a 75th-percentile scan is not repeated
+     for every photo in a four-photo post. */
+  let cachedEngagementCutoff = null;
+
+  function engagementCutoffNow() {
+    if (cachedEngagementCutoff != null) return cachedEngagementCutoff;
+    const Lenses = window.XBMLenses;
+    if (!Lenses) return (cachedEngagementCutoff = Number.POSITIVE_INFINITY);
+    const scores = [];
+    for (const item of state.items) {
+      if (getMeta(item.tweet_id).active === false) continue;
+      if (!item.media.length) continue;
+      scores.push(Lenses.engagementScore(item));
+    }
+    cachedEngagementCutoff = Lenses.engagementCutoff(scores);
+    return cachedEngagementCutoff;
+  }
+
+  function lensContext(item, media) {
+    return {
+      now: Date.now(),
+      openedAt: getMeta(item.tweet_id).openedAt,
+      cutoff: state.collection === "engagement" ? engagementCutoffNow() : 0,
+      progress: state.progress[item.tweet_id + ":" + media.position] || null,
+    };
+  }
+
+  /** Smart lenses are media-level questions, same as Video/Photos. */
+  function matchesSmartLens(media, item) {
+    const dest = collectionById(state.collection);
+    if (!dest || dest.kind !== "lens") return true;
+    const Lenses = window.XBMLenses;
+    if (!Lenses) return true;
+    return Lenses.matches(state.collection, media, item, lensContext(item, media));
+  }
+
   function matchesMedia(media, item) {
     // Collection is a media-level question now: "Video" means video items,
     // not posts that happen to contain one alongside three photos.
     if (state.collection === "video" && isPhoto(media)) return false;
     if (state.collection === "photos" && !isPhoto(media)) return false;
     if (state.collection === "recent" && !getMeta(item.tweet_id).openedAt) return false;
+    if (!matchesSmartLens(media, item)) return false;
 
     /* Type state remains a union so older shared URLs that selected multiple
        types still reproduce faithfully. The progressive menu writes one
@@ -540,6 +605,7 @@
 
   /** The flat, filtered, sorted list of media entries the views render. */
   function mediaIndex() {
+    cachedEngagementCutoff = null;
     const out = [];
     for (const item of state.items) {
       if (!matchesPost(item)) continue;
@@ -761,47 +827,60 @@
   /* ===========================================================================
      6 · Chrome
      =========================================================================== */
+  function destButton(c, cls) {
+    const selected = c.id === state.collection;
+    return (
+      '<button class="' + cls + ' m3e-state" role="tab" data-collection="' + c.id + '"' +
+      ' aria-selected="' + selected + '" tabindex="' + (selected ? "0" : "-1") + '"' +
+      ' title="' + esc(c.describe) + '">' +
+      '<span class="m3e-rail__indicator">' + svg(c.icon, 24) + "</span>" +
+      "<span>" + esc(c.label) + "</span>" +
+      "</button>"
+    );
+  }
+
   function renderNav() {
     const rail = $("railItems");
     const bar = $("navBar");
     if (!rail || !bar) return;
 
-    rail.innerHTML = COLLECTIONS.map((c) => {
-      const selected = c.id === state.collection;
-      return (
-        '<button class="m3e-rail__item m3e-state" role="tab" data-collection="' + c.id + '"' +
-        ' aria-selected="' + selected + '" tabindex="' + (selected ? "0" : "-1") + '"' +
-        ' title="' + esc(c.describe) + '">' +
-        '<span class="m3e-rail__indicator">' + svg(c.icon, 24) + "</span>" +
-        "<span>" + esc(c.label) + "</span>" +
-        "</button>"
-      );
-    }).join("");
+    rail.innerHTML =
+      '<div class="rail__group" role="presentation">' +
+        BROWSE_COLLECTIONS.map((c) => destButton(c, "m3e-rail__item")).join("") +
+      "</div>" +
+      '<div class="rail__group rail__group--lenses" role="presentation">' +
+        '<p class="rail__group-label m3e-label-small" id="railLensesLabel">Lenses</p>' +
+        SMART_LENSES.map((c) => destButton(c, "m3e-rail__item")).join("") +
+      "</div>";
 
     /* The floating bar carries the four browsing destinations plus the Vault
-       as its trailing filled action. Heavy data operations stay together
-       rather than leaking into navigation or visual settings. */
+       as its trailing filled action. Smart lenses live in the title picker
+       on compact — fourteen destinations will not fit a 64px pill. */
     bar.innerHTML =
-      COLLECTIONS.slice(0, 4).map((c) => {
-        const selected = c.id === state.collection;
-        return (
-          '<button class="m3e-nav-bar__item m3e-state" role="tab" data-collection="' + c.id + '"' +
-          ' aria-selected="' + selected + '" title="' + esc(c.describe) + '">' +
-          '<span class="m3e-rail__indicator">' + svg(c.icon, 24) + "</span>" +
-          "<span>" + esc(c.label) + "</span></button>"
-        );
-      }).join("") +
+      BROWSE_COLLECTIONS.slice(0, 4).map((c) => destButton(c, "m3e-nav-bar__item")).join("") +
       '<button class="m3e-fab m3e-fab--primary m3e-fab--small m3e-state nav-bar__fab" id="navFab"' +
       ' aria-label="Open data vault">' + svg("vault", 22) + "</button>";
 
-    document.querySelectorAll("[data-collection]").forEach((btn) => {
+    rail.querySelectorAll("[data-collection]").forEach((btn) => {
+      btn.addEventListener("click", () => selectCollection(btn.dataset.collection));
+    });
+    bar.querySelectorAll("[data-collection]").forEach((btn) => {
       btn.addEventListener("click", () => selectCollection(btn.dataset.collection));
     });
     const navFab = $("navFab");
     if (navFab) navFab.addEventListener("click", openVault);
 
-    const title = COLLECTIONS.find((c) => c.id === state.collection);
+    const title = collectionById(state.collection);
     if ($("paneTitle")) $("paneTitle").textContent = title ? title.label : "Browse";
+    const dest = $("paneDestination");
+    if (dest) {
+      const lens = !!(title && title.kind === "lens");
+      dest.dataset.lens = String(lens);
+      dest.setAttribute(
+        "aria-label",
+        (title ? title.label : "Browse") + ". Choose a collection or smart lens"
+      );
+    }
   }
 
   /* The window is the scroll container — `.pane` never overflows on its own,
@@ -813,8 +892,17 @@
 
   function selectCollection(id) {
     if (!COLLECTIONS.some((c) => c.id === id)) return;
+    const dest = collectionById(id);
     state.collection = id;
     state.settings.lastCollection = id;
+    /* A lens that is really a ranked question (popular, long, newly
+       captured) brings its own sort with it. The user can still change
+       sort afterwards; this only fires on an explicit destination pick,
+       never on a shared URL. */
+    if (dest && dest.sort && SORTS.some((s) => s.key === dest.sort)) {
+      state.sort = dest.sort;
+      state.settings.sort = dest.sort;
+    }
     saveSettings();
     renderNav();
     render();
@@ -1227,6 +1315,22 @@
       rails.push({ id: "recent", title: "Pick up where you left off", icon: "clock", entries: recent, layout: "multi" });
     }
 
+    // 1b · Unseen, only on All. A computed lens, surfaced as a rail so it
+    //      does not have to be filed to be found. "See all" opens the lens.
+    if (state.collection === "all") {
+      const unseen = take(list, (e) => !getMeta(e.item.tweet_id).openedAt, 20);
+      if (unseen.length >= 4) {
+        rails.push({
+          id: "lens:unseen",
+          title: "Unseen",
+          icon: "unseen",
+          entries: unseen,
+          layout: "multi",
+          lens: "unseen",
+        });
+      }
+    }
+
     // 2 · Motion. The most likely thing someone came here to watch, and the
     //     hardest thing to find in a wall of stills. Hero layout, because a
     //     video thumbnail at tile size tells you almost nothing.
@@ -1303,6 +1407,10 @@
           ? '<button class="m3e-button m3e-button--text m3e-button--xs m3e-state" data-rail-author="' +
             esc(rail.author) + '">See all</button>'
           : "") +
+        (rail.lens
+          ? '<button class="m3e-button m3e-button--text m3e-button--xs m3e-state" data-rail-lens="' +
+            esc(rail.lens) + '">See all</button>'
+          : "") +
         (rail.more
           ? '<button class="m3e-button m3e-button--text m3e-button--xs m3e-state" data-rail-grid="1">See all</button>'
           : "") +
@@ -1364,6 +1472,9 @@
     });
     feed.querySelectorAll("[data-rail-grid]").forEach((btn) => {
       btn.addEventListener("click", () => setViewAndRender("grid"));
+    });
+    feed.querySelectorAll("[data-rail-lens]").forEach((btn) => {
+      btn.addEventListener("click", () => selectCollection(btn.dataset.railLens));
     });
   }
 
@@ -1933,6 +2044,66 @@
         body: "Nothing in this library has a still image — or the filters have excluded them all.",
         action: activeFilterCount() ? { id: "clear", label: "Clear filters" } : { id: "all", label: "See everything" },
       },
+      unseen: {
+        icon: "unseen",
+        title: "You've opened everything",
+        body: "Nothing left unseen. Newly captured posts will land here until you look at them.",
+        action: activeFilterCount() ? { id: "clear", label: "Clear filters" } : { id: "all", label: "Browse everything" },
+      },
+      captured: {
+        icon: "inbox",
+        title: "Nothing captured recently",
+        body: "Nothing new has arrived in the last two weeks. Run a capture, or browse the rest of the library.",
+        action: activeFilterCount() ? { id: "clear", label: "Clear filters" } : { id: "all", label: "Browse everything" },
+      },
+      engagement: {
+        icon: "heart",
+        title: "Nothing stands out yet",
+        body: "High engagement is the top quarter of this library. There isn't enough signal yet — or the filters hid it.",
+        action: activeFilterCount() ? { id: "clear", label: "Clear filters" } : { id: "all", label: "Browse everything" },
+      },
+      long: {
+        icon: "film",
+        title: "No long videos",
+        body: "Nothing here runs for 30 seconds or more — or the filters have excluded them.",
+        action: activeFilterCount() ? { id: "clear", label: "Clear filters" } : { id: "all", label: "See everything" },
+      },
+      portrait: {
+        icon: "portrait",
+        title: "No portraits here",
+        body: "No tall stills or screenshots in this library — or the filters have excluded them.",
+        action: activeFilterCount() ? { id: "clear", label: "Clear filters" } : { id: "all", label: "See everything" },
+      },
+      wide: {
+        icon: "wide",
+        title: "No wide stills",
+        body: "No landscapes or panoramic screenshots — or the filters have excluded them.",
+        action: activeFilterCount() ? { id: "clear", label: "Clear filters" } : { id: "all", label: "See everything" },
+      },
+      alt: {
+        icon: "alt",
+        title: "No captions captured",
+        body: "None of this media arrived with alt text. X only writes it when the author did.",
+        action: activeFilterCount() ? { id: "clear", label: "Clear filters" } : { id: "all", label: "Browse everything" },
+      },
+      forgotten: {
+        icon: "gem",
+        title: "Nothing forgotten",
+        body: "Forgotten gems are older than a month and haven't been opened recently. This library is still young — or you've been back through it.",
+        action: activeFilterCount() ? { id: "clear", label: "Clear filters" } : { id: "all", label: "Browse everything" },
+      },
+      gifs: {
+        icon: "gif",
+        title: "No GIFs here",
+        body: "Nothing in this library is a looping GIF — or the filters have excluded them all.",
+        action: activeFilterCount() ? { id: "clear", label: "Clear filters" } : { id: "all", label: "See everything" },
+      },
+      resume: {
+        icon: "resume",
+        title: "Nothing to pick up",
+        body: "Videos you start in theater leave a place to resume. Nothing here has one yet.",
+        action: activeFilterCount() ? { id: "clear", label: "Clear filters" } : { id: "all", label: "Browse everything" },
+      },
     };
 
     const spec = EMPTY[state.collection] || {
@@ -2290,6 +2461,36 @@
     });
     if (onMount) onMount($("dialogContent"));
     dialog.open();
+  }
+
+  function openDestinationPicker() {
+    const row = (c) =>
+      '<button class="m3e-list-item m3e-state" data-pick-collection="' + c.id + '" aria-selected="' +
+        (c.id === state.collection) + '">' +
+        '<span class="m3e-list-item__leading">' + svg(c.icon, 20) + "</span>" +
+        '<span class="m3e-list-item__body">' +
+          '<span class="m3e-list-item__headline">' + esc(c.label) + "</span>" +
+          '<span class="m3e-list-item__support">' + esc(c.describe) + "</span>" +
+        "</span></button>";
+
+    openSheet(
+      "Browse",
+      '<p class="m3e-body-medium destpicker__help">Smart lenses are computed from what you saved. There is nothing to file or tag.</p>' +
+        '<div class="m3e-list destpicker">' +
+          '<p class="m3e-label-small destpicker__label">Library</p>' +
+          BROWSE_COLLECTIONS.map(row).join("") +
+          '<p class="m3e-label-small destpicker__label">Smart lenses</p>' +
+          SMART_LENSES.map(row).join("") +
+        "</div>",
+      (host) => {
+        host.querySelectorAll("[data-pick-collection]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            sheet.close();
+            selectCollection(btn.dataset.pickCollection);
+          });
+        });
+      }
+    );
   }
 
   function openAuthorPicker() {
@@ -3243,6 +3444,7 @@
     state.progress = readJSON(KEYS.progress, {}) || {};
     state.items = normalize(readJSON(KEYS.items, []) || []);
     state.collection = state.settings.lastCollection || "all";
+    if (!collectionById(state.collection)) state.collection = "all";
     state.view = VIEWS.includes(state.settings.view) ? state.settings.view : "rails";
     /* Persisted sort is the fallback; a sort= URL parameter (readUrl) wins. */
     state.sort = SORTS.some((s) => s.key === state.settings.sort) ? state.settings.sort : "newest";
@@ -3331,6 +3533,9 @@
     if ($("chipSort")) $("chipSort").addEventListener("click", (e) => openSortMenu(e.currentTarget));
     if ($("chipMoreFilters")) {
       $("chipMoreFilters").addEventListener("click", (e) => openMoreFiltersMenu(e.currentTarget));
+    }
+    if ($("paneDestination")) {
+      $("paneDestination").addEventListener("click", () => openDestinationPicker());
     }
 
     document.querySelectorAll("#viewSeg [data-view]").forEach((btn) => {

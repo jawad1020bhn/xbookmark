@@ -560,7 +560,7 @@ test("every empty state names its collection and offers a way out", () => {
   // An empty state that only reports absence is a dead end, and the useful
   // next action differs per destination — so a generic string cannot do it.
   const fn = app.slice(app.indexOf("function emptyStateHtml"), app.indexOf("The render entry point"));
-  for (const collection of ["recent", "archived", "video", "photos"]) {
+  for (const collection of ["recent", "archived", "video", "photos", "unseen", "forgotten"]) {
     assert.match(fn, new RegExp("\\b" + collection + ":\\s*\\{"), "no empty state for " + collection);
   }
   // Each carries a glyph, a title, a body and an optional action.

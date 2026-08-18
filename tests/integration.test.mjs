@@ -166,7 +166,7 @@ test("no new permissions were added for the capture bridge", () => {
 });
 
 test("the dashboard is mirrored into the extension, without the sample data", () => {
-  for (const f of ["index.html", "app.js", "layout.css", "bridge.js", "lightbox.js"]) {
+  for (const f of ["index.html", "app.js", "layout.css", "bridge.js", "lightbox.js", "lenses.js"]) {
     assert.ok(existsSync(join(root, "extension/dashboard", f)), "missing mirror: " + f);
   }
   // 1.3 MB of demo media must not ship inside the extension package.
