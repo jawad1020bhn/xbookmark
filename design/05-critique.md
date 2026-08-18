@@ -232,46 +232,200 @@ which is why the media path now carries tests rather than only a review.
 
 ---
 
+## Part 4b — The second diagnosis: the model was wrong
+
+Everything in Parts 1–4 fixed the *execution* of the previous UI. Colour,
+type, shape, motion and accessibility were all genuinely broken and are all
+genuinely better. But that work left the underlying model untouched, and the
+model was the real defect.
+
+**The product was a list of posts that happened to contain pictures.**
+
+That single premise generated every remaining problem, and none of them were
+solvable inside it:
+
+### 4b.1 The unit of the interface was wrong
+
+A card was one post. A post with four photos was **one row** containing a 2×2
+grid squeezed into 16:9. So four saved images occupied the same space, and the
+same rank in every sort, as one. You could not open the third one directly,
+could not address it in a URL, could not filter to it, and could not shuffle it
+independently. The data model said "four things"; the interface said "one".
+
+Flattening to one entry per media item — `<tweet_id>:<position>` — is the
+change from which everything else in this round follows. It is a nine-line
+function (`mediaIndex`) and it is the whole redesign.
+
+### 4b.2 The loudest element was a number nobody came for
+
+The hero band spent `display-large` — 57 px, the largest type in the system —
+on a count of how many bookmarks existed, above a second row of four tonal
+stat cards. At 1440 px it consumed the top 300 px of the page. On a 390 px
+phone it consumed the entire first screen.
+
+A summary that pushes the thing it summarises below the fold is an inverted
+hierarchy. The earlier round of this redesign *noticed* that and patched it
+(shed the caption at compact, drop to display-small, scroll the stats) — which
+is the tell. When a component needs three compensations to fit, the component
+is wrong, not its breakpoints.
+
+It is gone entirely. The display scale is now unused in the whole product, and
+that is the correct outcome for a media browser: the largest thing on screen
+should be a photograph.
+
+### 4b.3 Filing tools nobody uses, in a browsing product
+
+Tags and notes cost: a tag button on every card, a note textarea in every
+detail view, two collections (Unread, Tagged), two sorts (Recently tagged,
+Least touched), two filter chips, a stat tile, a storage key, a prompt dialog,
+and a `taggedAt` timestamp. All of that is chrome asking the reader to do
+filing work at the exact moment they wanted to be entertained.
+
+The honest version of what those features were for is *rediscovery* — finding
+something good you saved and forgot. Tags solve that only if you tag
+everything, which nobody does. What actually solves it is **Rediscover**,
+**Forgotten first** and **shuffle**: zero user effort, immediate payoff. Those
+survive; the filing cabinet does not.
+
+### 4b.4 X's interaction model was ignored
+
+The brief asked for X's horizontal scrolling experience. The previous build had
+exactly one horizontal scroller, and it was the filter chip bar. Media — the
+one thing X itself pages horizontally, both in a post's carousel and in its
+full-screen viewer — was in a static grid.
+
+Now: rails page horizontally, theater pages horizontally, the viewer's
+filmstrip scrolls horizontally, and the viewer itself traverses the entire
+library with `←` `→` or a swipe rather than the four attachments of one post.
+
+### 4b.5 The video pipeline was quietly lossy
+
+Three fields were being discarded between the scraper and the screen — the
+mp4 variant ladder, the explicit poster, and the sensitivity flag — and each
+loss was silent. The most expensive was the ladder: with one URL surviving
+normalisation, a 168 px thumbnail and a full-screen player necessarily got the
+same file. `06-media-and-playback.md` is the full account.
+
+---
+
+## Part 4c — Decisions in this round I'd expect to be challenged
+
+### 4c.1 "You deleted features users might be using"
+
+Tags and notes were removed on instruction, but I'd have argued for it anyway,
+and the argument is not "nobody uses them". It is that they were a *second
+product* sharing a surface with the first, and the two were making each other
+worse. A tool for looking at pictures and a tool for annotating a research
+corpus want opposite interfaces: one wants the chrome gone, the other wants
+metadata always visible.
+
+The mitigation is that **archive survives**. It was the only one of the three
+that is a browsing action rather than a filing action — "I am done with this,
+stop showing it to me" — and removing it would have lost real user intent.
+
+### 4c.2 "Three views is two too many"
+
+The honest counter-argument. Every view is code, and a view switch is a
+decision pushed onto the user.
+
+I kept all three because they are genuinely different *tasks*, not three skins:
+grazing with no target, hunting for one known item, and watching one thing at a
+time. A single view has to compromise all three. The cost is bounded because
+they share one index and one tile component — the three renderers are 40, 25
+and 60 lines respectively.
+
+What I would drop first if forced: theater on desktop, where the viewer already
+does the same job with more room.
+
+### 4c.3 "The hero rail crops media, and you said cropping was wrong"
+
+It does, and I did. The rule is stated by surface in
+`03-layout-and-navigation.md` §3 rather than absolutely, because "never crop"
+produces a hero rail with a ragged column of dead space beside every landscape
+item — which is what my first implementation did, and the screenshot is why it
+changed.
+
+Cropping is permitted in exactly one place, and only because a non-cropping
+view of the same item is always one tap away. If that ever stops being true,
+the crop has to go.
+
+### 4c.4 "Dark by default is a taste call"
+
+It is not. A bright surround measurably shifts how an image is perceived, which
+is why every application built for looking at pictures — Lightroom, Photos,
+Preview, X's own image viewer — darkens the room. Defaulting to system means
+roughly half of first runs frame photographs in white.
+
+"System" is one tap away in Personalise, and the rail toggle is always visible.
+Only a genuinely first-time user gets the opinionated default; anyone who has
+ever set a preference keeps it.
+
+### 4c.5 "CSS columns are the wrong masonry"
+
+Reading order runs down each column rather than across, which is a real cost.
+
+It is the right trade *here* because the grid is sorted by recency or shuffled,
+so there is no sequence for the reader to lose — and the alternative is a
+measurement pass, a reflow storm on every resize, and a JS dependency on the
+critical path of a build-free repository. In a ranked list I would have paid
+for the JS.
+
+---
+
 ## Part 5 — Known limitations
 
-Honest list of what is not finished.
+Honest list of what is not finished, after this round.
 
-1. **`promptTag` stashes a callback on `window.__commitTag`.** It works, but
-   global mutable state as a callback channel is fragile. Should be a closure
-   passed through the dialog controller.
-2. **Saved views are persisted but have no UI.** `KEYS.views` is written and
-   read; nothing surfaces it. Either build the picker or remove the storage.
-3. **The lightbox has no pinch-zoom on touch.** Tap-to-zoom and swipe work,
-   and native scrolling pans a zoomed image, but a two-finger pinch is not
-   wired up. Nobody has tested this on a real touch device — the sandbox has
-   no touchscreen, and emulated touch is not evidence.
-4. **Shrinking below 1200 px drops the visible selection.** `bindWindowClass`
-   calls `clearDetailPaneOnly()` rather than re-opening the selection as a
-   sheet. Rare in practice (people don't often resize across that boundary
-   mid-read), but it is a real state loss.
-5. **Storage keys changed** `bm-*` → `xbm.*` with no migration. A returning
-   user's library appears empty until re-import. Given the redesign changes the
-   metadata shape anyway, a one-time migration reading the old keys would be
-   kind.
-6. **`localStorage` caps the library at roughly 3,300 bookmarks.** At the
-   sample's ~1.5 kB/post, a 5 MB quota is exhausted well below the 10k–50k a
-   heavy X user actually has. `saveItems()` reports the failure honestly, but
-   the write is still lost. IndexedDB is the fix and it is the single most
-   consequential thing left undone.
-7. **The sample library ships ~2 MB of generated media.** `dashboard/sample-media/`
-   exists so the grid and playback can be seen working without importing a real
-   export. If bundle size ever matters, this is the first thing to drop.
-8. **No visual-regression baseline.** Screenshots were reviewed by eye this
-   session. The harness exists (`/tmp/shot.mjs` + headless Chromium); committing
-   reference images and diffing them would make defects 1–13 impossible to
-   reintroduce silently.
-9. **The virtualisation ceiling is untested.** Rendering chunks at 60 items
-   with a "load more" control is fine for thousands; nobody has tried 50 000.
-10. **Only Chromium was tested.** The sandbox has no Firefox or WebKit. The CSS
-   avoids Chromium-only features except `animation-timeline` (behind
-   `@supports`) and `::-webkit-scrollbar` (progressive), but this is untested,
-   not proven. This matters more now than it did: Safari is the one browser
-   that takes the native-HLS branch, and it is the one browser I cannot run.
+**Resolved by this round** (kept here so the record is legible): the
+`window.__commitTag` global went with the tag system; the dead saved-views
+persistence went with `KEYS.views`; the generic empty states are now specific
+per collection; selection loss when shrinking past 1200 px is fixed —
+`bindWindowClass` now re-hosts the open inspector into a sheet instead of
+discarding it.
+
+Still open:
+
+1. **`localStorage` caps the library at roughly 3,300 posts.** At the sample's
+   ~1.5 kB/post, a 5 MB quota is exhausted well below the 10k–50k a heavy X
+   user actually has. `saveItems()` reports the failure honestly, but the write
+   is still lost. IndexedDB is the fix and it remains the single most
+   consequential thing undone.
+2. **Storage keys changed** `bm-*` → `xbm.*` with no migration, and this round
+   changed the `meta` shape again (tags/note dropped, `openedAt` added). Old
+   metadata is read leniently, but a returning user from the `bm-*` era still
+   sees an empty library until re-import.
+3. **The grid is not virtualised.** Chunks of 120 with a "show more" control
+   are fine into the thousands; nobody has tried 50 000. The media index is
+   rebuilt in full on every render, which is O(posts × media) — cheap now,
+   linear later. An index cache keyed on the filter state is the obvious fix
+   and it is not written.
+4. **No pinch-zoom in the viewer.** Tap-to-zoom, `z`, swipe and native pan
+   all work; a two-finger pinch is not wired up. The sandbox has no
+   touchscreen, and emulated touch is not evidence.
+5. **The rails composition is heuristic, not evaluated.** Thresholds (≥3 opened
+   items, ≥2 motion items, ≥4 per author, 10-item floor for grouping) are
+   considered guesses that look right against a 7-post sample and a synthetic
+   larger one. They want real libraries and, ideally, a preference.
+6. **Theater mounts from a 120-item slice.** Paging to the end of that slice
+   simply stops; there is no "load more" in that view because the gesture has
+   no natural place to put one. Rare with a filter applied, wrong in principle.
+7. **No visual-regression baseline.** Every view at three breakpoints was
+   screenshotted and reviewed by eye this session, and three defects were found
+   that way — the wasted vertical space in mobile theater, the ragged hero
+   rail, and rails that repeated the same twelve items. The harness exists;
+   committing reference images and diffing them would make those impossible to
+   reintroduce silently. This is now the highest-value missing test.
+8. **The sample library ships ~2 MB of generated media.** It exists so playback
+   can be seen working without importing a real export. If bundle size ever
+   matters, this is the first thing to drop.
+9. **Only Chromium was tested.** The sandbox has no Firefox or WebKit. This
+   matters more than usual here: Safari is the one browser that takes the
+   native-HLS branch, and it is the one browser I cannot run. It is also the
+   one most likely to differ on `scroll-snap-stop` and `backdrop-filter`, both
+   of which this design leans on.
+10. **`aspect-ratio` on the theater stage assumes the media reports honest
+    dimensions.** A capture with `width`/`height` of 0 falls back to 16:9,
+    which is right on average and visibly wrong for a portrait screenshot.
 
 ---
 
@@ -279,14 +433,20 @@ Honest list of what is not finished.
 
 In priority order:
 
-1. **Move storage to IndexedDB** (with a `bm-*` → `xbm.*` migration in the
-   same pass). Everything else is polish on a system that silently stops
-   accepting writes at ~3,300 bookmarks.
-2. **Commit visual-regression baselines.** The single highest-leverage
-   addition, given how many defects here were visual-only.
-3. **Build the saved-views UI** or delete the dead persistence.
-4. **Fix the selection loss** when crossing 1200 px downward.
+1. **Move storage to IndexedDB**, with a `bm-*` migration in the same pass.
+   Everything else is polish on a system that silently stops accepting writes
+   at ~3,300 posts.
+2. **Commit visual-regression baselines.** Given that three of this round's
+   defects were visual-only and none of them could have been caught by
+   reasoning about the code, this is the highest-leverage addition available.
+3. **Cache the media index** between renders, keyed on the filter/sort state.
+   Cheap, and it removes the only super-linear path in the app.
+4. **Paginate theater**, or make it stream from the same chunking the grid
+   uses.
 5. **Test on Firefox and WebKit** — specifically the HLS branch on Safari, the
-   only path that no test here can execute.
-6. **Empty and error states for every collection** — currently generic. "No
-   tagged posts yet" should suggest tagging something, not just report absence.
+   only path no test here can execute, and `scroll-snap-stop`, which the whole
+   theater view depends on.
+6. **Instrument the rails.** Which rails get scrolled, how far, and which
+   produce an open. Every threshold in `buildRails` is currently a guess, and
+   they are exactly the kind of guess that data settles in a week.
+7. **Pinch-zoom**, on a real device.

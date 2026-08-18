@@ -1,111 +1,214 @@
 # 03 · Layout & Navigation
 
+The governing rule, from which everything below follows:
+
+> **Media occupies the centre. Chrome lives at the edges, or floats.**
+
+A media browser is judged on how much of the screen is showing media and how
+little of it is showing the application. Every layout decision here is scored
+against that.
+
+---
+
 ## 1. Window classes
 
-M3's five adaptive breakpoints, applied as `html[data-window-class]` by
-`M3E.bindWindowClass()` so both CSS and JS agree on the current class.
+Driven by `<html data-window-class>`, set by `M3E.bindWindowClass()`. One DOM,
+never a second design.
 
-| Class | Width | Navigation | Content | Detail |
+| Class | Width | Navigation | Feed | Inspector |
 |---|---|---|---|---|
-| **compact** | ≤ 599 | Bottom nav bar (4 items) + FAB menu | Single pane, 1 column | Modal bottom sheet |
-| **medium** | 600–839 | Navigation rail | Single pane, 1 column | Modal side sheet |
-| **expanded** | 840–1199 | Navigation rail | Single pane, **2-column grid** | Modal side sheet |
-| **large** | 1200–1599 | Navigation rail | List + detail, 420 px pane | **Persistent pane** |
-| **extra-large** | ≥ 1600 | Navigation rail | List + detail, 480 px pane | **Persistent pane** |
+| compact | < 600 | Floating toolbar (bottom) | Full-bleed, 2-col grid | Bottom sheet |
+| medium | 600–839 | Navigation rail | Wider rails | Side sheet |
+| expanded | 840–1199 | Navigation rail | Wider rails, taller cells | Side sheet |
+| large | 1200–1599 | Navigation rail | Feed | **Persistent, 400 px** |
+| extra-large | ≥ 1600 | Navigation rail | Feed | **Persistent, 460 px** |
 
-```
-compact                medium / expanded         large / extra-large
-┌──────────────┐       ┌───┬─────────────┐       ┌───┬────────┬────────┐
-│   app bar    │       │ r │  app bar    │       │ r │ app bar│        │
-├──────────────┤       │ a ├─────────────┤       │ a ├────────┤ detail │
-│              │       │ i │             │       │ i │        │        │
-│   content    │       │ l │   content   │       │ l │ content│ (always│
-│              │       │   │             │       │   │        │  there)│
-├──────────────┤       └───┴─────────────┘       └───┴────────┴────────┘
-│  nav bar     │
-└──────────────┘
-```
+### 1.1 Why compact gets a floating toolbar, not a navigation bar
 
-The transition at 1200 px is the significant one: below it the detail view is
-*modal* (scrim, focus trap, Escape closes); at and above it the detail view is
-*part of the page* (no scrim, no trap, selection persists while you keep
-browsing the list). These are genuinely different interaction models, not one
-layout stretched.
+A docked M3 navigation bar is 80 px tall and permanently present. On a
+390 × 844 phone that is **9.5 % of the screen**, forever, on a surface whose
+entire value proposition is vertical room for pictures.
 
-## 2. Navigation model
+M3 Expressive's **floating toolbar** is the component for this: a pill that
+hides on scroll-down and returns on scroll-up, driven by
+`M3E.bindScrollChrome`. It costs 104 px of bottom padding at rest and nothing
+at all while the user is actually browsing.
 
-Five collections, mapped to the rail and nav bar:
+This is the pattern every media app converged on independently, for the same
+reason. The primary action (Import) rides in the same pill as a small FAB, so
+compact does not need a separate floating action button competing for the
+same corner.
 
-| Collection | Meaning |
-|---|---|
-| **All** | Everything not archived |
-| **Unread** | Never opened |
-| **Tagged** | Has at least one tag |
-| **Media** | Contains photo, video or GIF |
-| **Archive** | Explicitly archived |
+### 1.2 Why the app bar is glass
 
-The compact nav bar shows the first four — M3 caps a navigation bar at 3–5
-destinations, and Archive is the least frequent, so it moves into the overflow
-rather than crowding the bar.
+The app bar is `position: sticky` with a 20 px backdrop blur and a
+78 %-opacity surface, so media scrolls *under* it rather than starting below
+it. A solid band would cost another 64 px permanently.
 
-Collections are **filters over one library**, not folders. Nothing is ever in
-two places or lost from a place; the same post can be Unread *and* Media *and*
-Tagged. This is the model that matches how people actually treat a bookmark
-pile.
+Two details that matter:
 
-## 3. Information architecture
+* Once content has passed underneath (`data-scrolled="true"`), it commits to a
+  94 %-opacity `surface-container` and takes elevation 1. Glass over a scrolled
+  page is exactly where legibility fails; the blur is an entrance effect, not
+  a permanent state.
+* `@supports not (backdrop-filter: …)` falls back to an opaque surface. A
+  translucent bar without a blur over an arbitrary photograph is unreadable.
 
-```
-Library (collection)
-  └ Filters      media · links · tagged · noted · author · likes · reposts · dates
-      └ Sort     newest · oldest · captured · likes · reposts · replies · original order
-          └ Results
-              └ Post detail
-                  ├ full text, media, quoted post
-                  ├ engagement at capture
-                  ├ links
-                  ├ tags        (user-authored)
-                  ├ private note (user-authored)
-                  └ identifiers  (post, conversation, reply-to)
-```
+### 1.3 The inspector, not a detail pane
 
-Every filter and sort choice is mirrored into the URL (`?c=&sort=&q=&author=…`),
-so a filtered view is linkable, bookmarkable and survives a refresh. For a tool
-about keeping things, losing your place on reload would be an odd failure.
+At ≥ 1200 px a third column appears. It is deliberately **not** called a detail
+view: it holds the post *behind* whichever media is selected, which is context,
+not the main event. It is narrower than the previous build's detail pane
+(400 px vs 420 px) because it now holds less — no tag editor, no note field,
+no media grid, since the media is already on screen at full size.
 
-## 4. Density
+Below 1200 px the same markup is rendered into a sheet: a bottom sheet on
+compact, a side sheet from medium up. `bindWindowClass` re-hosts an open
+inspector across that boundary, so resizing the window never loses the
+selection.
 
-`comfortable` (default) and `compact` scale row gaps, card padding and the text
-clamp (6 lines → 3) — **not** font size. A power user with 4 000 bookmarks gets
-more rows per screen without giving up legibility.
+---
 
-## 5. Responsive behaviour worth calling out
+## 2. The three views
 
-- **Hero at compact** — sheds its caption, shrinks its numeral, and scrolls its
-  stats horizontally, so a full bookmark card is visible above the fold.
-- **Filter bar** — scrolls horizontally only below 600 px; wraps above.
-- **Bottom padding at compact** — reserves 168 px so neither the nav bar nor
-  the FAB floating above it can cover the last card.
-- **App bar** — sheds the brand mark from 600 px up (the rail owns it) but
-  **keeps the `<h1>`**, which names the current collection. Every page needs a
-  visible, programmatic heading; an earlier draft dropped it on desktop, which
-  left the page titleless for screen readers.
-- **Print** — a dedicated block strips rail, nav bar, FAB, detail pane and
-  filter chips, leaving the library as a readable document.
+One index, three renderers. This is the core of the navigation model, and it
+is a *view* switch rather than a *destination* switch — the same items, shown
+three ways.
 
-## 6. Keyboard model
+### 2.1 Rails — grazing
+
+Horizontal M3 carousels, stacked vertically. Each rail is a computed lens:
+
+| Rail | Contents | Layout | Condition |
+|---|---|---|---|
+| Pick up where you left off | Recently opened | multi-browse | ≥ 3 opened items |
+| Video & GIFs | All motion | **hero** | ≥ 2 motion items |
+| Recently posted | Newest 20, always by date | multi-browse | always |
+| *per author* × 4 | Your most-saved authors | multi-browse | ≥ 4 items each |
+| Rediscover | Seeded sample of what nothing above surfaced | multi-browse | ≥ 4 remaining |
+| Everything | The full index | uncontained | always |
+
+Two design rules govern the set:
+
+**Rails are computed, never stored.** There is no "create a collection" step,
+because an archive that asks you to file things is an archive nobody uses.
+That is precisely the failure the deleted tag system represented.
+
+**Later rails consume from a pool.** The anchor rails (motion, newest)
+deliberately overlap — they are different questions about the same items — but
+*Rediscover* draws only from what nothing above surfaced. Without that, a
+small library renders the same twelve items six times, which is worse than no
+rails at all.
+
+Below **10 items** the whole grouping collapses to a single hero carousel. The
+horizontal gesture is preserved because it is the product; the redundant
+grouping is not.
+
+### 2.2 Grid — searching
+
+CSS multi-column, not a JS masonry. No measurement pass, no reflow storm on
+resize, and it degrades to a single column with no media query.
+
+The tradeoff is that reading order runs *down* each column rather than across.
+That is the right tradeoff here: in a browsing surface sorted by recency or
+shuffled, there is no sequence to lose. It would be the wrong tradeoff in a
+ranked list.
+
+Column width is user-controllable (Dense 180 px / Medium 240 px / Large 340 px)
+in Personalise, because how much detail you need per item depends entirely on
+whether you are hunting for a screenshot of text or flipping through
+photographs.
+
+### 2.3 Theater — watching
+
+One item per screen, paged horizontally. This is the X gesture applied to a
+whole library rather than to the four photos inside a single post.
+
+`scroll-snap-stop: always` is the load-bearing declaration. Without it a fast
+flick skids through six items and lands somewhere arbitrary, which reads as
+broken rather than fast.
+
+On compact and medium the theater takes the room left under the chrome and the
+page itself stops scrolling vertically. Two scroll axes on one screen is the
+fastest way to make a swipe feel unreliable.
+
+---
+
+## 3. Aspect ratio, and where cropping is allowed
+
+Media keeps its own shape. Cropping everything to a square turns a media
+browser into a contact sheet, and a contact sheet of text screenshots — a
+large fraction of what people actually save from X — is unreadable.
+
+The rule is applied by surface, according to what that surface is *for*:
+
+| Surface | Sizing | Crops? | Why |
+|---|---|---|---|
+| Grid tile | `aspect-ratio: --_ar`, max 78 vh | No | The grid is for finding things; a cropped screenshot cannot be found |
+| Multi-browse cell | Fixed height, **width** derived from ratio | No | Uniform height is what makes a strip read as a strip; varying width preserves the ratio |
+| Hero cell | Fixed height *and* width | **Yes** | Letting each hero self-size leaves a ragged column of dead space beside every landscape item. The hero's job is to invite a tap |
+| Theater stage | `aspect-ratio: --_ar`, `object-fit: contain` | No | This is the "look at it properly" surface |
+| Viewer | `object-fit: contain`, zoomable | No | Ditto, more so |
+
+Cropping is permitted in exactly one place, and only because a second,
+non-cropping presentation of the same item is always one tap away.
+
+---
+
+## 4. Navigation model
+
+**Five destinations**, in the rail and (first four) in the floating toolbar:
+
+`All · Video · Photos · Recent · Archive`
+
+Each is a lens over the same media index, and each filters at the **media**
+level — "Video" means video items, not posts that happen to contain one
+alongside three photos. That distinction did not exist in the previous build
+and is the reason its Media collection showed stills.
+
+*Archive* lives in the rail and in settings but not in the compact toolbar: it
+is a recovery surface, not a place you browse.
+
+### 4.1 Filters are orthogonal to destinations
+
+The chip bar (Video / Photos / GIF / author / refine / sort) narrows whatever
+destination is active. The three type chips are a **union**, not an
+intersection — ticking Video and GIF means "motion of either kind", which is
+what everyone expects and what an intersection would render as an empty
+screen.
+
+### 4.2 Everything is addressable
+
+The full view state round-trips through the URL: collection, view, sort,
+shuffle seed, search, author, type chips, thresholds and dates. A copied link
+reproduces exactly what the sender was looking at, shuffle order included.
+
+---
+
+## 5. Keyboard model
 
 | Key | Action |
 |---|---|
 | `/` | Focus search |
-| `Escape` | Close detail → clear search |
-| `1`–`5` | Jump to collection |
-| `s` | Shuffle (or re-deal the current shuffle) |
-| `↑` / `↓` | Rove between cards |
-| `Enter` | Open focused card |
-| `Tab` | Standard order; skip link first |
-| `←` `→` `Home` `End` `z` | Lightbox: navigate, jump, zoom |
+| `s` | Shuffle, or re-deal the current shuffle |
+| `v` | Cycle view: rails → grid → theater |
+| `1`–`5` | Jump to destination |
+| `i` | Inspect the focused tile (the post behind it) |
+| `←` `→` `Home` `End` | Page the focused rail or theater |
+| `Enter` / `Space` | Open the focused tile in the viewer |
+| `Escape` | Close the innermost surface: viewer → dialog → sheet → inspector → search |
+| **In the viewer** | `←` `→` traverse the whole library · `Home` `End` jump · `z` zoom · `Space` play/pause · `Escape` close |
 
-Card roving uses a roving tabindex so the list is a single tab stop, not one
-stop per card — with 4 000 bookmarks, per-card tab stops would make the page
-untraversable by keyboard.
+A horizontally scrolling region that can only be driven by a wheel or a swipe
+fails WCAG 2.1.1, so every carousel is focusable and arrow-operable, and the
+rail hands the scroll back to the page at its ends rather than trapping it.
+
+---
+
+## 6. Density
+
+Three scalars over the 4 dp grid — comfortable (1), compact (0.75), spacious
+(1.25) — plus the independent grid tile-size control. They are separate on
+purpose: density is about how much *chrome* breathes; tile size is about how
+large the *media* is. Wanting dense chrome and large pictures is a coherent
+preference and the previous build could not express it.

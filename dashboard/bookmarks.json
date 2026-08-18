@@ -207,16 +207,12 @@
           "alt": "A slow push through a misty evergreen forest at dawn.",
           "mp4_variants": [
             {
-              "bitrate": 2176000,
               "url": "sample-media/video-forest-720.mp4",
-              "width": 1280,
-              "height": 720
+              "bitrate": 2176000
             },
             {
-              "bitrate": 632000,
               "url": "sample-media/video-forest-360.mp4",
-              "width": 640,
-              "height": 360
+              "bitrate": 832000
             }
           ]
         }
@@ -277,7 +273,13 @@
           "mp4": "sample-media/gif-loop.mp4",
           "hls": null,
           "duration": 4000,
-          "alt": "A looping animation of the word \"loop\" orbiting the frame."
+          "alt": "A looping animation of the word \"loop\" orbiting the frame.",
+          "mp4_variants": [
+            {
+              "url": "sample-media/gif-loop.mp4",
+              "bitrate": 256000
+            }
+          ]
         },
         {
           "type": "photo",

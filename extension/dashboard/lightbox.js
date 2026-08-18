@@ -45,6 +45,23 @@
   let index = 0;
   let context = {};
   let onCopy = null;
+  let onChange = null;
+  let contextAt = null;
+
+  /**
+   * The per-item context.
+   *
+   * The viewer now traverses the WHOLE library rather than the handful of
+   * photos inside one post, so "which post is this from" changes as you move.
+   * `contextAt(i)` lets the caller answer that per index; a plain `context`
+   * object still works for the single-post case.
+   */
+  function ctxFor(i) {
+    if (typeof contextAt === "function") {
+      return Object.assign({}, context, contextAt(i) || {});
+    }
+    return context;
+  }
 
   /* ---------------------------------------------------------------------------
      Construction
@@ -61,6 +78,10 @@
 
     root.innerHTML =
       '<div class="lb__bar lb__bar--top">' +
+        '<div class="lb__who">' +
+          '<p class="lb__title m3e-title-small m3e-title-small--emphasized" id="lbTitle"></p>' +
+          '<p class="lb__subtitle m3e-body-small" id="lbSubtitle"></p>' +
+        "</div>" +
         '<p class="lb__counter m3e-label-large" id="lbCounter"></p>' +
         '<div class="lb__bar-actions">' +
           '<button class="lb__btn m3e-state" id="lbCopy" type="button" aria-label="Copy media link">' + svg("copy", 20) + "</button>" +
@@ -75,7 +96,11 @@
 
       '<div class="lb__bar lb__bar--bottom">' +
         '<p class="lb__caption m3e-body-medium" id="lbCaption"></p>' +
-        '<div class="lb__dots" id="lbDots"></div>' +
+        /* A filmstrip, not dots. The viewer now traverses an entire library:
+           forty dots is not a control, it is a texture. A strip of thumbnails
+           is the only affordance that scales to hundreds and it doubles as a
+           preview of what is coming, which dots never were. */
+        '<div class="lb__strip" id="lbStrip" role="tablist" aria-label="Media in this set"></div>' +
       "</div>";
 
     document.body.appendChild(root);
@@ -83,8 +108,10 @@
     els = {
       stage: root.querySelector("#lbStage"),
       counter: root.querySelector("#lbCounter"),
+      title: root.querySelector("#lbTitle"),
+      subtitle: root.querySelector("#lbSubtitle"),
       caption: root.querySelector("#lbCaption"),
-      dots: root.querySelector("#lbDots"),
+      strip: root.querySelector("#lbStrip"),
       prev: root.querySelector("#lbPrev"),
       next: root.querySelector("#lbNext"),
       open: root.querySelector("#lbOpen"),
@@ -101,6 +128,20 @@
       const m = items[index];
       const link = m && (m.url || m.mp4 || m.hls);
       if (link && onCopy) onCopy(new URL(link, location.href).href);
+    });
+
+    /* Space is the universal play/pause in every video surface anyone has
+       used. Without it the only way to pause is to hit a native control that
+       may have auto-hidden, which reads as the player ignoring you. */
+    root.addEventListener("keydown", (event) => {
+      if (event.key !== " " && event.key !== "Spacebar") return;
+      const video = els.stage.querySelector("video");
+      if (!video) return;
+      // Let the native controls keep the key when they already have focus.
+      if (document.activeElement === video) return;
+      event.preventDefault();
+      if (video.paused) video.play().catch(() => {});
+      else video.pause();
     });
 
     // Clicking the backdrop closes; clicking the media itself does not.
@@ -155,6 +196,7 @@
     if (!items.length) return;
     index = Math.max(0, Math.min(items.length - 1, i));
     const m = items[index];
+    const ctx = ctxFor(index);
 
     window.M3EMedia.stopAll();
     els.stage.innerHTML = "";
@@ -163,28 +205,27 @@
 
     const source = window.M3EMedia.playableSource(m);
     if (window.M3EMedia.isMotion(m) && source) {
-      // Full size here, unlike the card: this is the deliberate "look at it"
-      // surface, so the good copy is worth the bytes.
-      const video = window.M3EMedia.createVideo(m, { autoplay: true, preload: "auto" });
+      /* The best rung the stage can use, unlike a tile: this is the
+         deliberate "look at it" surface, so the good copy is worth the bytes.
+         `width` is still passed so a phone in portrait does not pull a 1080p
+         file to fill a 390px stage. */
+      const video = window.M3EMedia.createVideo(m, {
+        autoplay: true,
+        preload: "auto",
+        width: els.stage.clientWidth || 1280,
+        onFail: () => {
+          els.stage.innerHTML = "";
+          els.stage.appendChild(deadCard("This video could not be loaded.", ctx));
+        },
+      });
       video.classList.add("lb__media");
       els.stage.appendChild(video);
     } else if (window.M3EMedia.isMotion(m)) {
-      const box = document.createElement("div");
-      box.className = "lb__unplayable";
-      box.innerHTML =
-        svg("play", 32) +
-        "<p>This video is only published as an adaptive stream, which this " +
-        "browser can't play without extra software.</p>";
-      if (context.url) {
-        const a = document.createElement("a");
-        a.className = "m3e-button m3e-button--filled m3e-state";
-        a.href = context.url;
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
-        a.innerHTML = svg("external", 18) + "<span>Watch on X</span>";
-        box.appendChild(a);
-      }
-      els.stage.appendChild(box);
+      els.stage.appendChild(deadCard(
+        "This video is only published as an adaptive stream, which this " +
+        "browser can't play without extra software.",
+        ctx
+      ));
     } else {
       const img = document.createElement("img");
       img.className = "lb__media lb__img";
@@ -207,11 +248,30 @@
     }
 
     renderChrome();
+    if (onChange) onChange(index);
+  }
+
+  /** The honest failure card: say what happened, offer the way out. */
+  function deadCard(message, ctx) {
+    const box = document.createElement("div");
+    box.className = "lb__unplayable";
+    box.innerHTML = svg("play", 32) + "<p>" + message + "</p>";
+    if (ctx && ctx.url) {
+      const a = document.createElement("a");
+      a.className = "m3e-button m3e-button--filled m3e-state";
+      a.href = ctx.url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.innerHTML = svg("external", 18) + "<span>Watch on X</span>";
+      box.appendChild(a);
+    }
+    return box;
   }
 
   function renderChrome() {
     const m = items[index];
     const many = items.length > 1;
+    const ctx = ctxFor(index);
 
     els.counter.textContent = many ? index + 1 + " / " + items.length : "";
     els.prev.hidden = !many;
@@ -219,25 +279,74 @@
     els.prev.disabled = index === 0;
     els.next.disabled = index === items.length - 1;
 
+    // Who and when, because a library-wide viewer crosses posts and authors
+    // as you move through it. Text nodes, never innerHTML: this is captured
+    // content and therefore attacker-influenced.
+    els.title.textContent = ctx.title || "";
+    els.subtitle.textContent = ctx.subtitle || "";
+
     const badge = window.M3EMedia.badgeFor(m);
     const kind = m.type === "animated_gif" ? "GIF" : m.type === "video" ? "Video" : "Photo";
     // Alt text is the useful part; the type label is context. Neither is HTML.
     els.caption.textContent = m.alt || (badge ? kind + " · " + badge : kind);
 
-    if (context.url) { els.open.href = context.url; els.open.hidden = false; }
+    if (ctx.url) { els.open.href = ctx.url; els.open.hidden = false; }
     else els.open.hidden = true;
 
-    els.dots.innerHTML = "";
-    if (many) {
-      items.forEach((_, i) => {
-        const dot = document.createElement("button");
-        dot.type = "button";
-        dot.className = "lb__dot";
-        dot.dataset.active = String(i === index);
-        dot.setAttribute("aria-label", "Go to item " + (i + 1));
-        dot.addEventListener("click", () => show(i));
-        els.dots.appendChild(dot);
-      });
+    renderStrip(many);
+  }
+
+  /**
+   * The filmstrip.
+   *
+   * Only a window around the current index is built. With a whole library
+   * loaded this can be thousands of items, and materialising thousands of
+   * <img> elements to decorate a bottom bar would cost more than the photo
+   * being looked at.
+   */
+  const STRIP_RADIUS = 12;
+
+  function renderStrip(many) {
+    els.strip.innerHTML = "";
+    els.strip.hidden = !many;
+    if (!many) return;
+
+    const from = Math.max(0, index - STRIP_RADIUS);
+    const to = Math.min(items.length, index + STRIP_RADIUS + 1);
+
+    for (let i = from; i < to; i++) {
+      const m = items[i];
+      const cell = document.createElement("button");
+      cell.type = "button";
+      cell.className = "lb__frame";
+      cell.dataset.active = String(i === index);
+      cell.setAttribute("role", "tab");
+      cell.setAttribute("aria-selected", String(i === index));
+      cell.setAttribute("aria-label", "Item " + (i + 1) + " of " + items.length);
+
+      const src = window.M3EMedia.sizedImage(m.poster || m.url, "small");
+      if (src) {
+        const img = document.createElement("img");
+        img.src = src;
+        img.alt = "";
+        img.loading = "lazy";
+        img.decoding = "async";
+        img.referrerPolicy = "no-referrer";
+        cell.appendChild(img);
+      }
+      if (window.M3EMedia.isMotion(m)) {
+        const dot = document.createElement("span");
+        dot.className = "lb__frame-motion";
+        dot.innerHTML = svg("play", 12);
+        cell.appendChild(dot);
+      }
+      cell.addEventListener("click", () => show(i));
+      els.strip.appendChild(cell);
+    }
+
+    const active = els.strip.querySelector('[data-active="true"]');
+    if (active && active.scrollIntoView) {
+      active.scrollIntoView({ inline: "center", block: "nearest", behavior: "auto" });
     }
   }
 
@@ -307,6 +416,8 @@
     items = list;
     context = ctx || {};
     onCopy = context.onCopy || null;
+    onChange = context.onChange || null;
+    contextAt = context.contextAt || null;
     show(Number(start) || 0);
     overlay.open();
     // After the trap installs, not before — it focuses the first tabbable

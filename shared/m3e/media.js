@@ -61,13 +61,72 @@
 
   /**
    * The best source this browser can actually play.
-   * @returns {{src: string, kind: 'mp4'|'hls'} | null}
+   *
+   * `opts.width` — the CSS width the video will be rendered at. When given,
+   * and when the item carries the full variant ladder, the smallest variant
+   * that still covers that width (times DPR) is chosen instead of the largest.
+   * A 180px carousel tile pulling a 1080p file is the single most expensive
+   * mistake a media browser can make, and it is invisible until someone looks
+   * at the network panel.
+   *
+   * @returns {{src: string, kind: 'mp4'|'hls', bitrate?: number} | null}
    */
-  function playableSource(media) {
+  function playableSource(media, opts) {
     if (!media) return null;
+    const ladder = variantLadder(media);
+    if (ladder.length) {
+      const chosen = pickVariant(ladder, opts && opts.width);
+      return { src: chosen.url, kind: "mp4", bitrate: chosen.bitrate };
+    }
     if (media.mp4) return { src: media.mp4, kind: "mp4" };
     if (media.hls && supportsNativeHls()) return { src: media.hls, kind: "hls" };
     return null;
+  }
+
+  /** The mp4 ladder, best-first, normalised across the field names in use. */
+  function variantLadder(media) {
+    const raw = (media && (media.mp4Variants || media.mp4_variants)) || [];
+    return raw
+      .filter((v) => v && v.url)
+      .map((v) => ({ url: v.url, bitrate: Number(v.bitrate) || 0 }))
+      .sort((a, b) => b.bitrate - a.bitrate);
+  }
+
+  /**
+   * Pick from a best-first ladder for a target render width.
+   *
+   * There is no resolution metadata on an X variant — only bitrate — so this
+   * maps bitrate to an approximate width using X's own encoding ladder
+   * (roughly 320p ≈ 250 kbps, 480p ≈ 830 kbps, 720p ≈ 2.2 Mbps, 1080p ≈ 5 Mbps
+   * for the same content). The mapping does not have to be exact: it only has
+   * to order the rungs, and bitrate already does that. The threshold is what
+   * matters — never serve a rung below the rendered size, because upscaling a
+   * 320p file into a 900px player looks broken in a way that saving bytes
+   * cannot justify.
+   */
+  function pickVariant(ladder, width) {
+    if (!width || ladder.length < 2) return ladder[0];
+    const dpr = (typeof window !== "undefined" && window.devicePixelRatio) || 1;
+    // Cap the DPR contribution at 2: beyond that the extra pixels are past
+    // the point of visible return on video, unlike on text.
+    const need = width * Math.min(dpr, 2);
+
+    // Ascending, so the first rung that covers `need` is the smallest one that
+    // does. Falls back to the best rung when nothing covers it.
+    const ascending = ladder.slice().reverse();
+    for (const v of ascending) {
+      if (approxWidth(v.bitrate) >= need) return v;
+    }
+    return ladder[0];
+  }
+
+  /** Bitrate → approximate encoded width, using X's published variant ladder. */
+  function approxWidth(bitrate) {
+    if (bitrate >= 4000000) return 1920;
+    if (bitrate >= 1800000) return 1280;
+    if (bitrate >= 700000) return 640;
+    if (bitrate > 0) return 320;
+    return 1920; // unknown bitrate: assume it is the good one
   }
 
   /** True when a video exists but this browser cannot play it. */
@@ -106,7 +165,7 @@
    */
   function createVideo(media, opts) {
     const options = opts || {};
-    const source = playableSource(media);
+    const source = playableSource(media, { width: options.width });
     if (!source) return null;
 
     const video = document.createElement("video");
@@ -114,13 +173,18 @@
 
     video.className = "m3e-video";
     video.src = source.src;
-    if (media.poster) video.poster = media.poster;
+    video.dataset.kind = source.kind;
+    if (media.poster || media.url) video.poster = media.poster || media.url;
     video.playsInline = true;
     video.preload = options.preload || "metadata";
     // A GIF is a silent loop with no chrome; a video is a video.
-    video.controls = !gif;
-    video.loop = gif;
-    video.muted = gif;
+    video.controls = options.controls != null ? !!options.controls : !gif;
+    video.loop = options.loop != null ? !!options.loop : gif;
+    // Muted is not just a GIF thing any more: an autoplaying feed video must
+    // start silent or the browser refuses to start it at all, and a wall of
+    // sound is hostile regardless of what the policy allows.
+    video.muted = options.muted != null ? !!options.muted : gif || !!options.autoplay;
+    video.defaultMuted = video.muted;
     if (media.alt) video.setAttribute("aria-label", media.alt);
     if (media.width && media.height) {
       video.width = media.width;
@@ -133,14 +197,77 @@
     video.addEventListener("pause", () => releasePlayback(stop));
     video.addEventListener("emptied", () => releasePlayback(stop));
 
+    /* A source that 404s or is codec-rejected fires `error` on the element and
+       then does nothing at all — a black rectangle with a dead play button,
+       which is exactly the failure mode this module exists to avoid. Step down
+       the ladder before giving up, then hand the failure to the caller so the
+       UI can say something honest. */
+    const ladder = variantLadder(media);
+    let rung = ladder.findIndex((v) => v.url === source.src);
+    video.addEventListener("error", () => {
+      const next = ladder[++rung];
+      if (next) { video.src = next.url; video.load(); return; }
+      if (media.hls && supportsNativeHls() && video.src !== media.hls) {
+        video.src = media.hls;
+        video.load();
+        return;
+      }
+      if (options.onFail) options.onFail(video);
+    });
+
     if (options.autoplay) {
-      // Autoplay is only permitted while muted, and only worth attempting for
-      // GIFs. A rejected promise here is normal, not an error.
+      // Autoplay is only permitted while muted. A rejected promise here is
+      // normal (a user gesture may still be required), not an error.
       const attempt = video.play();
       if (attempt && attempt.catch) attempt.catch(() => {});
     }
 
     return video;
+  }
+
+  /* ---------------------------------------------------------------------------
+     Viewport-driven playback
+
+     In a scrolling media feed, "play" is a scroll position, not a click. This
+     plays whichever motion item is most central in the viewport and pauses
+     everything else, which is the behaviour every video feed has trained
+     people to expect.
+
+     It is opt-in per element and it always respects reduced-motion: someone
+     who has asked the OS to stop things moving has asked for exactly this.
+     --------------------------------------------------------------------------- */
+  function autoplayInView(container, opts) {
+    if (typeof IntersectionObserver === "undefined") return function () {};
+    const options = opts || {};
+    const selector = options.selector || "video[data-autoplay]";
+    const ratio = options.threshold != null ? options.threshold : 0.6;
+
+    let best = null;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const v = entry.target;
+          if (entry.isIntersecting && entry.intersectionRatio >= ratio) {
+            if (best && best !== v) { try { best.pause(); } catch (_) {} }
+            best = v;
+            const attempt = v.play();
+            if (attempt && attempt.catch) attempt.catch(() => {});
+          } else {
+            try { v.pause(); } catch (_) {}
+            if (best === v) best = null;
+          }
+        }
+      },
+      { root: options.root || null, threshold: [0, ratio, 1] }
+    );
+
+    const scan = () => {
+      container.querySelectorAll(selector).forEach((v) => observer.observe(v));
+    };
+    scan();
+
+    return { rescan: scan, disconnect: () => observer.disconnect() };
   }
 
   /** Stop whatever is currently playing (used when a view is torn down). */
@@ -208,9 +335,12 @@
   return {
     supportsNativeHls,
     playableSource,
+    variantLadder,
+    pickVariant,
     hlsOnly,
     isMotion,
     createVideo,
+    autoplayInView,
     claimPlayback,
     releasePlayback,
     stopAll,

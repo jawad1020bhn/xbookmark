@@ -70,13 +70,14 @@
     version:      $("#version"),
     resetBtn:     $("#resetBtn"),
     themeToggle:  $("#themeToggle"),
+    mediaHint:    $("#mediaHint"),
   };
 
   const stats = {
-    captured:   { el: $("#statCaptured"), box: document.querySelector(".stat--captured") },
-    newItems:   { el: $("#statNew"),      box: document.querySelector(".stat--new") },
-    duplicates: { el: $("#statDupes"),    box: document.querySelector(".stat--dupes") },
-    failed:     { el: $("#statFailed"),   box: document.querySelector(".stat--failed") },
+    captured: { el: $("#statCaptured"), box: document.querySelector(".stat--captured") },
+    newItems: { el: $("#statNew"),      box: document.querySelector(".stat--new") },
+    media:    { el: $("#statMedia"),    box: document.querySelector(".stat--media") },
+    failed:   { el: $("#statFailed"),   box: document.querySelector(".stat--failed") },
   };
 
   const ICON_PLAY = '<path d="M8 5v14l11-7L8 5Z"/>';
@@ -87,6 +88,12 @@
 
   let currentState = null;
   let captureCount = 0;
+  /* The dashboard is a media browser, so "how many posts" is no longer the
+     number that tells you whether the capture is working. A run that found
+     400 posts and zero photos means the media pipeline broke, and the old
+     popup could not distinguish that from a good run. */
+  let mediaCount = 0;
+  let videoCount = 0;
 
   /* ---------------------------------------------------------------------------
      3 · Theme
@@ -191,8 +198,28 @@
 
     setStat("captured", st.captured || 0);
     setStat("newItems", st.newItems || 0);
-    setStat("duplicates", st.duplicates || 0);
+    /* Media replaces "duplicates" on the front tile set. A duplicate count is
+       diagnostics for the scraper; a media count is the thing the user is
+       actually here to collect, and it is the fastest signal that the run is
+       producing something worth browsing. Duplicates move to the log. */
+    setStat("media", mediaCount);
     setStat("failed", st.failed || 0);
+
+    if (el.mediaHint) {
+      const parts = [];
+      if (mediaCount) {
+        parts.push(videoCount
+          ? videoCount.toLocaleString() + (videoCount === 1 ? " video" : " videos") + " included"
+          : "Photos only so far");
+      } else {
+        parts.push("No photos or video yet");
+      }
+      // Duplicates lost their tile, so they keep a voice here — the signal is
+      // still useful (it means an incremental pass is catching up) but it is
+      // not worth a quarter of the counter row.
+      if (st.duplicates) parts.push(st.duplicates.toLocaleString() + " already had");
+      el.mediaHint.textContent = parts.join(" · ");
+    }
 
     // One primary action whose meaning depends on state: start, or resume.
     el.primaryBtn.disabled = running;
@@ -212,7 +239,9 @@
       return;
     }
     el.exportHint.textContent =
-      captureCount.toLocaleString() + (captureCount === 1 ? " post" : " posts") + " ready to export.";
+      captureCount.toLocaleString() + (captureCount === 1 ? " post" : " posts") +
+      (mediaCount ? " · " + mediaCount.toLocaleString() + (mediaCount === 1 ? " media item" : " media items") : "") +
+      " ready to export.";
     el.exportJson.disabled = false;
     el.exportJsonl.disabled = false;
   }
@@ -227,9 +256,22 @@
         await chrome.storage.local.get({ xCaptureState: null, xBookmarks: [] });
       currentState = xCaptureState;
       captureCount = xBookmarks.length;
+
+      let media = 0, video = 0;
+      for (const b of xBookmarks) {
+        const items = (b && b.media_items) || [];
+        media += items.length;
+        for (const m of items) {
+          if (m && (m.type === "video" || m.type === "animated_gif")) video++;
+        }
+      }
+      mediaCount = media;
+      videoCount = video;
     } catch {
       currentState = null;
       captureCount = 0;
+      mediaCount = 0;
+      videoCount = 0;
     }
     renderState();
     renderExportHint();
