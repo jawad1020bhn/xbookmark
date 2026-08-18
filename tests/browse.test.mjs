@@ -241,7 +241,7 @@ test("a video that fails steps down the ladder before giving up", () => {
   // A dead source produces a black rectangle and a play button that does
   // nothing, which is the exact failure this module exists to prevent.
   const src = read("extension/shared/m3e/media.js");
-  const fn = src.slice(src.indexOf("function createVideo"), src.indexOf("function autoplayInView"));
+  const fn = src.slice(src.indexOf("function createVideo"), src.indexOf("function stopAll"));
   assert.match(fn, /video\.addEventListener\("error"/);
   assert.match(fn, /const next = ladder\[\+\+rung\]/);
   assert.match(fn, /options\.onFail/);
@@ -249,7 +249,7 @@ test("a video that fails steps down the ladder before giving up", () => {
 
 test("autoplaying video is muted, or the browser refuses to start it", () => {
   const src = read("extension/shared/m3e/media.js");
-  const fn = src.slice(src.indexOf("function createVideo"), src.indexOf("function autoplayInView"));
+  const fn = src.slice(src.indexOf("function createVideo"), src.indexOf("function stopAll"));
   assert.match(fn, /gif \|\| !!options\.autoplay/);
 });
 

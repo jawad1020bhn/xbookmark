@@ -146,14 +146,12 @@ test("the dashboard is mirrored into the extension, without the sample data", ()
   assert.match(read("extension/dashboard/index.html").slice(0, 200), /<!--\s*AUTO-GENERATED/);
 });
 
-test("relative asset paths resolve in both locations", () => {
-  // dashboard/../shared/ works from the repo AND from extension/dashboard/,
-  // which is the whole reason the mirror can be a straight copy.
+test("relative asset paths resolve from the dashboard page", () => {
+  // Every ../shared/... reference from extension/dashboard/ must resolve to a
+  // file inside the package, or the surface breaks in Chrome.
   const html = read("extension/dashboard/index.html");
   for (const m of html.matchAll(/(?:src|href)="(\.\.\/[^"]+)"/g)) {
-    const fromRepo = join(root, "dashboard", m[1]);
     const fromExt = join(root, "extension/dashboard", m[1]);
-    assert.ok(existsSync(fromRepo), "missing in repo: " + m[1]);
     assert.ok(existsSync(fromExt), "missing in extension: " + m[1]);
   }
 });

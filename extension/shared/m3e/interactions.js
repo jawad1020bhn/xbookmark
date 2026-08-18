@@ -368,44 +368,6 @@
   }
 
   /* ---------------------------------------------------------------------------
-     Roving tabindex — one tab stop per composite widget (WAI-ARIA APG)
-     --------------------------------------------------------------------------- */
-  function bindRovingFocus(container, itemSelector, options) {
-    const orientation = (options && options.orientation) || "horizontal";
-    const nextKeys = orientation === "vertical" ? ["ArrowDown"] : ["ArrowRight"];
-    const prevKeys = orientation === "vertical" ? ["ArrowUp"] : ["ArrowLeft"];
-
-    const items = () => Array.from(container.querySelectorAll(itemSelector));
-
-    const sync = () => {
-      const list = items();
-      const activeIndex = Math.max(
-        0,
-        list.findIndex((el) => el.getAttribute("aria-selected") === "true" || el.getAttribute("aria-pressed") === "true")
-      );
-      list.forEach((el, i) => el.setAttribute("tabindex", i === activeIndex ? "0" : "-1"));
-    };
-
-    container.addEventListener("keydown", (event) => {
-      const list = items();
-      const at = list.indexOf(document.activeElement);
-      if (at < 0) return;
-      let to = -1;
-      if (nextKeys.includes(event.key)) to = (at + 1) % list.length;
-      else if (prevKeys.includes(event.key)) to = (at - 1 + list.length) % list.length;
-      else if (event.key === "Home") to = 0;
-      else if (event.key === "End") to = list.length - 1;
-      if (to < 0) return;
-      event.preventDefault();
-      list.forEach((el, i) => el.setAttribute("tabindex", i === to ? "0" : "-1"));
-      list[to].focus();
-    });
-
-    sync();
-    return sync;
-  }
-
-  /* ---------------------------------------------------------------------------
      Switch — a button[role=switch] with keyboard parity
      --------------------------------------------------------------------------- */
   function bindSwitch(element, onChange) {
@@ -605,7 +567,6 @@
     bindScrollChrome,
     bindWindowClass,
     windowClass,
-    bindRovingFocus,
     bindSwitch,
     bindCarousel,
     bindEscape,

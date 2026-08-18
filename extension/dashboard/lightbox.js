@@ -714,7 +714,6 @@
         "</button>";
     }
     grid.innerHTML = html;
-    grid.dataset.rendered = String(to - from);
   }
 
   let overviewFrame = 0;

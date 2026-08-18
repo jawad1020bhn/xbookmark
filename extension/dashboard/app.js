@@ -140,7 +140,6 @@
     tune: '<path d="M10 18h4v-2h-4v2Zm-7-6v2h18v-2H3ZM6 6v2h12V6H6Z"/>',
     eye: '<path d="M12 5C7 5 2.7 8 1 12c1.7 4 6 7 11 7s9.3-3 11-7c-1.7-4-6-7-11-7Zm0 11a4 4 0 1 1 4-4 4 4 0 0 1-4 4Zm0-6a2 2 0 1 0 2 2 2 2 0 0 0-2-2Z"/>',
     play: '<path d="M8 5v14l11-7L8 5Z"/>',
-    link: '<path d="M9.9 15.5 8.5 14.1l5.6-5.6 1.4 1.4-5.6 5.6ZM7.8 18.9a4.6 4.6 0 0 1 0-6.5l2.1-2.1 1.4 1.4-2.1 2.1a2.6 2.6 0 0 0 3.7 3.7l2.1-2.1 1.4 1.4-2.1 2.1a4.6 4.6 0 0 1-6.5 0Zm8.4-8.4-1.4-1.4 2.1-2.1a2.6 2.6 0 1 0-3.7-3.7l-2.1 2.1L9.7 4l2.1-2.1a4.6 4.6 0 0 1 6.5 6.5l-2.1 2.1Z"/>',
     external: '<path d="M14 3h7v7h-2V6.4l-9 9L8.6 14l9-9H14V3ZM5 7h6v2H7v8h8v-4h2v6H5V7Z"/>',
     copy: '<path d="M16 3H5v13h2V5h9V3Zm3 4H9v14h10V7Zm-2 2v10h-6V9h6Z"/>',
     check: '<path d="M9.6 16.2 5.4 12 4 13.4l5.6 5.6L20.6 8 19.2 6.6 9.6 16.2Z"/>',
@@ -205,9 +204,7 @@
     shuffleSeed: String(Date.now() % 2147483647),
     selectedId: null,      // "<tweet_id>:<position>" — a media item, not a post
     progress: {},          // resume positions, keyed by media entry id
-    rendered: 0,
     lastList: [],
-    fullSync: false,
   };
 
   const filters = {
@@ -763,18 +760,6 @@
   /* ===========================================================================
      6 · Chrome
      =========================================================================== */
-  function collectionCount(id) {
-    const prevC = state.collection;
-    state.collection = id;
-    let n = 0;
-    for (const item of state.items) {
-      if (!matchesCollection(item)) continue;
-      for (const media of item.media) if (matchesMedia(media, item)) n++;
-    }
-    state.collection = prevC;
-    return n;
-  }
-
   function renderNav() {
     const rail = $("railItems");
     const bar = $("navBar");
@@ -1483,11 +1468,11 @@
           cell.top.toFixed(2) + 'px,0);inline-size:' + cell.width.toFixed(2) + "px;block-size:" +
           cell.height.toFixed(2) + 'px">' + tileHtml(cell.entry, { size: "small" }) + "</div>"
       ).join("");
-      host.dataset.rendered = String(cells.length);
       if (autoplayer && autoplayer.rescan) autoplayer.rescan();
     };
 
     const schedule = () => { if (!frame) frame = requestAnimationFrame(paint); };
+
     const relayout = () => {
       if (destroyed) return;
       const width = Math.max(1, host.clientWidth);
@@ -1534,7 +1519,6 @@
 
     feed.innerHTML = '<div class="grid-virtual" data-size="' + esc(state.settings.tileSize) +
       '" role="list" aria-label="Media grid"></div>';
-    state.rendered = list.length;
     virtualGrid = createVirtualGrid(feed.querySelector(".grid-virtual"), list);
   }
 
@@ -1548,8 +1532,7 @@
 
      Built on scroll-snap with `scroll-snap-stop: always`, so a fast flick
      advances exactly one item rather than skidding through six. Videos mount
-     lazily and autoplay only while centred, which is what `autoplayInView`
-     is for.
+     lazily and autoplay only while centred (mountTheaterPlayers).
      --------------------------------------------------------------------------- */
   function renderTheater(list) {
     const feed = $("feed");
@@ -1557,7 +1540,6 @@
     if (!list.length) { feed.innerHTML = emptyStateHtml(); return; }
 
     const slice = list.slice(0, THEATER_LIMIT);
-    state.rendered = slice.length;
 
     /* The floating exit control lives OUTSIDE the scrolling rail so it stays
        put while the slides page underneath it, and floats over the letterboxed
@@ -1960,14 +1942,13 @@
 
     const list = mediaIndex();
     state.lastList = list;
-    state.rendered = 0;
 
     renderFilterBar();
     renderSummary(list);
 
     if (state.view === "rails") renderRails(list);
     else if (state.view === "theater") renderTheater(list);
-    else renderGrid(list, false);
+    else renderGrid(list);
 
     // Inline previews. Hover-to-play is wired once in bindFeed; the touch
     // fallback (most-centred tile, paused while scrolling) is per-render
@@ -2848,13 +2829,6 @@
       }
     }
 
-    // Full-snapshot semantics: anything absent from this file is archived.
-    if (state.fullSync && !opts.restore) {
-      const now = new Date().toISOString();
-      for (const [id, m] of Object.entries(state.meta)) {
-        if (m.active !== false && !ids.has(id)) { m.active = false; m.removedAt = now; }
-      }
-    }
     for (const id of ids) {
       const m = getMeta(id);
       if (!(fileMeta && fileMeta[id] && fileMeta[id].active === false)) { m.active = true; m.removedAt = null; }
