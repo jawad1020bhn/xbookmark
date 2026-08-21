@@ -13,9 +13,16 @@
    restyles the entire product.
    ============================================================================= */
 (function (root, factory) {
-  if (typeof module === "object" && module.exports) module.exports = factory(require("./color.js"));
-  else root.M3ETheme = factory(root.M3EColor);
-})(typeof self !== "undefined" ? self : this, function (M3EColor) {
+  var color =
+    root && root.M3EColor
+      ? root.M3EColor
+      : typeof module === "object" && module.exports
+      ? require("./color.js")
+      : null;
+  var api = factory(color);
+  if (typeof module === "object" && module.exports) module.exports = api;
+  if (root) root.M3ETheme = api;
+})(typeof globalThis !== "undefined" ? globalThis : typeof self !== "undefined" ? self : this, function (M3EColor) {
   "use strict";
 
   const KEBAB = (s) => s.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());

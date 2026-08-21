@@ -26,9 +26,10 @@
    Exposed as window.M3EMedia.
    ============================================================================= */
 (function (root, factory) {
-  if (typeof module === "object" && module.exports) module.exports = factory();
-  else root.M3EMedia = factory();
-})(typeof self !== "undefined" ? self : this, function () {
+  var api = factory();
+  if (typeof module === "object" && module.exports) module.exports = api;
+  if (root) root.M3EMedia = api;
+})(typeof globalThis !== "undefined" ? globalThis : typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
   /**

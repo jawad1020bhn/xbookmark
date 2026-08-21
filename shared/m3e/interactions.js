@@ -11,9 +11,12 @@
    renders correct static states and native focus still works.
    ============================================================================= */
 (function (root, factory) {
-  if (typeof module === "object" && module.exports) module.exports = factory();
-  else root.M3E = factory();
-})(typeof self !== "undefined" ? self : this, function () {
+  // Always publish on the global. A host that defines `module` must not prevent
+  // classic <script> pages (popup, dashboard) from seeing window.M3E.
+  var api = factory();
+  if (typeof module === "object" && module.exports) module.exports = api;
+  if (root) root.M3E = api;
+})(typeof globalThis !== "undefined" ? globalThis : typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
   const RIPPLE_TARGETS =

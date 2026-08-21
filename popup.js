@@ -14,7 +14,18 @@
 (() => {
   "use strict";
 
-  const { createSnackbar, createOverlay, bindRipple, escapeHtml } = window.M3E;
+  // M3E is published by shared/m3e/interactions.js. If that script failed to
+  // load, surface a clear message instead of throwing on destructure — the
+  // classic "Cannot destructure property of undefined" that blanked the popup.
+  const M3E = window.M3E;
+  if (!M3E || typeof M3E.createSnackbar !== "function") {
+    document.body.innerHTML =
+      '<p style="font:14px/1.4 system-ui,sans-serif;padding:16px;margin:0">' +
+      "Design system failed to load. Reload the extension from " +
+      "<code>chrome://extensions</code>.</p>";
+    return;
+  }
+  const { createSnackbar, createOverlay, bindRipple, escapeHtml } = M3E;
 
   /* ---------------------------------------------------------------------------
      1 · Constants
@@ -514,7 +525,19 @@
         renderState();
       }
       if (changes.xBookmarks) {
-        captureCount = (changes.xBookmarks.newValue || []).length;
+        const list = changes.xBookmarks.newValue || [];
+        captureCount = list.length;
+        let media = 0, video = 0;
+        for (const b of list) {
+          const items = (b && b.media_items) || [];
+          media += items.length;
+          for (const m of items) {
+            if (m && (m.type === "video" || m.type === "animated_gif")) video++;
+          }
+        }
+        mediaCount = media;
+        videoCount = video;
+        renderState();
         renderExportHint();
       }
     });

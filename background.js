@@ -4,12 +4,24 @@
    Owns the toolbar badge — the extension's smallest surface, and the only part
    of the UI visible when the popup is closed. It has to obey the same design
    system as everything else, so the badge colour is derived from the live
-   theme rather than hard-coded.
+   theme rather than hard-coded ad-hoc hexes.
+
+   The colours below are the primary / onPrimary pair produced by
+   M3EColor.scheme("#5B4CF5", { variant: "vibrant" }) for light and dark.
+   They are inlined on purpose: an MV3 service worker that importScripts a
+   sibling file fails the entire worker registration if that file is missing
+   or fails to resolve at install time (NetworkError on WorkerGlobalScope).
+   Keeping the worker self-contained means the badge still paints even when
+   the shared colour engine is unavailable to this context.
    ============================================================================= */
 
-importScripts("shared/m3e/color.js");
-
 const THEME_KEY = "bmPopupTheme";
+
+/** Brand badge colours — keep in lockstep with shared/m3e/color.js defaults. */
+const BADGE = {
+  light: { color: "#373cff", text: "#ffffff" },
+  dark: { color: "#d0bcff", text: "#001999" },
+};
 
 /**
  * Badge colour = the current scheme's `primary`, with `onPrimary` as the text.
@@ -21,11 +33,7 @@ async function badgeColors() {
   const { [THEME_KEY]: scheme = "system" } = await chrome.storage.local.get({
     [THEME_KEY]: "system",
   });
-  const built = M3EColor.scheme(M3EColor.DEFAULT_SEED, {
-    dark: scheme === "dark",
-    variant: M3EColor.DEFAULT_VARIANT,
-  });
-  return { color: built.roles.primary, text: built.roles.onPrimary };
+  return scheme === "dark" ? BADGE.dark : BADGE.light;
 }
 
 async function refreshBadge() {

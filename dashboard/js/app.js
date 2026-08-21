@@ -4,7 +4,16 @@
 (() => {
   "use strict";
 
-  const { escapeHtml, bindRipple, bindWindowClass, bindCarousel, createSnackbar, createOverlay, debounce, bindEscape } = window.M3E;
+  const M3E = window.M3E;
+  if (!M3E || typeof M3E.createSnackbar !== "function") {
+    document.body.innerHTML =
+      '<section class="empty" style="padding:2rem;font:16px/1.4 system-ui,sans-serif">' +
+      "<h2>Design system failed to load</h2>" +
+      "<p>Reload the extension from <code>chrome://extensions</code> and reopen the library.</p>" +
+      "</section>";
+    return;
+  }
+  const { escapeHtml, bindRipple, bindWindowClass, bindCarousel, createSnackbar, createOverlay, debounce, bindEscape } = M3E;
 
   const SORTS = {
     Date: [
@@ -1711,15 +1720,42 @@
       if (e.key === "?") showViewerHelp();
     });
 
+    /* Swipe navigation on the theater stage.
+       Critical: the custom player chrome (play / seek / mute / …) lives INSIDE
+       `#viewerStage`. Those controls call stopPropagation on pointerdown so the
+       seek bar can scrub, which means a Play click never updates touchX/touchY
+       here — but pointerup still bubbles. With touchX stuck at 0 (or at the
+       last media tap), |clientX - touchX| is almost always > 60, so every Play
+       press was misread as a horizontal swipe and stepped to the next/previous
+       item. Track an explicit "gesture began on media" flag and ignore any
+       pointer that started (or ended) on player chrome. */
     let touchX = 0;
     let touchY = 0;
-    $("#viewerStage").addEventListener("pointerdown", (e) => { touchX = e.clientX; touchY = e.clientY; });
-    $("#viewerStage").addEventListener("pointerup", (e) => {
+    let swipeArmed = false;
+    const SWIPE_IGNORE =
+      ".slide__controls, .slide__resume, .slide__buffering, .viewer__missing," +
+      " button, a, input, select, textarea, label";
+
+    const stage = $("#viewerStage");
+    stage.addEventListener("pointerdown", (e) => {
+      if (e.target.closest(SWIPE_IGNORE)) {
+        swipeArmed = false;
+        return;
+      }
+      swipeArmed = true;
+      touchX = e.clientX;
+      touchY = e.clientY;
+    });
+    stage.addEventListener("pointerup", (e) => {
+      if (!swipeArmed) return;
+      swipeArmed = false;
+      if (e.target.closest(SWIPE_IGNORE)) return;
       const dx = e.clientX - touchX;
       const dy = e.clientY - touchY;
       if (dy > 90 && Math.abs(dy) > Math.abs(dx)) closeViewer();
       else if (Math.abs(dx) > 60) stepViewer(dx < 0 ? 1 : -1);
     });
+    stage.addEventListener("pointercancel", () => { swipeArmed = false; });
   }
 
   boot().catch((err) => {
