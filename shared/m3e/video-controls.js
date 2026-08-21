@@ -28,9 +28,10 @@
    Exposed as window.M3EVideoControls.bind(video, options) → cleanup.
    ============================================================================= */
 (function (root, factory) {
-  if (typeof module === "object" && module.exports) module.exports = factory();
-  else root.M3EVideoControls = factory();
-})(typeof self !== "undefined" ? self : this, function () {
+  var api = factory();
+  if (typeof module === "object" && module.exports) module.exports = api;
+  if (root) root.M3EVideoControls = api;
+})(typeof globalThis !== "undefined" ? globalThis : typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
   const ICONS = {
@@ -336,15 +337,23 @@
     const onPointerMove = () => { if (!video.paused) show(); };
     const onPointerLeave = () => hide();
 
-    /* Stop the carousel's dismiss/scroll from swallowing gestures that begin
-       on the controls — the seek bar must scrub, never page the theater. */
-    const onBarPointerDown = (event) => event.stopPropagation();
+    /* Isolate every pointer phase that begins on the control chrome.
+       pointerdown alone is not enough: the dashboard's stage-level swipe
+       listener still sees the matching pointerup (and would treat a Play
+       click as a horizontal swipe when its start coords were never recorded).
+       Stopping the whole pointer lifecycle on the bar keeps play/seek/mute
+       from paging the theater. */
+    const stopChromeGesture = (event) => event.stopPropagation();
+    const CHROME_POINTER_EVENTS = ["pointerdown", "pointerup", "pointercancel", "pointermove", "click"];
 
     container.addEventListener("pointerdown", onPointerDown);
     container.addEventListener("click", onClick);
     container.addEventListener("pointermove", onPointerMove);
     container.addEventListener("pointerleave", onPointerLeave);
-    bar.addEventListener("pointerdown", onBarPointerDown);
+    CHROME_POINTER_EVENTS.forEach((name) => {
+      bar.addEventListener(name, stopChromeGesture);
+      resume.addEventListener(name, stopChromeGesture);
+    });
 
     bar.addEventListener("focusin", () => { clearTimeout(hideTimer); show(); });
     bar.addEventListener("focusout", () => scheduleHide());
@@ -392,7 +401,10 @@
       container.removeEventListener("click", onClick);
       container.removeEventListener("pointermove", onPointerMove);
       container.removeEventListener("pointerleave", onPointerLeave);
-      bar.removeEventListener("pointerdown", onBarPointerDown);
+      CHROME_POINTER_EVENTS.forEach((name) => {
+        bar.removeEventListener(name, stopChromeGesture);
+        resume.removeEventListener(name, stopChromeGesture);
+      });
       if (typeof window !== "undefined") window.removeEventListener("pagehide", onPageHide);
       [spinner, bar, resume].forEach((el) => el.remove());
     };

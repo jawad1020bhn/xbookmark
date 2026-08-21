@@ -23,9 +23,13 @@
    Exposed as CommonJS (tests) and as window.M3EColor (browser / extension).
    ============================================================================= */
 (function (root, factory) {
-  if (typeof module === "object" && module.exports) module.exports = factory();
-  else root.M3EColor = factory();
-})(typeof self !== "undefined" ? self : this, function () {
+  // Always publish on the global (window / WorkerGlobalScope). Some hosts
+  // expose a stub `module` object that would otherwise swallow the export and
+  // leave window.M3EColor undefined for classic <script> consumers.
+  var api = factory();
+  if (typeof module === "object" && module.exports) module.exports = api;
+  if (root) root.M3EColor = api;
+})(typeof globalThis !== "undefined" ? globalThis : typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
   /* ---------------------------------------------------------------------------
