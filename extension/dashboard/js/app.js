@@ -930,6 +930,9 @@
       (filtered.length === 1 ? "item" : "items") +
       " · " + bookmarks.length.toLocaleString() + " posts · " + escapeHtml(dest.support);
     $("#sortLabel").textContent = sortLabel(prefs.sort);
+    /* On compact the toolbar hides the visible label to fit the pill, so the
+       button's accessible name must carry the current order instead. */
+    $("#sortBtn").setAttribute("aria-label", "Sort by " + sortLabel(prefs.sort));
 
     const n = filterCount();
     const badge = $("#filterCount");
