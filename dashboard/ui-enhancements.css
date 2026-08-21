@@ -108,12 +108,20 @@
 }
 .tile__progress { background: rgb(255 255 255 / .3); }
 .tile__caption { bottom: 0; }
+/* Uniform vs natural — uniform is editorial consistency, natural preserves character */
 .grid .tile {
-  aspect-ratio: 4 / 5 !important;
   content-visibility: auto;
   contain-intrinsic-size: 0 240px;
 }
-.rail__scroller .tile { aspect-ratio: 3 / 4 !important; }
+html[data-layout="uniform"] .grid .tile {
+  aspect-ratio: 4 / 5 !important;
+}
+html[data-layout="natural"] .grid .tile {
+  aspect-ratio: auto !important;
+}
+html[data-layout="uniform"] .rail__scroller .tile { aspect-ratio: 3 / 4 !important; }
+html[data-layout="natural"] .rail__scroller .tile { aspect-ratio: auto !important; min-height: 220px; }
+.grid--natural .tile img { object-fit: contain; background: var(--md-sys-color-surface-container); }
 .tile__saved {
   display: block;
   margin-top: 2px;
@@ -144,14 +152,21 @@
   border-radius: 50%;
   color: #fff;
   background: rgb(0 0 0 / .72);
-  font: 700 18px/1 sans-serif;
   text-decoration: none;
   cursor: pointer;
 }
+.tile__actions :where(button, a) svg { display: block; }
 .tile__actions [data-tile-act="retry"] { display: none; }
 .tile.is-broken::after {
-  content: "Preview unavailable";
+  content: "Preview failed · retry available";
   pointer-events: none;
+  font-size: 11px;
+  letter-spacing: .02em;
+}
+.tile.is-unavailable::after {
+  content: "Source not locally playable";
+  pointer-events: none;
+  font-size: 11px;
 }
 .tile.is-broken .tile__actions [data-tile-act="retry"] { display: grid; }
 .tile.is-selected {
@@ -181,10 +196,13 @@
   animation: shimmer 1.3s infinite;
 }
 @media (hover: hover) {
-  .tile { transition: transform 160ms ease, box-shadow 160ms ease; }
-  .tile:hover { transform: translateY(-2px); box-shadow: var(--md-sys-elevation-level2); }
+  .tile { transition: transform var(--motion-micro) var(--ease-standard), box-shadow var(--motion-micro) var(--ease-standard); }
+  .tile:hover { transform: translateY(-2px); box-shadow: var(--md-sys-elevation-level1); }
   .tile:hover .tile__actions, .tile:focus-within .tile__actions,
   .tile:hover .tile__saved { opacity: 1; translate: 0; }
+  /* subtle focus > dramatic dimming — 1.00 -> .88 not .72 */
+  .grid:has(.tile:hover) .tile:not(:hover),
+  .rail__scroller:has(.tile:hover) .tile:not(:hover) { opacity: .88; }
 }
 
 /* Rails ------------------------------------------------------------------ */

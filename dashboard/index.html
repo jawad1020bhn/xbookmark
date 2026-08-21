@@ -20,23 +20,54 @@
         <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M4 5h16v3H4V5Zm0 5.5h16V19a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8.5Zm3 3v5h10v-5H7Z"/></svg>
       </span>
       <div>
-        <p class="m3e-title-medium m3e-title-medium--emphasized">Library</p>
+        <p class="m3e-title-medium m3e-title-medium--emphasized appbar__title">Library</p>
         <p class="m3e-label-small appbar__count"><span id="resultCount">0</span> items</p>
       </div>
     </div>
 
-    <label class="search">
-      <span class="visually-hidden">Search media, authors, captions and alt text</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5Zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14Z"/></svg>
-      <input id="search" type="search" placeholder="Search media, authors, captions…" autocomplete="off" />
-      <kbd aria-hidden="true">/</kbd>
-    </label>
+    <div class="search-wrap" id="searchWrap">
+      <label class="search" id="searchLabel">
+        <span class="visually-hidden">Search media, authors, captions and alt text</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5Zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14Z"/></svg>
+        <input id="search" type="search" placeholder="Search your library…" autocomplete="off" spellcheck="false" />
+        <kbd aria-hidden="true">/</kbd>
+      </label>
+      <div class="search-panel" id="searchPanel" hidden>
+        <div class="search-panel__hint" id="searchHint">Search across media, captions, authors and alt text</div>
+        <div class="search-panel__section" id="searchRecent" hidden>
+          <p class="m3e-label-small search-panel__label">Recent</p>
+          <div class="search-panel__chips" id="searchRecentChips"></div>
+        </div>
+        <div class="search-panel__section" id="searchQuick">
+          <p class="m3e-label-small search-panel__label">Quick filters</p>
+          <div class="search-panel__chips">
+            <button type="button" class="m3e-chip m3e-state" data-quick="kind:video">Videos</button>
+            <button type="button" class="m3e-chip m3e-state" data-quick="seen:unseen">Unseen</button>
+            <button type="button" class="m3e-chip m3e-state" data-quick="progress:yes">In progress</button>
+            <button type="button" class="m3e-chip m3e-state" data-quick="author">From creator</button>
+          </div>
+        </div>
+        <div class="search-panel__footer">
+          <span id="searchResultCount" class="m3e-label-small"></span>
+          <span class="m3e-label-small search-panel__tip">Press <kbd>/</kbd> to focus · <kbd>Esc</kbd> to clear</span>
+        </div>
+      </div>
+    </div>
 
     <div class="appbar__tools">
       <div class="views" role="group" aria-label="Library mode">
-        <button type="button" class="mode-tab m3e-state" data-view="rails" aria-pressed="true"><span aria-hidden="true">✦</span>Discover</button>
-        <button type="button" class="mode-tab m3e-state" data-view="grid"><span aria-hidden="true">▦</span>Library</button>
-        <button type="button" class="mode-tab m3e-state" data-view="reels"><span aria-hidden="true">▶</span>Watch</button>
+        <button type="button" class="mode-tab m3e-state" data-view="rails" aria-pressed="true">
+          <span class="mode-tab__label">Discover</span>
+          <span class="mode-tab__sub">Curated</span>
+        </button>
+        <button type="button" class="mode-tab m3e-state" data-view="grid">
+          <span class="mode-tab__label">Library</span>
+          <span class="mode-tab__sub">Browse</span>
+        </button>
+        <button type="button" class="mode-tab m3e-state" data-view="reels">
+          <span class="mode-tab__label">Watch</span>
+          <span class="mode-tab__sub">Consume</span>
+        </button>
       </div>
       <button type="button" class="command-button m3e-state" id="sortBtn">
         <span id="sortLabel">Sort · Newest</span>
@@ -60,10 +91,12 @@
 
   <!-- Immersive viewer -->
   <div id="viewer" class="viewer" hidden aria-hidden="true" role="dialog" aria-modal="true" aria-label="Media viewer">
-    <div class="viewer__bar">
+    <div class="viewer__bar" id="viewerBar">
       <button type="button" class="viewer__back m3e-button m3e-button--text m3e-state" id="viewerClose" aria-label="Back to library">← <span>Back to Library</span></button>
-      <span class="m3e-label-large" id="viewerPos">1 / 1</span>
+      <span class="m3e-label-large viewer__pos" id="viewerPos">1 / 1</span>
       <div class="viewer__tools">
+        <button type="button" class="m3e-icon-button m3e-state viewer__icon" id="viewerFilmstripBtn" aria-label="Toggle filmstrip" title="Filmstrip (F)">▦</button>
+        <button type="button" class="m3e-icon-button m3e-state viewer__icon" id="viewerFocusBtn" aria-label="Focus mode" title="Focus mode">◰</button>
         <button type="button" class="viewer__help m3e-icon-button m3e-state" id="viewerHelp" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">?</button>
         <button type="button" class="m3e-button m3e-button--text m3e-state" id="ctxToggle">Details</button>
       </div>
@@ -75,6 +108,9 @@
       <aside class="viewer__context" id="viewerContext"></aside>
     </div>
     <div class="viewer__summary" id="viewerSummary"></div>
+    <div class="viewer__filmstrip" id="viewerFilmstrip" hidden></div>
+    <div class="viewer__peek viewer__peek--prev" id="viewerPeekPrev" aria-hidden="true"></div>
+    <div class="viewer__peek viewer__peek--next" id="viewerPeekNext" aria-hidden="true"></div>
   </div>
 
   <!-- Filter sheet -->
@@ -103,13 +139,33 @@
     <div class="m3e-dialog__content" id="dataBody"></div>
   </div>
 
+  <!-- Saved views dialog -->
+  <div class="m3e-dialog" id="savedViewsDialog" role="dialog" aria-modal="true" aria-labelledby="savedViewsTitle" data-open="false" aria-hidden="true">
+    <div class="m3e-dialog__header">
+      <h2 class="m3e-title-large m3e-title-large--emphasized m3e-dialog__title" id="savedViewsTitle">Saved views</h2>
+      <button type="button" class="m3e-icon-button m3e-state" id="savedViewsClose" aria-label="Close">×</button>
+    </div>
+    <div class="m3e-dialog__content" id="savedViewsBody"></div>
+  </div>
+
   <div class="bulkbar" id="bulkbar" hidden role="toolbar" aria-label="Selected media actions">
-    <strong><span id="selectedCount">0</span> selected</strong>
-    <button type="button" class="m3e-button m3e-button--text m3e-state" data-bulk="seen">Mark seen</button>
-    <button type="button" class="m3e-button m3e-button--text m3e-state" data-bulk="archive">Archive</button>
-    <button type="button" class="m3e-button m3e-button--text m3e-state" data-bulk="export">Export</button>
-    <button type="button" class="m3e-button m3e-button--text m3e-state" data-bulk="delete">Delete</button>
-    <button type="button" class="m3e-icon-button m3e-state" data-bulk="cancel" aria-label="Cancel selection">×</button>
+    <div class="bulkbar__count"><strong><span id="selectedCount">0</span> selected</strong></div>
+    <div class="bulkbar__group" data-bulk-group="common">
+      <button type="button" class="m3e-button m3e-button--tonal m3e-state" data-bulk="archive">Archive</button>
+      <button type="button" class="m3e-button m3e-button--text m3e-state" data-bulk="seen">Mark seen</button>
+      <button type="button" class="m3e-button m3e-button--text m3e-state" data-bulk="unseen">Mark unseen</button>
+    </div>
+    <span class="bulkbar__sep" aria-hidden="true"></span>
+    <div class="bulkbar__group" data-bulk-group="share">
+      <button type="button" class="m3e-button m3e-button--text m3e-state" data-bulk="copy">Copy links</button>
+      <button type="button" class="m3e-button m3e-button--text m3e-state" data-bulk="open">Open originals</button>
+      <button type="button" class="m3e-button m3e-button--text m3e-state" data-bulk="export">Export</button>
+    </div>
+    <span class="bulkbar__sep" aria-hidden="true"></span>
+    <div class="bulkbar__group" data-bulk-group="danger">
+      <button type="button" class="m3e-button m3e-button--text bulkbar__danger m3e-state" data-bulk="delete">Remove</button>
+    </div>
+    <button type="button" class="m3e-icon-button m3e-state bulkbar__close" data-bulk="cancel" aria-label="Cancel selection">×</button>
   </div>
 
   <div class="m3e-snackbar" id="snackbar" role="status" aria-live="polite" data-open="false">
