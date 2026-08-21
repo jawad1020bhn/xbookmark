@@ -98,6 +98,8 @@
   }
   function persistLibrary() {
     XBStore.saveLibrary(library);
+    /* Viewed/progress/archived are curator inputs; the cached page is stale. */
+    curationCache.key = "";
   }
 
   function writeUrl() {
@@ -399,7 +401,7 @@
 
   function renderSpotlight(main, list) {
     const item = spotlightItem(list);
-    if (!item) return;
+    if (!item) return null;
     const resuming = !!(item.progress && item.progress.t >= 3);
 
     const el = document.createElement("section");
@@ -435,6 +437,35 @@
       snackbar.show("Shuffled");
     };
     main.appendChild(el);
+    return item;
+  }
+
+  /* Curation is the most expensive thing on the page (~55ms on a few thousand
+     items), and a re-render triggered by, say, a storage event asks the same
+     question again. Memoise on everything the answer depends on — including
+     the day, since the page is meant to rotate. */
+  const curationCache = { key: "", value: null };
+
+  function curateHome(lead) {
+    const key = [
+      prefs.scope,
+      prefs.search,
+      JSON.stringify(prefs.filters || {}),
+      working.length,
+      bookmarks.length,
+      Math.floor(Date.now() / 86400000),
+      lead ? lead.id : "",
+    ].join("|");
+    if (curationCache.key === key) return curationCache.value;
+    const curated = XBCurator.curate(working, {
+      all: allItems,
+      prefs,
+      seed: prefs.shuffleSeed,
+      seenIds: lead ? [lead.id] : [],
+    });
+    curationCache.key = key;
+    curationCache.value = curated.shelves;
+    return curated.shelves;
   }
 
   function renderRails(main) {
@@ -443,12 +474,15 @@
       return;
     }
 
-    renderSpotlight(main, filtered);
+    const lead = renderSpotlight(main, filtered);
+    const cols = curateHome(lead);
 
-    const cols = XBLibrary.collections(working)
-      .filter((c) => c.items.length)
-      .slice(0, 8);
-    if (!cols.length) return;
+    /* Too little to curate honestly: show the library rather than invent
+       shelves out of the same six items. */
+    if (!cols.length) {
+      renderGrid(main);
+      return;
+    }
 
     cols.forEach((col, index) => {
       const section = document.createElement("section");

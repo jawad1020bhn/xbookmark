@@ -198,8 +198,8 @@ Real M3 carousels. The first rail uses the **hero** layout (one large item plus 
 sliver of the next — "look at this one"); the rest use **multi-browse** ("what
 have I got"). Both are full-bleed so the strip reads as continuing past the
 screen edge. Each rail has a header with a count, pointer-only arrows, a scroll-
-extent indicator, keyboard paging (arrows/Home/End) and wheel translation. Empty
-collections are no longer rendered; the page is capped at eight rails.
+extent indicator, keyboard paging (arrows/Home/End) and wheel translation. Which
+rails exist, in what order, holding what, is decided by the curator — §8.
 
 ### 5.8 Refine sheet
 Filter **chips**, not dropdowns: each chip states its constraint, shows selection
@@ -253,10 +253,113 @@ keyboard parity and a handle that squishes on press — not styled checkboxes.
 | Swatches, accents, colour character | Dynamic colour and personalisation |
 | Filter chips over dropdowns | Chips as the selection component |
 | Indeterminate wave during import parse | Updated progress indicators |
+| Curated, ranked, de-duplicated shelves (§8) | Not an M3 rule — M3 specifies the carousel, not what goes in it. The content strategy is ours; the presentation is the M3 carousel. |
 
 ---
 
-## 8 · Deliberately not done
+## 8 · Curation: what Home actually shows
+
+The rails were ten hard-coded predicates rendered in a fixed order. Every item
+matched several of them, so the seven-item demo library produced **eight rails
+holding twenty-eight tiles** — the same media, over and over, in the same order,
+for ever. Nothing was ranked, nothing was personal, nothing changed.
+
+`js/curator.js` replaces it with a four-stage pipeline. `library.js` goes back to
+being what it claims to be: the media model, filters and sorts.
+
+### 8.1 Pipeline
+
+**1 · Profile.** Read behaviour out of the library itself: which accounts you
+open (recency-weighted, so an open last week counts more than one last year),
+what you opened last, recurring keywords across *posts* (not per media item, so
+a gallery does not vote five times), and **capture sessions** — captures less
+than six hours apart are one sitting, which is what makes "what I saved last
+night" a real category.
+
+**2 · Candidates.** Eighteen generators propose themselves, each with a pool, an
+intrinsic priority, a per-item relevance function and a per-item explanation. A
+generator returns nothing when its idea does not apply: no anniversaries today,
+no "On this day"; fewer than eight likes-bearing items, no "Crowd favourites";
+a small library, no shape shelves, because "portrait" is not a distinction until
+there is enough media for it to be one.
+
+**3 · Rank items.** `relevance·0.62 + quality·0.18 + unseen·0.12 + freshness·0.08`,
+where quality is log-scaled engagement (a raw like count lets one viral post
+drown everything). Selection inside a shelf is greedy with an author-diversity
+decay (0.55 large / 0.75 otherwise per repeat), so one prolific account can no
+longer own a rail.
+
+**4 · Select shelves.** Greedy, and the important term is **novelty**:
+
+```
+score = priority × sizeScore × (floor + (1−floor)·novelty) × (0.55 + 0.45·relevance) × jitter
+novelty = share of this shelf's visible items not already shown further up
+```
+
+Each chosen shelf marks its first fourteen items as spent — only what reaches
+the screen counts — and every remaining candidate is re-scored. A shelf leaning
+on items the page already used collapses in value. Repeats are penalised, never
+banned (a hard ban empties the bottom of the page). On top of that: at most two
+shelves per family, one shelf per subject (so "More from @x" and "Because you
+opened @x" cannot both appear), a penalty for two same-family shelves in a row,
+and intent shelves exempt from the size score — three videos you are halfway
+through beat forty you have never opened.
+
+### 8.2 The shelves
+
+| Shelf | Family | Pri | Appears when |
+|---|---|---|---|
+| Continue watching | intent | 100 | video progress ≥3s and <95% done |
+| New to you / Waiting for you | intent | 92 | anything unseen |
+| On this day | time | 88 | posted on today's date in an earlier year |
+| Just captured / From your last capture | time | 78 | last capture session, if it isn't the whole library |
+| More from @account (×2) | author | 72/66 | accounts you open more than most |
+| Because you opened @account | personal | 68 | similar to your last view (author, type, duration band, keyword overlap) |
+| About "keyword" (×3) | topic | 62 | a word recurring in ≥3 posts |
+| Rediscover | time | 60 | captured >30d ago, untouched since |
+| Crowd favourites | signal | 56 | top 15% by likes at capture |
+| Quick hits | format | 52 | motion under 15s |
+| Settle in | format | 50 | video over 30s (3min on large libraries) |
+| Photo sets | format | 46 | posts that carried ≥3 images |
+| Loops | format | 42 | animated GIFs |
+| Your @account collection | author | 44 | most prolific account, if not already an affinity shelf |
+| Tall / Wide frames | format | 32/30 | medium+ libraries only |
+| Needs attention | maintenance | 34 | captured without a playable source |
+| Described media | signal | 26 → **64** | promoted when "always expose alt text" is on |
+| Surprise me | chance | 22 | the closer — a different handful every day |
+
+### 8.3 Adaptive and stable
+
+Shelf count, repeat tolerance and diversity scale with the library: 2 shelves
+under 12 items, 4 under 60, 6 under 300, 8 above. Below the threshold where
+curation would be dishonest, Home falls back to the plain grid rather than
+inventing shelves out of the same six items.
+
+Everything is seeded by the **day number**, so the page is identical all day and
+rotates tomorrow — browsing is not supposed to feel like a slot machine, but a
+library that looks the same every morning stops being looked at.
+
+### 8.4 Measured
+
+Synthetic libraries, node harness:
+
+| Library | Shelves | Unique items on screen | Avg appearances per item | Worst single-author share (thematic rails) | Time |
+|---|---|---|---|---|---|
+| 7 (demo) | 2 | 7 | 1.71 | 43% | 2ms |
+| 45 | 4 | 38 | 1.21 | 14% | 4ms |
+| 180 | 6 | 83 | 1.01 | 21% | 11ms |
+| 2400 | 8 | 100 | **1.00** | 14–21% | 56ms |
+
+Before: the demo library rendered 8 rails / 29 tiles for 7 items (≈4 appearances
+each). After: 2 rails / 14 tiles including the spotlight. Results are memoised on
+scope, filters, search, library size, day and spotlight item, and invalidated
+whenever viewed/progress/archive state is written — those are curator inputs.
+
+Edge cases verified: empty library, one item, items with no author/text/dates,
+an all-archived library, and a single-account library all degrade without
+throwing.
+
+## 9 · Deliberately not done
 
 - **Shape-morphing loading indicator** for the import parse. The system has
   `.m3e-loading`; the parse is usually under 100ms and a morphing glyph that
