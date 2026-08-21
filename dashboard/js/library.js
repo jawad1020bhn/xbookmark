@@ -316,29 +316,37 @@
 
     const defs = [
       {
-        id: "continue", title: "Pick up where you left off",
-        hint: "In-progress videos, with the most recently opened first",
+        id: "continue", title: "Continue watching",
+        subtitle: "Pick up where you left off",
+        hint: "Videos you started — most recent first",
+        mood: "progress",
         pred: (i) => i.type === "video" && i.progress && i.progress.t >= 3 && !complete(i),
         score: (i) => i.lastOpened || i.viewedAt || 0,
-        reason: (i) => "Resume at " + (root.M3EMedia ? root.M3EMedia.formatDuration(i.progress.t * 1000) : Math.round(i.progress.t) + "s"),
+        reason: (i) => "Resume · " + (root.M3EMedia ? root.M3EMedia.formatDuration(i.progress.t * 1000) : Math.round(i.progress.t) + "s"),
       },
       {
-        id: "top-picks", title: "Top picks for you",
-        hint: "A balanced mix of quality, freshness and things you haven’t opened",
+        id: "top-picks", title: "Top picks",
+        subtitle: "Curated for you",
+        hint: "Quality, freshness and what you haven’t opened yet — balanced",
+        mood: "curated",
         pred: (i) => !i.archived && i.playable,
         score: topPick,
-        reason: (i) => i.unseen ? "Strong pick · not opened yet" : "Worth another look",
+        reason: (i) => i.unseen ? "Pick · unseen" : "Top pick",
       },
       {
-        id: "unseen", title: "Ready to discover",
+        id: "unseen", title: "Unseen",
+        subtitle: "Things you saved but never opened",
         hint: "The best of your unopened saves",
+        mood: "attention",
         pred: (i) => i.unseen && !i.archived,
         score: (i) => quality(i) * 0.55 + fresh(i) * 0.45,
         reason: (i) => fresh(i) > 0.7 ? "New and unopened" : "Saved, never opened",
       },
       {
-        id: "recent", title: "Freshly saved",
+        id: "recent", title: "Recently captured",
+        subtitle: "Fresh saves from the last 7 days",
         hint: "Recent captures, newest and most promising first",
+        mood: "fresh",
         pred: (i) => i.capturedAt && n - i.capturedAt <= RECENT_MS && !i.archived,
         score: (i) => fresh(i) * 0.72 + quality(i) * 0.28,
         reason: (i) => {
@@ -347,8 +355,10 @@
         },
       },
       {
-        id: "popular", title: "Standout saves",
-        hint: "Posts with the strongest engagement, adjusted for reach",
+        id: "popular", title: "Popular",
+        subtitle: "Posts that stood out when you saved them",
+        hint: "Strongest engagement, adjusted for reach",
+        mood: "social",
         pred: (i) => quality(i) >= 0.48 && i.eng.reactions > 0,
         score: quality,
         min: Math.min(3, items.length),
@@ -356,55 +366,78 @@
       },
       {
         id: "quick-watch", title: "Quick watches",
+        subtitle: "Short and loopable",
         hint: "Short videos and GIFs for when you only have a minute",
+        mood: "quick",
         pred: (i) => isMotion(i.type) && i.playable && i.duration > 0 && i.duration <= 60000,
         score: (i) => quality(i) * 0.45 + fresh(i) * 0.35 + (i.unseen ? 0.2 : 0),
         reason: (i) => durationLabel(i) + " · quick watch",
       },
       {
         id: "deep-dives", title: "Longer watches",
+        subtitle: "Set aside a little more time",
         hint: "Videos worth setting aside a little more time for",
+        mood: "deep",
         pred: (i) => i.type === "video" && i.playable && i.duration > 60000,
         score: (i) => quality(i) * 0.52 + (i.unseen ? 0.3 : 0) + fresh(i) * 0.18,
         reason: (i) => durationLabel(i) + " video",
       },
       {
         id: "photo-stories", title: "Photo stories",
+        subtitle: "Multi-image posts, kept together",
         hint: "Multi-image posts kept together in their original order",
+        mood: "still",
         pred: (i) => i.type === "photo" && Array.isArray(i.post.media_items) && i.post.media_items.length > 1,
         score: (i) => quality(i) * 0.5 + fresh(i) * 0.3 + (i.unseen ? 0.2 : 0),
         groupPostMedia: true,
         reason: (i) => "Image " + i.position + " of " + i.post.media_items.length,
       },
       {
-        id: "favorite-creators", title: "Creators you save often",
+        id: "favorite-creators", title: "Favorite creators",
+        subtitle: "People who keep showing up",
         hint: "More from the people who keep showing up in your library",
+        mood: "creator",
         pred: (i) => (authorCounts.get(i.author) || 0) >= creatorFloor,
         score: (i) => (authorCounts.get(i.author) || 0) + quality(i) + fresh(i) * 0.5,
         min: 2,
-        reason: (i) => (authorCounts.get(i.author) || 0) + " saved posts from @" + i.author,
+        reason: (i) => (authorCounts.get(i.author) || 0) + " saves · @" + i.author,
       },
       {
         id: "hidden-gems", title: "Hidden gems",
+        subtitle: "Older saves worth another look",
         hint: "Older unopened saves that are easy to miss",
+        mood: "rediscover",
         pred: (i) => i.unseen && i.capturedAt && n - i.capturedAt > 14 * DAY,
         score: (i) => quality(i) * 0.62 + ageScore(i.capturedAt, n, 120) * 0.18 + (i.alt ? 0.2 : 0),
         reason: () => "Still waiting to be discovered",
       },
       {
-        id: "forgotten", title: "Rediscover",
+        id: "forgotten", title: "Forgotten",
+        subtitle: "Older captures worth another look",
         hint: "Things you enjoyed before but haven’t revisited lately",
+        mood: "rediscover",
         pred: (i) => !i.unseen && i.lastOpened && n - i.lastOpened > FORGOTTEN_MS,
         score: (i) => quality(i) * 0.55 + clamp01((n - i.lastOpened) / (180 * DAY)) * 0.45,
         reason: (i) => "Last opened " + Math.max(1, Math.floor((n - i.lastOpened) / DAY)) + " days ago",
       },
       {
         id: "accessible", title: "Described media",
+        subtitle: "With alt text",
         hint: "Photos and videos with creator-written alt text",
+        mood: "accessible",
         pred: (i) => !!i.alt,
         score: (i) => quality(i) * 0.55 + fresh(i) * 0.45,
         min: 3,
         reason: () => "Includes alt text",
+      },
+      {
+        id: "archived", title: "Archived",
+        subtitle: "Kept, but out of sight",
+        hint: "Keep the media, remove it from normal discovery",
+        mood: "archived",
+        pred: (i) => !!i.archived,
+        score: (i) => i.lastOpened || i.capturedAt,
+        reason: () => "Archived",
       },
     ];
 
@@ -414,7 +447,9 @@
       return {
         id: d.id,
         title: d.title,
+        subtitle: d.subtitle || "",
         hint: d.hint,
+        mood: d.mood || "default",
         items: list,
         total: candidates.length,
         reasons: list.map((item) => d.reason(item)),
@@ -457,6 +492,41 @@
     return { posts, media, videos, gifs, photos, unavailable, failed };
   }
 
+  function groupItems(items, groupBy) {
+    if (groupBy === "creator") {
+      const map = new Map();
+      items.forEach((i) => {
+        const k = i.author || "unknown";
+        if (!map.has(k)) map.set(k, []);
+        map.get(k).push(i);
+      });
+      return Array.from(map.entries())
+        .sort((a, b) => b[1].length - a[1].length)
+        .map(([key, list]) => ({ key: "@" + key, label: "@" + key, items: list }));
+    }
+    if (groupBy === "type") {
+      const map = { photo: [], video: [], animated_gif: [] };
+      items.forEach((i) => { const k = i.type === "animated_gif" ? "animated_gif" : i.type; if (map[k]) map[k].push(i); });
+      return [
+        { key: "video", label: "Video", items: map.video },
+        { key: "photo", label: "Photo", items: map.photo },
+        { key: "gif", label: "GIF", items: map.animated_gif },
+      ].filter((g) => g.items.length);
+    }
+    if (groupBy === "date") {
+      const buckets = new Map();
+      items.forEach((i) => {
+        const d = new Date(i.capturedAt);
+        const key = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+        const label = d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+        if (!buckets.has(key)) buckets.set(key, { key, label, items: [] });
+        buckets.get(key).items.push(i);
+      });
+      return Array.from(buckets.values()).sort((a, b) => b.key.localeCompare(a.key));
+    }
+    return [{ key: "all", label: "", items }];
+  }
+
   root.XBLibrary = {
     flatten,
     applyFilters,
@@ -466,6 +536,7 @@
     stats,
     mediaId,
     parseDate,
+    groupItems,
     PORTRAIT_MAX,
     WIDE_MIN,
     LONG_VIDEO_MS,

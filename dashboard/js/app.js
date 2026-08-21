@@ -1,5 +1,5 @@
 /* =============================================================================
-   X Library dashboard — media-first browser
+   X Library dashboard — private visual archive
    ============================================================================= */
 (() => {
   "use strict";
@@ -34,6 +34,20 @@
     ],
   };
 
+  const GROUP_OPTIONS = [
+    { id: "none", label: "No grouping" },
+    { id: "date", label: "By date" },
+    { id: "creator", label: "By creator" },
+    { id: "type", label: "By media type" },
+  ];
+
+  const WATCH_FILTERS = [
+    { id: "all", label: "For you" },
+    { id: "unseen", label: "Unseen" },
+    { id: "continue", label: "Continue" },
+    { id: "quick", label: "Quick" },
+  ];
+
   const STOP_REASONS = {
     "end-of-feed": "Reached the end of the feed",
     "incremental-complete": "Incremental pass complete",
@@ -57,10 +71,12 @@
   let snackbar;
   let settingsOverlay;
   let dataOverlay;
+  let savedViewsOverlay;
   let viewerOpen = false;
   let viewerIndex = 0;
   let viewerList = [];
   let viewerCleanup = null;
+  let viewerHideTimer = 0;
   let hoverVideo = null;
   let gridObserver = null;
   let renderedCount = 0;
@@ -70,7 +86,6 @@
   let selectionMode = false;
   let longPressTimer = 0;
   const GRID_PAGE = 48;
-  const scrollMemory = { y: 0 };
 
   const $ = (sel, root) => (root || document).querySelector(sel);
   const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
@@ -100,6 +115,15 @@
     return Math.floor(days / 365) + "y ago";
   }
 
+  function savedLabel(ms) {
+    if (!ms) return "Recently";
+    const d = Date.now() - ms;
+    if (d < 60000) return "Just now";
+    if (d < 3600000) return Math.floor(d / 60000) + "m ago";
+    if (d < 86400000) return Math.floor(d / 3600000) + "h ago";
+    return "Saved " + relative(ms);
+  }
+
   /* ---- persistence ------------------------------------------------------- */
   function persistPrefs() {
     XBStore.savePrefs(prefs);
@@ -115,6 +139,10 @@
     p.set("sort", prefs.sort);
     if (prefs.collection && prefs.collection !== "all") p.set("col", prefs.collection);
     if (prefs.search) p.set("q", prefs.search);
+    if (Object.keys(prefs.filters || {}).length) p.set("f", JSON.stringify(prefs.filters));
+    if (prefs.layoutMode && prefs.layoutMode !== "uniform") p.set("layout", prefs.layoutMode);
+    if (prefs.groupBy && prefs.groupBy !== "none") p.set("group", prefs.groupBy);
+    if (railSelection) p.set("rail", railSelection.id);
     if (prefs.lastItemId && viewerOpen) p.set("item", prefs.lastItemId);
     const next = "#" + p.toString();
     if (location.hash !== next) history[push ? "pushState" : "replaceState"](null, "", next);
@@ -128,7 +156,22 @@
     if (p.get("sort")) prefs.sort = p.get("sort");
     if (p.get("col")) prefs.collection = p.get("col");
     if (p.get("q")) prefs.search = p.get("q");
+    if (p.get("f")) try { prefs.filters = JSON.parse(p.get("f")); } catch {}
+    if (p.get("layout")) prefs.layoutMode = p.get("layout");
+    if (p.get("group")) prefs.groupBy = p.get("group");
+    if (p.get("rail")) {
+      // railSelection is restored after rebuild; store pending
+      prefs._pendingRail = p.get("rail");
+    }
     if (p.get("item")) prefs.lastItemId = p.get("item");
+  }
+
+  function pushRecentSearch(q) {
+    const t = String(q || "").trim();
+    if (!t || t.length < 2) return;
+    prefs.recentSearches = prefs.recentSearches || [];
+    prefs.recentSearches = [t].concat(prefs.recentSearches.filter((x) => x.toLowerCase() !== t.toLowerCase())).slice(0, 6);
+    persistPrefs();
   }
 
   /* ---- library rebuild --------------------------------------------------- */
@@ -140,6 +183,13 @@
       prefs.shuffleSeed
     );
     if (railSelection) filtered = filtered.filter((item) => railSelection.ids.has(item.id));
+    // restore pending rail after data load
+    if (prefs._pendingRail && !railSelection) {
+      const cols = XBLibrary.collections(allItems);
+      const col = cols.find((c) => c.id === prefs._pendingRail);
+      if (col) railSelection = { id: col.id, title: col.title, hint: col.hint, ids: new Set(col.items.map((item) => item.id)) };
+      delete prefs._pendingRail;
+    }
   }
 
   function markViewed(id) {
@@ -150,18 +200,26 @@
   }
 
   const progressApi = {
-    get(id) {
-      return library.progress[id] || null;
-    },
+    get(id) { return library.progress[id] || null; },
     set(id, rec) {
       if (!prefs.rememberProgress) return;
       library.progress[id] = rec;
       persistLibrary();
     },
-    clear(id) {
-      delete library.progress[id];
-      persistLibrary();
-    },
+    clear(id) { delete library.progress[id]; persistLibrary(); },
+  };
+
+  /* ---- icons (coherent family, stroke-based) ----------------------------- */
+  const ICONS = {
+    external: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 5h6v6"/><path d="M5 11v6a2 2 0 0 0 2 2h6"/><path d="M19 5L11 13"/></svg>',
+    copy: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="9" y="9" width="10" height="10" rx="2"/><path d="M5 15V7a2 2 0 0 1 2-2h8"/></svg>',
+    archive: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7l9-4 9 4-9 4-9-4Z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M3 12l9 4 9-4"/></svg>',
+    archiveOn: '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M3 7l9-4 9 4-9 4-9-4Z"/><path d="M3 7v10l9 4 9-4V7"/></svg>',
+    trash: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M19 7l-1 11a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 7"/><path d="M10 11v6M14 11v6"/></svg>',
+    retry: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>',
+    more: '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>',
+    play: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M8 5.14v14l11-7z"/></svg>',
+    unseen: '<svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor"><circle cx="12" cy="12" r="5"/></svg>',
   };
 
   /* ---- tiles ------------------------------------------------------------- */
@@ -169,16 +227,23 @@
     const o = opts || {};
     const tile = document.createElement("article");
     tile.className = "tile" + (o.large ? " tile--large" : "");
+    if (item.archived) tile.classList.add("is-archived");
+    if (item.unseen) tile.classList.add("is-unseen");
     tile.dataset.id = item.id;
     tile.tabIndex = 0;
     tile.setAttribute("role", "button");
     const summary = (item.text || item.alt || "Media").replace(/\s+/g, " ").slice(0, 100);
     tile.setAttribute("aria-label", (item.type === "photo" ? "Photo" : item.type === "animated_gif" ? "GIF" : "Video") +
       " by @" + (item.author || "unknown") + (summary ? ": " + summary : "") + (item.unseen ? " · unseen" : ""));
-    tile.style.aspectRatio = M3EMedia.aspectRatio(item.media, 0.45, 2.4);
+    // Aspect handling: uniform forces fixed ratio, natural uses true ratio
+    if (prefs.layoutMode === "natural") {
+      tile.style.aspectRatio = M3EMedia.aspectRatio(item.media, 0.45, 2.4);
+    } else if (o.large) {
+      tile.style.aspectRatio = "3 / 4";
+    } else {
+      tile.style.aspectRatio = "4 / 5";
+    }
     tile.style.viewTransitionName = "tile-" + item.id.replace(/[^a-zA-Z0-9_-]/g, "-");
-    if (item.unseen) tile.classList.add("is-unseen");
-    if (item.archived) tile.classList.add("is-archived");
     tile.classList.add("is-loading");
     if (selectedIds.has(item.id)) {
       tile.classList.add("is-selected");
@@ -218,10 +283,12 @@
       b.textContent = badge;
       meta.appendChild(b);
     }
+    // Distinguish unavailable vs preview failed
     if (!item.playable && item.type !== "photo") {
       const b = document.createElement("span");
       b.className = "tile__badge tile__badge--warn";
       b.textContent = "Unavailable";
+      b.title = "Source not locally playable · open original on X";
       meta.appendChild(b);
     }
     if (item.progress && item.type === "video") {
@@ -235,22 +302,43 @@
     tile.appendChild(img);
     tile.appendChild(meta);
 
+    // State hierarchy: unread dot is CSS ::before, reason chip top-left, actions top-right
+    if (o.why) {
+      const why = document.createElement("span");
+      why.className = "tile__why m3e-label-small tile__why--" + (o.mood || "default");
+      why.textContent = o.why;
+      tile.appendChild(why);
+    }
+
+    // Card actions — coherent, not all at once
     const actions = document.createElement("div");
     actions.className = "tile__actions";
+    const openBtn = item.post.tweet_url
+      ? '<a href="' + escapeHtml(item.post.tweet_url) + '" target="_blank" rel="noopener" aria-label="Open original" title="Open original">' + ICONS.external + '</a>'
+      : "";
     actions.innerHTML =
-      (item.post.tweet_url ? '<a href="' + escapeHtml(item.post.tweet_url) + '" target="_blank" rel="noopener" aria-label="Open original post" title="Open original">↗</a>' : "") +
-      '<button type="button" data-tile-act="copy" aria-label="Copy post link" title="Copy link">⧉</button>' +
-      '<button type="button" data-tile-act="archive" aria-label="' + (item.archived ? "Restore from archive" : "Archive") + '" title="' + (item.archived ? "Restore" : "Archive") + '">◇</button>' +
-      '<button type="button" data-tile-act="remove" aria-label="Remove from library" title="Remove">×</button>' +
-      '<button type="button" data-tile-act="retry" aria-label="Retry preview" title="Retry preview">↻</button>';
+      openBtn +
+      '<button type="button" data-tile-act="more" aria-label="More" title="More">' + ICONS.more + '</button>';
+    // keep retry accessible via menu or as fallback if broken
+    const retryBtn = document.createElement("button");
+    retryBtn.type = "button";
+    retryBtn.dataset.tileAct = "retry";
+    retryBtn.setAttribute("aria-label", "Retry preview");
+    retryBtn.title = "Retry preview";
+    retryBtn.innerHTML = ICONS.retry;
+    retryBtn.hidden = true;
+    actions.appendChild(retryBtn);
     tile.appendChild(actions);
 
+    // Caption with provenance
     if (prefs.showMetadata && !o.hideMeta) {
       const cap = document.createElement("div");
       cap.className = "tile__caption";
-      cap.innerHTML = '<span class="tile__author">@' + escapeHtml(item.author || "unknown") + "</span>" +
-        '<span class="tile__saved">Saved ' + escapeHtml(relative(item.capturedAt)) + "</span>" +
-        (prefs.fullCaptions ? '<span class="tile__text">' + escapeHtml(item.text || "") + "</span>" : "");
+      const prov = item.capturedAt ? savedLabel(item.capturedAt) : "";
+      const altHint = item.alt ? " · Alt" : "";
+      cap.innerHTML = '<span class="tile__author">@' + escapeHtml(item.author || "unknown") + '</span>' +
+        '<span class="tile__saved">' + escapeHtml(prov + altHint) + '</span>' +
+        (prefs.fullCaptions && item.text ? '<span class="tile__text">' + escapeHtml(item.text.slice(0, 120)) + '</span>' : "");
       tile.appendChild(cap);
     }
 
@@ -284,24 +372,50 @@
     ["pointerup", "pointercancel", "pointermove"].forEach((name) =>
       tile.addEventListener(name, () => clearTimeout(longPressTimer))
     );
-    actions.addEventListener("click", async (event) => {
+    actions.addEventListener("click", (event) => {
       const action = event.target.closest("[data-tile-act]");
       if (!action) return;
       event.stopPropagation();
-      if (action.dataset.tileAct === "retry") retry();
-      if (action.dataset.tileAct === "remove") removeItems([item.id], true);
-      if (action.dataset.tileAct === "archive") {
-        if (library.archived[item.id]) delete library.archived[item.id];
-        else library.archived[item.id] = true;
-        await XBStore.saveLibrary(library);
-        render();
-        snackbar.show(library.archived[item.id] ? "Archived" : "Restored");
-      }
-      if (action.dataset.tileAct === "copy") {
-        try { await navigator.clipboard.writeText(item.post.tweet_url || ""); snackbar.show("Copied!"); }
-        catch { snackbar.show("Couldn’t copy", { error: true }); }
+      event.preventDefault();
+      const kind = action.dataset.tileAct;
+      if (kind === "retry") retry();
+      if (kind === "more") {
+        const menu = document.createElement("div");
+        menu.className = "m3e-menu tile-menu";
+        menu.innerHTML = `
+          <button type="button" class="m3e-menu__item" data-menu-act="copy">${ICONS.copy} Copy link</button>
+          <button type="button" class="m3e-menu__item" data-menu-act="archive">${item.archived ? ICONS.archiveOn : ICONS.archive} ${item.archived ? "Restore" : "Archive"}</button>
+          <button type="button" class="m3e-menu__item" data-menu-act="retry">${ICONS.retry} Retry preview</button>
+          <div class="m3e-menu__divider"></div>
+          <button type="button" class="m3e-menu__item m3e-menu__item--danger" data-menu-act="remove">${ICONS.trash} Remove</button>
+        `;
+        menu.addEventListener("click", async (e) => {
+          const act = e.target.closest("[data-menu-act]");
+          if (!act) return;
+          const a = act.dataset.menuAct;
+          if (a === "copy") {
+            try { await navigator.clipboard.writeText(item.post.tweet_url || ""); snackbar.show("Copied!"); }
+            catch { snackbar.show("Couldn’t copy", { error: true }); }
+          }
+          if (a === "archive") {
+            if (library.archived[item.id]) delete library.archived[item.id];
+            else library.archived[item.id] = true;
+            await XBStore.saveLibrary(library);
+            render();
+            snackbar.show(library.archived[item.id] ? "Archived · removed from discovery" : "Restored");
+          }
+          if (a === "retry") retry();
+          if (a === "remove") removeItems([item.id], true);
+        });
+        M3E.openMenu(action, menu, { align: "end" });
       }
     });
+
+    // Update retry visibility when broken
+    const obs = new MutationObserver(() => {
+      retryBtn.hidden = !tile.classList.contains("is-broken");
+    });
+    obs.observe(tile, { attributes: true, attributeFilter: ["class"] });
 
     if (prefs.autoplayPreviews && !M3E.reducedMotion() && item.type !== "photo") {
       tile.addEventListener("pointerenter", () => maybePreview(tile, item));
@@ -370,12 +484,16 @@
       <div class="empty__art" aria-hidden="true">
         <span></span><span></span><span></span>
       </div>
-      <p class="m3e-label-large hero__kicker">Your private media library</p>
+      <p class="m3e-label-large hero__kicker">Your private visual archive</p>
       <h1 class="m3e-headline-medium m3e-headline-medium--emphasized">Your bookmarks, visualized.</h1>
       <p class="m3e-body-large empty__lead">Turn an X bookmark export into searchable rails, smart collections and a distraction-free viewer. Your data stays on this device.</p>
       <div class="empty__actions">
         <button class="m3e-button m3e-button--filled m3e-state" data-act="import">Import bookmarks</button>
         <button class="m3e-button m3e-button--tonal m3e-state" data-act="sample">Browse sample library</button>
+      </div>
+      <div class="empty__after">
+        <h3 class="m3e-title-small">After import</h3>
+        <p class="m3e-body-small">Your library automatically creates collections for recent, unseen, popular, forgotten, and in-progress media — so you can rediscover what you saved without scrolling.</p>
       </div>
       <ol class="empty__steps" aria-label="Getting started">
         <li><strong>1</strong><span><b>Connect</b><small>Open X bookmarks</small></span></li>
@@ -399,19 +517,62 @@
   function emptyFilter(reason) {
     const el = document.createElement("section");
     el.className = "empty empty--filter";
-    const title = prefs.search ? "No matches for ‘" + prefs.search + "’" : "Nothing matches these filters";
+    const hasSearch = !!prefs.search;
+    const title = hasSearch ? "No results for “" + prefs.search + "”" : "Nothing matches these filters";
+    let suggestions = "";
+    if (hasSearch) {
+      suggestions = `
+        <div class="empty__suggest">
+          <button class="m3e-button m3e-button--tonal m3e-state" data-suggest="clear">Clear search</button>
+          <button class="m3e-button m3e-button--text m3e-state" data-suggest="video">Try Videos</button>
+          <button class="m3e-button m3e-button--text m3e-state" data-suggest="popular">Try Popular</button>
+        </div>`;
+    } else if (Object.keys(prefs.filters || {}).length || railSelection) {
+      suggestions = `
+        <div class="empty__suggest">
+          <button class="m3e-button m3e-button--tonal m3e-state" data-suggest="clear">Clear filters</button>
+          <button class="m3e-button m3e-button--text m3e-state" data-suggest="broaden">Broaden date</button>
+        </div>`;
+    } else {
+      suggestions = `<div class="empty__suggest"><button class="m3e-button m3e-button--tonal m3e-state" data-suggest="explore">Explore another collection</button></div>`;
+    }
     el.innerHTML =
       "<h2 class=\"m3e-title-large\">" + escapeHtml(title) + "</h2>" +
-      "<p class=\"m3e-body-medium\">" + escapeHtml(reason) + " Try another search or clear the active filters.</p>" +
-      "<button class=\"m3e-button m3e-button--tonal m3e-state\" type=\"button\">Clear filters</button>";
-    el.querySelector("button").onclick = () => {
+      "<p class=\"m3e-body-medium empty__reason\">" + escapeHtml(reason) + "</p>" +
+      suggestions +
+      "<p class=\"m3e-body-small empty__tip\">What should you do next? Try a suggestion above.</p>";
+    const bind = (sel, fn) => { const b = el.querySelector(sel); if (b) b.onclick = fn; };
+    bind('[data-suggest="clear"]', () => {
       prefs.filters = {};
       prefs.search = "";
       railSelection = null;
       $("#search").value = "";
       persistPrefs();
       render();
-    };
+    });
+    bind('[data-suggest="video"]', () => {
+      prefs.filters = Object.assign({}, prefs.filters, { kind: "video" });
+      persistPrefs();
+      render();
+    });
+    bind('[data-suggest="popular"]', () => {
+      railSelection = null;
+      prefs.visualization = "rails";
+      persistPrefs();
+      render();
+      document.getElementById("rail-popular")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    bind('[data-suggest="broaden"]', () => {
+      delete prefs.filters.capturedFrom;
+      delete prefs.filters.postedFrom;
+      persistPrefs();
+      render();
+    });
+    bind('[data-suggest="explore"]', () => {
+      prefs.visualization = "rails";
+      persistPrefs();
+      render();
+    });
     return el;
   }
 
@@ -423,6 +584,7 @@
     if (col.id === "quick-watch") return "QUICK · " + M3EMedia.formatDuration(item.duration);
     if (col.id === "forgotten") return "REDISCOVER";
     if (col.id === "top-picks") return item.unseen ? "PICK · UNSEEN" : "TOP PICK";
+    if (col.id === "archived") return "ARCHIVED";
     return String(reason || col.title).replace(/^Still waiting to be /i, "").toUpperCase();
   }
 
@@ -441,37 +603,93 @@
     const unseenVideos = working.filter((item) => item.type === "video" && item.unseen).length;
     const unavailable = working.filter((item) => !item.playable || item.state !== "available").length;
     const inProgress = working.filter((item) => item.progress && item.progress.t >= 3).length;
+    const newSince = working.filter((i) => !i.viewedAt).length;
+
+    // Editorial hero
     const hero = document.createElement("header");
-    hero.className = "hero hero--library";
+    hero.className = "hero hero--archive";
+    const totalCaptures = bookmarks.length;
+    const heroLine = newSince
+      ? (newSince === working.length ? "Everything is waiting — start with Top picks." : newSince + " things are waiting for you.")
+      : "Nothing is waiting — explore something forgotten.";
+    // Also show last opened item as continue memory
+    const lastId = prefs.lastItemId;
+    const lastItem = lastId ? working.find((i) => i.id === lastId) : null;
+    const continueMem = lastItem && lastItem.progress
+      ? `<div class="hero__continue">Continue from ${Math.round((lastItem.progress.t / (lastItem.progress.d || 60)) * 100)}% · <a href="#" data-act="continue">${escapeHtml(lastItem.author || "your last view")}</a></div>`
+      : "";
     hero.innerHTML =
-      "<p class=\"m3e-label-large hero__kicker\">Your library</p>" +
-      "<h1 class=\"m3e-display-small m3e-display-small--emphasized\">Find something worth your attention.</h1>" +
-      "<p class=\"m3e-body-large hero__sub\">" +
-      working.length.toLocaleString() + " media · " + bookmarks.length.toLocaleString() + " posts</p>" +
-      '<div class="library-health" aria-label="Library status">' +
+      "<p class=\"m3e-label-large hero__kicker\">Your visual archive</p>" +
+      "<h1 class=\"m3e-display-small m3e-display-small--emphasized\">Your visual archive</h1>" +
+      "<p class=\"m3e-body-large hero__sub\">" + working.length.toLocaleString() + " media saved across " + totalCaptures.toLocaleString() + " posts</p>" +
+      "<p class=\"m3e-body-medium hero__dynamic\">" + escapeHtml(heroLine) + "</p>" +
+      continueMem +
+      '<div class="library-health" aria-label="Library health">' +
       '<span><b>' + recentCount.toLocaleString() + '</b> new</span>' +
-      '<span><b>' + unseenVideos.toLocaleString() + '</b> unwatched videos</span>' +
+      '<span><b>' + unseenVideos.toLocaleString() + '</b> unwatched</span>' +
       '<span><b>' + inProgress.toLocaleString() + '</b> in progress</span>' +
       '<span class="' + (unavailable ? "has-warning" : "") + '"><b>' + unavailable.toLocaleString() + '</b> unavailable</span>' +
       "</div>";
     main.appendChild(hero);
+    // Timeline map — optional navigation tool for large archives
+    if (working.length > 24) {
+      const buckets = new Map();
+      working.forEach((item) => {
+        const d = new Date(item.capturedAt);
+        if (!d.getTime()) return;
+        const key = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+        const label = d.toLocaleDateString(undefined, { month: "short" });
+        if (!buckets.has(key)) buckets.set(key, { key, label, year: d.getFullYear(), count: 0 });
+        buckets.get(key).count++;
+      });
+      const sorted = Array.from(buckets.values()).sort((a, b) => a.key.localeCompare(b.key)).slice(-8);
+      if (sorted.length >= 3) {
+        const max = Math.max(...sorted.map((b) => b.count));
+        const mapEl = document.createElement("div");
+        mapEl.className = "timeline-map";
+        mapEl.setAttribute("aria-label", "Library timeline");
+        sorted.forEach((b) => {
+          const h = Math.max(8, Math.round((b.count / max) * 36));
+          const cell = document.createElement("div");
+          cell.className = "timeline-map__month";
+          cell.innerHTML = '<span class="timeline-map__count">' + b.count + '</span>' +
+            '<span class="timeline-map__bar" style="height:' + h + 'px"></span>' +
+            '<span class="timeline-map__label">' + escapeHtml(b.label) + '</span>';
+          mapEl.appendChild(cell);
+        });
+        hero.appendChild(mapEl);
+      }
+    }
+    const cont = hero.querySelector("[data-act=continue]");
+    if (cont) cont.addEventListener("click", (e) => { e.preventDefault(); if (lastItem) openViewer(lastItem.id, working); });
 
     visibleCols.forEach((col) => {
       const section = document.createElement("section");
-      section.className = "rail";
+      section.className = "rail rail--" + (col.mood || "default");
       section.id = "rail-" + col.id;
+      section.dataset.mood = col.mood || "";
       const head = document.createElement("div");
       head.className = "rail__head";
+      // Adaptive See all logic
+      const count = col.total || col.items.length;
+      let seeAll = "";
+      if (count > 8) seeAll = '<button type="button" class="m3e-button m3e-button--text m3e-button--xs m3e-state" data-see-all>See all →</button>';
+      else if (count > 4) seeAll = '<span class="m3e-label-medium rail__count">' + count.toLocaleString() + '</span>';
+      // else tiny -> no count no action
+      const subtitle = col.subtitle ? "<p class=\"m3e-body-small rail__subtitle\">" + escapeHtml(col.subtitle) + "</p>" : "";
       head.innerHTML =
         "<div><h2 class=\"m3e-title-medium m3e-title-medium--emphasized\">" + escapeHtml(col.title) + "</h2>" +
+        subtitle +
         "<p class=\"m3e-body-small rail__hint\">" + escapeHtml(col.hint) + "</p></div>" +
-        '<div class="rail__head-actions"><span class="m3e-label-medium rail__count">' + (col.total || col.items.length).toLocaleString() + "</span>" +
-        '<button type="button" class="m3e-button m3e-button--text m3e-button--xs m3e-state" data-see-all>See all →</button></div>';
-      head.querySelector("[data-see-all]").addEventListener("click", () => {
-        railSelection = { id: col.id, title: col.title, ids: new Set(col.items.map((item) => item.id)) };
+        '<div class="rail__head-actions">' + seeAll + '</div>';
+      const sa = head.querySelector("[data-see-all]");
+      if (sa) sa.addEventListener("click", () => {
+        railSelection = { id: col.id, title: col.title, hint: col.hint, ids: new Set(col.items.map((item) => item.id)) };
         prefs.visualization = "grid";
         persistPrefs();
         render();
+        // contextual transition: scroll to top and focus hint
+        requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
       });
       section.appendChild(head);
 
@@ -499,12 +717,10 @@
       const scroller = document.createElement("div");
       scroller.className = "rail__scroller";
       scroller.tabIndex = 0;
+      scroller.setAttribute("aria-label", col.title + " carousel");
+      // peek affordance: ensure scroller shows partial next card via CSS
       col.items.slice(0, 40).forEach((item, i) => {
-        const t = tileEl(item, { list: col.items, large: true, size: "medium" });
-        const why = document.createElement("span");
-        why.className = "tile__why m3e-label-small";
-        why.textContent = collectionSignal(col, item, col.reasons[i]);
-        t.appendChild(why);
+        const t = tileEl(item, { list: col.items, large: true, size: "medium", why: collectionSignal(col, item, col.reasons[i]), mood: col.mood });
         scroller.appendChild(t);
       });
       wrap.appendChild(prev);
@@ -517,32 +733,48 @@
       section.appendChild(progress);
       main.appendChild(section);
       bindCarousel(scroller, { prev, next });
-      enhanceRail(scroller, progress);
+      enhanceRail(scroller, progress, col.id);
     });
 
-    if (explore.length) {
+    if (explore.length || cols.some((c) => c.id === "archived")) {
       const more = document.createElement("section");
       more.className = "explore-collections";
-      more.innerHTML = showAllCollections
-        ? '<button type="button" class="m3e-button m3e-button--text m3e-state">Show fewer collections ↑</button>'
-        : '<div><p class="m3e-title-medium">Explore your library</p><p class="m3e-body-small">Quick watches, photo stories, favorite creators and more.</p></div><button type="button" class="m3e-button m3e-button--tonal m3e-state">Explore all collections →</button>';
-      more.querySelector("button").onclick = () => {
-        showAllCollections = !showAllCollections;
-        render();
-        if (!showAllCollections) $("#stage").focus();
-      };
+      if (showAllCollections) {
+        more.innerHTML = '<button type="button" class="m3e-button m3e-button--text m3e-state">Show fewer collections ↑</button>';
+        more.querySelector("button").onclick = () => {
+          showAllCollections = false;
+          render();
+        };
+      } else {
+        const extraCount = explore.length;
+        more.innerHTML = '<div><p class="m3e-title-medium">Explore your library</p><p class="m3e-body-small">Quick watches, photo stories, favorite creators and more — ' + extraCount + ' more collections.</p></div><button type="button" class="m3e-button m3e-button--tonal m3e-state">More collections →</button>';
+        more.querySelector("button").onclick = () => {
+          showAllCollections = true;
+          render();
+        };
+      }
       main.appendChild(more);
     }
   }
 
-  function enhanceRail(scroller, progress) {
+  function enhanceRail(scroller, progress, colId) {
     let dragging = false;
     let startX = 0;
     let startScroll = 0;
+    let railSaveTimer = 0;
     const update = () => {
       const max = scroller.scrollWidth - scroller.clientWidth;
       progress.style.setProperty("--rail-progress", (max > 0 ? scroller.scrollLeft / max * 100 : 100) + "%");
+      // persist rail memory — principle: the library should remember where I was
+      prefs.railScrolls = prefs.railScrolls || {};
+      prefs.railScrolls[colId] = scroller.scrollLeft;
+      clearTimeout(railSaveTimer);
+      railSaveTimer = setTimeout(() => XBStore.savePrefs(prefs), 500);
     };
+    // restore
+    if (prefs.railScrolls && prefs.railScrolls[colId]) {
+      requestAnimationFrame(() => { scroller.scrollLeft = prefs.railScrolls[colId]; update(); });
+    }
     scroller.addEventListener("scroll", update, { passive: true });
     scroller.addEventListener("wheel", (event) => {
       if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
@@ -572,20 +804,96 @@
   }
 
   function renderGrid(main) {
+    const total = filtered.length;
+    const collectionLabel = railSelection ? railSelection.title : "";
+    const hint = railSelection ? railSelection.hint : "Your complete, searchable archive";
+    const activeFilters = Object.keys(prefs.filters || {}).length;
+
     const toolbar = document.createElement("div");
-    toolbar.className = "gridbar workspace-bar";
+    toolbar.className = "workspace-bar";
+    const groupOpts = GROUP_OPTIONS.map((o) => '<option value="' + o.id + '"' + (prefs.groupBy === o.id ? ' selected' : '') + '>' + o.label + '</option>').join("");
     toolbar.innerHTML = `
-      <div><p class="m3e-title-medium" id="gridCount"></p><p class="m3e-body-small workspace-bar__hint">Your complete, searchable archive</p></div>
+      <div class="workspace-bar__primary">
+        <h2 class="m3e-title-large workspace-bar__count">${total.toLocaleString()} media</h2>
+        <p class="m3e-body-small workspace-bar__meta">
+          ${railSelection ? '<span class="workspace-bar__collection">UNSEEN · ' + escapeHtml(collectionLabel) + '</span> · ' : ''}Showing ${total.toLocaleString()}${prefs.search ? ' · <span class="workspace-bar__search">“' + escapeHtml(prefs.search) + '”</span>' : ''}${activeFilters ? ' · filter · ' + activeFilters : ''}
+        </p>
+        <p class="m3e-body-small workspace-bar__hint">${escapeHtml(hint)}</p>
+      </div>
       <div class="workspace-bar__actions">
         <button type="button" class="command-button m3e-state" data-grid-act="sort">${escapeHtml("Sort · " + shortSortLabel(prefs.sort))}</button>
-        <button type="button" class="command-button m3e-state" data-grid-act="filter">${escapeHtml(filterButtonLabel())}</button>
-        <div class="density-control"><span class="m3e-label-small">Density</span><div class="m3e-segmented" role="group" aria-label="Tile density">
-          ${sizeBtn("dense", "S")}${sizeBtn("medium", "M")}${sizeBtn("large", "L")}
-        </div></div>
+        <button type="button" class="command-button m3e-state ${activeFilters ? 'has-active' : ''}" data-grid-act="filter">${escapeHtml(filterButtonLabel())}</button>
+        <div class="workspace-bar__select">
+          <label class="m3e-label-small">Group
+            <select data-grid-act="group" class="workspace-bar__select-native">${groupOpts}</select>
+          </label>
+        </div>
+        <div class="density-control">
+          <span class="m3e-label-small">Layout</span>
+          <div class="m3e-segmented" role="group" aria-label="Layout">
+            <button type="button" class="m3e-segmented__item m3e-state" data-layout="uniform" aria-pressed="${prefs.layoutMode === 'uniform'}">Uniform</button>
+            <button type="button" class="m3e-segmented__item m3e-state" data-layout="natural" aria-pressed="${prefs.layoutMode === 'natural'}">Natural</button>
+          </div>
+          <div class="m3e-segmented" role="group" aria-label="Density" style="margin-left:8px">
+            ${sizeBtn("dense", "S")}${sizeBtn("medium", "M")}${sizeBtn("large", "L")}
+          </div>
+        </div>
         <button type="button" class="command-button command-button--accent m3e-state" data-grid-act="select">Select</button>
+        <button type="button" class="command-button m3e-state" data-grid-act="save" title="Save this view">Save view</button>
       </div>`;
     main.appendChild(toolbar);
-    $("#gridCount", toolbar).textContent = (railSelection ? railSelection.title + " · " : "") + filtered.length.toLocaleString() + " items";
+
+    // contextual transition for rail selection
+    if (railSelection) {
+      const ctx = document.createElement("div");
+      ctx.className = "workspace-context";
+      ctx.innerHTML = '<p class="m3e-label-large workspace-context__kicker">' + escapeHtml(railSelection.id.toUpperCase()) + '</p>' +
+        '<h3 class="m3e-title-medium">' + escapeHtml(railSelection.title) + '</h3>' +
+        '<p class="m3e-body-small">' + escapeHtml(railSelection.hint || "") + '</p>';
+      main.appendChild(ctx);
+    }
+
+    // saved views strip
+    if (prefs.savedViews && prefs.savedViews.length) {
+      const strip = document.createElement("div");
+      strip.className = "saved-views";
+      strip.innerHTML = '<span class="m3e-label-small saved-views__label">My views</span>';
+      prefs.savedViews.forEach((v, idx) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "m3e-chip m3e-state";
+        b.textContent = v.name;
+        b.title = JSON.stringify(v.state);
+        b.onclick = () => {
+          prefs.search = v.state.search || "";
+          prefs.filters = v.state.filters || {};
+          prefs.sort = v.state.sort || prefs.sort;
+          prefs.layoutMode = v.state.layoutMode || prefs.layoutMode;
+          prefs.groupBy = v.state.groupBy || "none";
+          persistPrefs();
+          render();
+          snackbar.show('View "' + v.name + '" applied');
+        };
+        const del = document.createElement("button");
+        del.type = "button";
+        del.className = "saved-views__del";
+        del.textContent = "×";
+        del.onclick = (e) => { e.stopPropagation(); prefs.savedViews.splice(idx, 1); persistPrefs(); render(); };
+        const wrap = document.createElement("span");
+        wrap.className = "saved-views__item";
+        wrap.appendChild(b);
+        wrap.appendChild(del);
+        strip.appendChild(wrap);
+      });
+      const manage = document.createElement("button");
+      manage.type = "button";
+      manage.className = "m3e-button m3e-button--text m3e-button--xs";
+      manage.textContent = "Manage";
+      manage.onclick = openSavedViews;
+      strip.appendChild(manage);
+      main.appendChild(strip);
+    }
+
     $$("[data-size]", toolbar).forEach((b) => {
       b.addEventListener("click", () => {
         prefs.tileSize = b.dataset.size;
@@ -593,6 +901,18 @@
         render();
       });
     });
+    $$("[data-layout]", toolbar).forEach((b) => {
+      b.addEventListener("click", () => {
+        prefs.layoutMode = b.dataset.layout;
+        persistPrefs();
+        render();
+      });
+    });
+    $("[data-grid-act=group]", toolbar).onchange = (e) => {
+      prefs.groupBy = e.target.value;
+      persistPrefs();
+      render();
+    };
     $("[data-grid-act=sort]", toolbar).onclick = (event) => openSort(event.currentTarget);
     $("[data-grid-act=filter]", toolbar).onclick = openFilters;
     $("[data-grid-act=select]", toolbar).onclick = () => {
@@ -600,26 +920,61 @@
       updateBulkBar();
       snackbar.show("Select items, or right-click any card");
     };
+    $("[data-grid-act=save]", toolbar).onclick = () => {
+      const name = prompt("Name this view", prefs.search || railSelection?.title || "My view");
+      if (!name) return;
+      prefs.savedViews = prefs.savedViews || [];
+      prefs.savedViews.push({ name, state: { search: prefs.search, filters: Object.assign({}, prefs.filters), sort: prefs.sort, layoutMode: prefs.layoutMode, groupBy: prefs.groupBy } });
+      persistPrefs();
+      render();
+      snackbar.show('Saved view "' + name + '"');
+    };
 
     if (!filtered.length) {
       main.appendChild(emptyFilter(describeConstraint()));
       return;
     }
 
+    if (prefs.groupBy !== "none") {
+      const groups = XBLibrary.groupItems(filtered, prefs.groupBy);
+      groups.forEach((g) => {
+        if (!g.items.length) return;
+        const head = document.createElement("h3");
+        head.className = "group-head m3e-title-small";
+        head.textContent = g.label + " · " + g.items.length.toLocaleString();
+        main.appendChild(head);
+        const grid = document.createElement("div");
+        grid.className = "grid grid--" + prefs.tileSize + (prefs.layoutMode === "natural" ? " grid--natural" : "");
+        grid.id = "mediaGrid-" + g.key;
+        g.items.forEach((item) => grid.appendChild(tileEl(item, { list: filtered })));
+        main.appendChild(grid);
+      });
+      return;
+    }
+
+    // Timeline layout inside Library when sorting by newest and no grouping but show as timeline option
+    // For now use paginated grid with sentinel for performance
     const grid = document.createElement("div");
-    grid.className = "grid grid--" + prefs.tileSize;
+    grid.className = "grid grid--" + prefs.tileSize + (prefs.layoutMode === "natural" ? " grid--natural" : "");
     grid.id = "mediaGrid";
     main.appendChild(grid);
     renderedCount = 0;
     appendGridPage();
-
-    const sentinel = document.createElement("div");
-    sentinel.className = "grid-sentinel";
-    main.appendChild(sentinel);
-    gridObserver = new IntersectionObserver((entries) => {
-      if (entries.some((e) => e.isIntersecting)) appendGridPage();
-    }, { rootMargin: "800px" });
-    gridObserver.observe(sentinel);
+    if (filtered.length > GRID_PAGE) {
+      const moreBtn = document.createElement("button");
+      moreBtn.type = "button";
+      moreBtn.className = "m3e-button m3e-button--tonal m3e-state load-more";
+      moreBtn.textContent = "Load more · " + Math.min(GRID_PAGE, filtered.length - renderedCount) + " more";
+      moreBtn.onclick = () => { appendGridPage(); moreBtn.textContent = renderedCount < filtered.length ? "Load more · " + Math.min(GRID_PAGE, filtered.length - renderedCount) + " more" : "All loaded"; if (renderedCount >= filtered.length) moreBtn.disabled = true; };
+      main.appendChild(moreBtn);
+      const sentinel = document.createElement("div");
+      sentinel.className = "grid-sentinel";
+      main.appendChild(sentinel);
+      gridObserver = new IntersectionObserver((entries) => {
+        if (entries.some((e) => e.isIntersecting)) appendGridPage();
+      }, { rootMargin: "800px" });
+      gridObserver.observe(sentinel);
+    }
   }
 
   function sizeBtn(id, label) {
@@ -640,13 +995,62 @@
       main.appendChild(emptyFilter(describeConstraint()));
       return;
     }
+    // Watch header identity
+    const watchHeader = document.createElement("header");
+    watchHeader.className = "watch-head";
+    const total = filtered.length;
+    const watchOpts = WATCH_FILTERS.map((f) =>
+      '<button type="button" class="m3e-chip m3e-state watch-filter' + (prefs.watchFilter === f.id ? ' is-active' : '') + '" data-watch-filter="' + f.id + '">' + f.label + '</button>'
+    ).join("");
+    watchHeader.innerHTML = `
+      <div>
+        <h1 class="m3e-title-large m3e-title-large--emphasized">Watch</h1>
+        <p class="m3e-body-small watch-head__meta">${total} videos · immersive vertical viewing</p>
+      </div>
+      <div class="watch-head__actions">
+        <div class="watch-filters">${watchOpts}</div>
+        <button type="button" class="command-button m3e-state" id="cinemaBtn">${prefs.cinemaMode ? "Exit Cinema" : "Cinema"}</button>
+      </div>
+      <div class="watch-head__tip m3e-label-small">↑ swipe to continue ·  <span id="watchPos">1 / ${total}</span></div>
+    `;
+    main.appendChild(watchHeader);
+    watchHeader.querySelectorAll("[data-watch-filter]").forEach((b) => {
+      b.addEventListener("click", () => {
+        prefs.watchFilter = b.dataset.watchFilter;
+        persistPrefs();
+        render();
+      });
+    });
+    $("#cinemaBtn", watchHeader).onclick = () => {
+      prefs.cinemaMode = !prefs.cinemaMode;
+      persistPrefs();
+      render();
+    };
+    document.documentElement.dataset.cinema = prefs.cinemaMode ? "on" : "off";
+
+    // Apply watchFilter
+    let watchList = filtered.filter((i) => i.type !== "photo");
+    if (prefs.watchFilter === "unseen") watchList = watchList.filter((i) => i.unseen);
+    if (prefs.watchFilter === "continue") watchList = watchList.filter((i) => i.progress && i.progress.t >= 3);
+    if (prefs.watchFilter === "quick") watchList = watchList.filter((i) => i.duration > 0 && i.duration <= 60000);
+    watchList = watchList.slice(0, 80);
+
+    if (!watchList.length) {
+      const p = document.createElement("p");
+      p.className = "m3e-body-medium watch-empty";
+      p.textContent = "No videos for this filter. Try another.";
+      main.appendChild(p);
+      return;
+    }
+
     const host = document.createElement("div");
-    host.className = "reels";
+    host.className = "reels" + (prefs.cinemaMode ? " reels--cinema" : "");
     host.id = "reels";
-    filtered.slice(0, 80).forEach((item) => {
+    watchList.forEach((item, idx) => {
       const slide = document.createElement("article");
       slide.className = "reels__slide";
       slide.dataset.id = item.id;
+      slide.dataset.index = String(idx);
       const frame = document.createElement("div");
       frame.className = "reels__frame";
       frame.style.aspectRatio = M3EMedia.aspectRatio(item.media, 0.4, 1.8);
@@ -654,27 +1058,43 @@
       img.src = mediaUrl(item, "medium");
       img.alt = item.alt || "";
       frame.appendChild(img);
-      const info = document.createElement("div");
-      info.className = "reels__info";
-      info.innerHTML =
-        "<p class=\"m3e-title-small\">@" + escapeHtml(item.author || "") + "</p>" +
-        "<p class=\"m3e-body-small\">" + escapeHtml((item.text || "").slice(0, 180)) + "</p>";
+      // overlay controls
+      const overlay = document.createElement("div");
+      overlay.className = "reels__overlay";
+      overlay.innerHTML =
+        '<div class="reels__progress" style="--p:' + (item.progress ? Math.min(100, (item.progress.t / (item.progress.d || 1)) * 100) + "%" : "0%") + '"></div>' +
+        '<div class="reels__meta"><p class="m3e-title-small">@' + escapeHtml(item.author || "") + '</p>' +
+        '<p class="m3e-body-small">' + escapeHtml((item.text || "").slice(0, 120)) + '</p>' +
+        '<p class="m3e-label-small reels__pos">' + (idx + 1) + ' / ' + watchList.length + ' · ' + (item.duration ? M3EMedia.formatDuration(item.duration) : "") + '</p></div>';
       slide.appendChild(frame);
-      slide.appendChild(info);
-      slide.addEventListener("click", () => openViewer(item.id, filtered));
+      slide.appendChild(overlay);
+      slide.addEventListener("click", () => openViewer(item.id, watchList));
       host.appendChild(slide);
     });
     main.appendChild(host);
-    attachReelsPlayback(host);
+    attachReelsPlayback(host, watchList);
+    // update watchPos on scroll
+    const watchPos = $("#watchPos");
+    if (watchPos) {
+      const ioPos = new IntersectionObserver((entries) => {
+        entries.forEach((en) => {
+          if (en.isIntersecting) {
+            const idx = Number(en.target.dataset.index) + 1;
+            watchPos.textContent = idx + " / " + watchList.length;
+          }
+        });
+      }, { threshold: 0.7 });
+      $$(".reels__slide", host).forEach((s) => ioPos.observe(s));
+    }
   }
 
-  function attachReelsPlayback(host) {
+  function attachReelsPlayback(host, list) {
     const io = new IntersectionObserver(
       (entries) => {
         entries.forEach((en) => {
           if (en.isIntersecting && en.intersectionRatio > 0.7) {
             const id = en.target.dataset.id;
-            const item = filtered.find((x) => x.id === id);
+            const item = list.find((x) => x.id === id);
             if (!item || item.type === "photo") return;
             if (M3E.reducedMotion() || !prefs.autoplayPreviews) return;
             playInFrame(en.target.querySelector(".reels__frame"), item, true);
@@ -708,7 +1128,7 @@
 
   /* ---- viewer ------------------------------------------------------------ */
   function showViewerHelp() {
-    snackbar.show("←/→ navigate · Space play/pause · I details · O original · Esc close");
+    snackbar.show("←/→ navigate · Space play/pause · I details · F filmstrip · C cinema · O original · Esc close");
   }
 
   function preloadViewerNeighbors() {
@@ -718,6 +1138,13 @@
       const image = new Image();
       image.src = M3EMedia.sizedImage(item.media.poster || item.media.url, "large");
     });
+  }
+
+  function scheduleViewerHide() {
+    clearTimeout(viewerHideTimer);
+    $("#viewer").classList.remove("is-idle");
+    if (!viewerOpen || M3E.reducedMotion()) return;
+    viewerHideTimer = window.setTimeout(() => $("#viewer").classList.add("is-idle"), 2400);
   }
 
   function openViewer(id, list, pushState) {
@@ -734,12 +1161,15 @@
     $("#viewer").hidden = false;
     $("#viewer").setAttribute("aria-hidden", "false");
     document.documentElement.style.overflow = "hidden";
+    scheduleViewerHide();
     paintViewer();
   }
 
   function closeViewer() {
     if (!viewerOpen) return;
     viewerOpen = false;
+    clearTimeout(viewerHideTimer);
+    $("#viewer").classList.remove("is-idle", "is-context", "is-filmstrip", "is-focus");
     if (viewerCleanup) { viewerCleanup(); viewerCleanup = null; }
     M3EMedia.stopAll();
     $("#viewer").hidden = true;
@@ -747,9 +1177,28 @@
     document.documentElement.style.removeProperty("overflow");
     writeUrl();
     rebuild();
-    if (prefs.visualization !== "reels") {
-      /* stay in current view; update unseen dots without full rails rebuild if grid */
-    }
+    // return to exact search/collection/scroll location - already persisted
+    const y = prefs.scrollPositions && prefs.scrollPositions[prefs.visualization];
+    if (typeof y === "number") requestAnimationFrame(() => window.scrollTo(0, y));
+  }
+
+  function buildFilmstrip() {
+    const strip = $("#viewerFilmstrip");
+    strip.innerHTML = "";
+    viewerList.slice(Math.max(0, viewerIndex - 12), viewerIndex + 12).forEach((item, idx) => {
+      const realIdx = Math.max(0, viewerIndex - 12) + idx;
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "filmstrip__item" + (realIdx === viewerIndex ? " is-active" : "");
+      b.setAttribute("aria-label", "Go to " + (realIdx + 1));
+      const img = document.createElement("img");
+      img.src = M3EMedia.sizedImage(item.media.poster || item.media.url, "small");
+      img.alt = "";
+      img.loading = "lazy";
+      b.appendChild(img);
+      b.onclick = () => { viewerIndex = realIdx; paintViewer(); };
+      strip.appendChild(b);
+    });
   }
 
   function paintViewer() {
@@ -760,6 +1209,7 @@
     prefs.lastItemId = item.id;
     markViewed(item.id);
     writeUrl();
+    scheduleViewerHide();
 
     const stage = $("#viewerStage");
     stage.innerHTML = "";
@@ -789,10 +1239,14 @@
       if (!item.playable && item.type !== "photo") {
         const miss = document.createElement("div");
         miss.className = "viewer__missing";
+        const isBrokenPreview = item.state !== "available" || !item.media.url;
         miss.innerHTML =
-          "<p>This capture isn’t playable here.</p>" +
+          '<p class="m3e-title-medium">' + (isBrokenPreview ? "Source not locally playable" : "Preview unavailable") + '</p>' +
+          '<p class="m3e-body-small">' + (isBrokenPreview ? "Original available on X — capture may need refresh." : "Preview failed to load · retry available.") + '</p>' +
           (item.post.tweet_url ? '<a class="m3e-button m3e-button--tonal" href="' + escapeHtml(item.post.tweet_url) + '" target="_blank" rel="noopener">Open on X</a>' : "") +
-          '<a class="m3e-button m3e-button--text" href="https://web.archive.org/web/*/' + encodeURIComponent(item.post.tweet_url || "") + '" target="_blank" rel="noopener">Find archived version</a>';
+          ' <button class="m3e-button m3e-button--text" data-act="retry">Retry</button>';
+        const rb = miss.querySelector("[data-act=retry]");
+        if (rb) rb.onclick = () => paintViewer();
         frame.appendChild(miss);
       }
     } else {
@@ -806,7 +1260,8 @@
         onFail: () => {
           const miss = document.createElement("div");
           miss.className = "viewer__missing";
-          miss.textContent = "Playback failed. Try another source or open the original post.";
+          miss.innerHTML = '<p>Playback failed. Try another source or open the original.</p>' +
+            (item.post.tweet_url ? '<a class="m3e-button m3e-button--tonal" href="' + escapeHtml(item.post.tweet_url) + '" target="_blank" rel="noopener">Open on X</a>' : "");
           frame.appendChild(miss);
         },
       });
@@ -822,29 +1277,40 @@
     }
     stage.appendChild(frame);
 
+    // Context panel with hierarchy
     const ctx = $("#viewerContext");
     const p = item.post;
     const eng = item.eng;
+    const mediaStatus = item.playable ? "Available" : "Unavailable · Original available on X";
+    const provenance = `
+      <section class="ctx__section">
+        <h3 class="ctx__section-title m3e-label-small">Provenance</h3>
+        <p class="m3e-body-small">Saved ${escapeHtml(savedLabel(item.capturedAt))} · Originally posted ${escapeHtml(fmtDate(item.postedAt))}</p>
+        <p class="m3e-body-small">Position ${item.position} of ${((p.media_items || []).length || 1)} · ${escapeHtml(item.author ? "Saved from @" + item.author : "")}</p>
+        <p class="m3e-body-small">Captured ${escapeHtml(fmtDate(item.capturedAt))} · ${escapeHtml(item.archived ? "Archived · removed from discovery" : "In library")}</p>
+      </section>`;
+    const engagementRow = `
+      <section class="ctx__section ctx__section--engagement">
+        <h3 class="ctx__section-title m3e-label-small">Engagement</h3>
+        <p class="m3e-body-small ctx__engagement">${eng.likes.toLocaleString()} likes · ${eng.rts.toLocaleString()} reposts · ${eng.replies.toLocaleString()} replies · ${eng.views.toLocaleString()} views</p>
+      </section>`;
     ctx.innerHTML =
-      '<div class="ctx__author">' +
+      '<div class="ctx__identity">' +
       (p.author_profile_image_url ? '<img class="ctx__avatar" src="' + escapeHtml(p.author_profile_image_url) + '" alt="">' : "") +
       "<div><strong>" + escapeHtml(p.author_name || "") + "</strong>" +
       "<span>@" + escapeHtml(p.author_username || "") + "</span></div></div>" +
+      '<section class="ctx__section"><h3 class="ctx__section-title m3e-label-small">Context</h3>' +
       '<p class="ctx__text">' + escapeHtml(p.text || "") + "</p>" +
       (item.alt ? '<p class="ctx__alt">Alt: ' + escapeHtml(item.alt) + "</p>" : "") +
+      quoteBlock(p) + linksBlock(p) + '</section>' +
+      '<section class="ctx__section"><h3 class="ctx__section-title m3e-label-small">Media</h3>' +
       '<dl class="ctx__meta">' +
-      "<div><dt>Posted</dt><dd>" + escapeHtml(fmtDate(item.postedAt)) + "</dd></div>" +
-      "<div><dt>Captured</dt><dd>" + escapeHtml(fmtDate(item.capturedAt)) + "</dd></div>" +
-      "<div><dt>In post</dt><dd>" + item.position + " of " + ((p.media_items || []).length || 1) + "</dd></div>" +
-      (item.duration ? "<div><dt>Duration</dt><dd>" + escapeHtml(M3EMedia.formatDuration(item.duration)) + "</dd></div>" : "") +
-      "<div><dt>Likes</dt><dd>" + eng.likes.toLocaleString() + "</dd></div>" +
-      "<div><dt>Reposts</dt><dd>" + eng.rts.toLocaleString() + "</dd></div>" +
-      "<div><dt>Replies</dt><dd>" + eng.replies.toLocaleString() + "</dd></div>" +
-      "<div><dt>Views</dt><dd>" + eng.views.toLocaleString() + "</dd></div>" +
-      "<div><dt>Status</dt><dd>" + escapeHtml(item.state) + (item.playable ? " · playable" : " · no playable source") + "</dd></div>" +
-      "</dl>" +
-      quoteBlock(p) +
-      linksBlock(p) +
+      "<div><dt>Duration</dt><dd>" + (item.duration ? escapeHtml(M3EMedia.formatDuration(item.duration)) : "—") + "</dd></div>" +
+      "<div><dt>Position</dt><dd>" + item.position + " of " + ((p.media_items || []).length || 1) + "</dd></div>" +
+      "<div><dt>Status</dt><dd>" + escapeHtml(mediaStatus) + "</dd></div>" +
+      "</dl></section>" +
+      provenance +
+      engagementRow +
       '<div class="ctx__actions">' +
       (p.tweet_url ? '<a class="m3e-button m3e-button--filled m3e-state" href="' + escapeHtml(p.tweet_url) + '" target="_blank" rel="noopener">Open on X</a>' : "") +
       '<button type="button" class="m3e-button m3e-button--tonal m3e-state" data-act="copy">Copy link</button>' +
@@ -853,12 +1319,8 @@
       "</div>";
 
     ctx.querySelector("[data-act=copy]").onclick = async () => {
-      try {
-        await navigator.clipboard.writeText(p.tweet_url || "");
-        snackbar.show("Link copied");
-      } catch {
-        snackbar.show("Couldn’t copy", { error: true });
-      }
+      try { await navigator.clipboard.writeText(p.tweet_url || ""); snackbar.show("Link copied"); }
+      catch { snackbar.show("Couldn’t copy", { error: true }); }
     };
     ctx.querySelector("[data-act=archive]").onclick = () => {
       if (library.archived[item.id]) delete library.archived[item.id];
@@ -866,6 +1328,7 @@
       persistLibrary();
       rebuild();
       paintViewer();
+      snackbar.show(library.archived[item.id] ? "Archived · kept, removed from discovery" : "Restored");
     };
     ctx.querySelector("[data-act=remove]").onclick = () => confirmRemove(item);
 
@@ -882,6 +1345,22 @@
     $("#viewerPos").textContent = viewerIndex + 1 + " / " + viewerList.length;
     $("#viewerPrev").disabled = viewerIndex <= 0;
     $("#viewerNext").disabled = viewerIndex >= viewerList.length - 1;
+
+    // peek next hint
+    const peekNext = $("#viewerPeekNext");
+    const peekPrev = $("#viewerPeekPrev");
+    const nextItem = viewerList[viewerIndex + 1];
+    const prevItem = viewerList[viewerIndex - 1];
+    if (nextItem) {
+      peekNext.style.backgroundImage = "url('" + M3EMedia.sizedImage(nextItem.media.poster || nextItem.media.url, "small") + "')";
+      peekNext.hidden = false;
+    } else peekNext.hidden = true;
+    if (prevItem) {
+      peekPrev.style.backgroundImage = "url('" + M3EMedia.sizedImage(prevItem.media.poster || prevItem.media.url, "small") + "')";
+      peekPrev.hidden = false;
+    } else peekPrev.hidden = true;
+
+    buildFilmstrip();
     preloadViewerNeighbors();
   }
 
@@ -912,9 +1391,7 @@
     if (!urls.length) return "";
     return (
       '<ul class="ctx__links">' +
-      urls
-        .map((u) => '<li><a href="' + escapeHtml(u) + '" target="_blank" rel="noopener">' + escapeHtml(u) + "</a></li>")
-        .join("") +
+      urls.map((u) => '<li><a href="' + escapeHtml(u) + '" target="_blank" rel="noopener">' + escapeHtml(u) + "</a></li>").join("") +
       "</ul>"
     );
   }
@@ -936,6 +1413,7 @@
     selectionMode = true;
     if (selectedIds.has(id)) selectedIds.delete(id);
     else selectedIds.add(id);
+    if (selectedIds.size === 0) selectionMode = false;
     updateBulkBar();
   }
 
@@ -946,10 +1424,7 @@
     action.textContent = "Undo";
     action.hidden = false;
     host.dataset.open = "true";
-    let timer = setTimeout(() => {
-      host.dataset.open = "false";
-      action.hidden = true;
-    }, 5000);
+    let timer = setTimeout(() => { host.dataset.open = "false"; action.hidden = true; }, 5000);
     action.onclick = async () => {
       clearTimeout(timer);
       action.hidden = true;
@@ -1021,12 +1496,14 @@
     if (f.alt) bits.push("alt text");
     if (f.playable) bits.push("playable");
     if (f.progress) bits.push("saved progress");
+    if (railSelection) bits.push("collection: " + railSelection.title);
     return bits.length ? "Active constraint: " + bits.join(" · ") + "." : "No items in this view.";
   }
 
   function syncChrome() {
     $$("[data-view]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === prefs.visualization)));
     $("#search").value = prefs.search || "";
+    $("#search").placeholder = prefs.search && railSelection ? "Search within " + railSelection.title + "…" : "Search your library…";
     $("#resultCount").textContent = filtered.length.toLocaleString();
     $("#resultAnnouncement").textContent = filtered.length.toLocaleString() + (filtered.length === 1 ? " result" : " results");
     $("#sortLabel").textContent = "Sort · " + shortSortLabel(prefs.sort);
@@ -1039,6 +1516,11 @@
     document.documentElement.dataset.density = prefs.density;
     document.documentElement.dataset.controls = prefs.largeControls ? "large" : "standard";
     document.documentElement.dataset.meta = prefs.showMetadata ? "on" : "off";
+    document.documentElement.dataset.layout = prefs.layoutMode;
+    if (railSelection && prefs.search) {
+      $("#resultCount").textContent = railSelection.title + " · " + filtered.length.toLocaleString();
+    }
+    updateSearchPanel();
   }
 
   function sortLabel(id) {
@@ -1091,6 +1573,39 @@
       host.appendChild(b);
     });
     $("#clearFilters").hidden = !chips.length && !prefs.search;
+  }
+
+  function updateSearchPanel() {
+    const panel = $("#searchPanel");
+    if (!panel) return;
+    const countEl = $("#searchResultCount");
+    const hint = $("#searchHint");
+    if (countEl) countEl.textContent = filtered.length.toLocaleString() + " results · Search across media, captions, authors and alt text";
+    if (hint) hint.textContent = prefs.search && railSelection ? "Searching within " + railSelection.title : "Search across media, captions, authors and alt text";
+    // recent
+    const recentWrap = $("#searchRecent");
+    const recentChips = $("#searchRecentChips");
+    if (recentWrap && recentChips) {
+      const recents = (prefs.recentSearches || []).slice(0, 5);
+      if (recents.length) {
+        recentWrap.hidden = false;
+        recentChips.innerHTML = "";
+        recents.forEach((q) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "m3e-chip m3e-state";
+          b.textContent = q;
+          b.onclick = () => {
+            prefs.search = q;
+            $("#search").value = q;
+            persistPrefs();
+            render();
+            panel.hidden = true;
+          };
+          recentChips.appendChild(b);
+        });
+      } else recentWrap.hidden = true;
+    }
   }
 
   function renderCapturePill() {
@@ -1157,6 +1672,8 @@
         <h3 class="m3e-title-small">Browsing</h3>
         ${seg("tileSize", "Tile size", [["dense","Dense"],["medium","Medium"],["large","Large"]])}
         ${seg("density", "Interface density", [["compact","Compact"],["comfortable","Comfortable"],["spacious","Spacious"]])}
+        ${seg("layoutMode", "Card ratio", [["uniform","Uniform"],["natural","Natural"]])}
+        ${seg("groupBy", "Grouping", [["none","None"],["date","By date"],["creator","By creator"],["type","By type"]])}
         ${tog("showMetadata", "Show media metadata")}
         ${tog("fullCaptions", "Show full captions")}
       </section>
@@ -1170,7 +1687,7 @@
         ${tog("loopVideos", "Loop conventional videos")}
         <label class="field">Default speed
           <select data-pref="defaultSpeed">
-            ${[0.5,0.75,1,1.25,1.5,2].map((n) => '<option value="'+n+'"'+(Number(prefs.defaultSpeed)===n?' selected':'')+'>'+n+'×</option>').join("")}
+            ${[0.5,0.75,1,1.25,1.5,2].map((n) => '<option value="'+n+'"' + (Number(prefs.defaultSpeed)===n?' selected':'') + '>'+n+'×</option>').join("")}
           </select>
         </label>
       </section>
@@ -1192,12 +1709,10 @@
     return (
       '<p class="m3e-label-medium">' + label + "</p>" +
       '<div class="m3e-segmented" role="group">' +
-      options
-        .map(([id, lab]) => {
-          const on = String(prefs[key]) === id;
-          return '<button type="button" class="m3e-segmented__item m3e-state" data-pref="' + key + '" data-val="' + id + '" aria-pressed="' + on + '">' + lab + "</button>";
-        })
-        .join("") +
+      options.map(([id, lab]) => {
+        const on = String(prefs[key]) === id;
+        return '<button type="button" class="m3e-segmented__item m3e-state" data-pref="' + key + '" data-val="' + id + '" aria-pressed="' + on + '">' + lab + "</button>";
+      }).join("") +
       "</div>"
     );
   }
@@ -1289,6 +1804,7 @@
         <div class="btn-row">
           <button class="m3e-button m3e-button--tonal m3e-state" data-act="export-lib">Export library</button>
           <button class="m3e-button m3e-button--tonal m3e-state" data-act="export-full">Full backup</button>
+          <button class="m3e-button m3e-button--text m3e-state" data-act="copy-view">Copy link to this view</button>
         </div>
       </section>
       <section class="set">
@@ -1306,6 +1822,10 @@
       if (act.dataset.act === "import") $("#importFile").click();
       if (act.dataset.act === "export-lib") exportData(false);
       if (act.dataset.act === "export-full") exportData(true);
+      if (act.dataset.act === "copy-view") {
+        const url = location.href;
+        navigator.clipboard.writeText(url).then(() => snackbar.show("Link to this view copied"), () => snackbar.show("Couldn’t copy"));
+      }
       if (act.dataset.act === "clear-progress") {
         if (!confirm("Clear saved video progress? The library stays intact.")) return;
         library.progress = {};
@@ -1393,6 +1913,39 @@
     await XBStore.saveBookmarks(bookmarks);
     render();
     snackbar.show("Merged " + added + " new posts");
+  }
+
+  function openSavedViews() {
+    const body = $("#savedViewsBody");
+    if (!prefs.savedViews || !prefs.savedViews.length) {
+      body.innerHTML = '<p class="m3e-body-medium">No saved views yet. In Library, configure a view and click “Save view”.</p>';
+    } else {
+      body.innerHTML = prefs.savedViews.map((v, i) => `
+        <div class="saved-view-row">
+          <div><strong>${escapeHtml(v.name)}</strong><br><span class="m3e-body-small">${escapeHtml(JSON.stringify(v.state))}</span></div>
+          <button class="m3e-button m3e-button--text" data-apply="${i}">Apply</button>
+          <button class="m3e-icon-button" data-del="${i}">×</button>
+        </div>
+      `).join("");
+      body.querySelectorAll("[data-apply]").forEach((b) => b.onclick = () => {
+        const v = prefs.savedViews[Number(b.dataset.apply)];
+        prefs.search = v.state.search || "";
+        prefs.filters = v.state.filters || {};
+        prefs.sort = v.state.sort || prefs.sort;
+        prefs.layoutMode = v.state.layoutMode || prefs.layoutMode;
+        prefs.groupBy = v.state.groupBy || "none";
+        persistPrefs();
+        savedViewsOverlay.close();
+        render();
+      });
+      body.querySelectorAll("[data-del]").forEach((b) => b.onclick = () => {
+        prefs.savedViews.splice(Number(b.dataset.del), 1);
+        persistPrefs();
+        openSavedViews();
+        render();
+      });
+    }
+    savedViewsOverlay.open();
   }
 
   /* ---- filter sheet ------------------------------------------------------ */
@@ -1518,15 +2071,21 @@
       <div class="m3e-menu__label">Library</div>
       <button type="button" class="m3e-menu__item" data-menu="import">Import bookmarks</button>
       <button type="button" class="m3e-menu__item" data-menu="data">Data &amp; storage</button>
+      <button type="button" class="m3e-menu__item" data-menu="saved">Saved views</button>
       <button type="button" class="m3e-menu__item" data-menu="settings">Settings</button>
+      <button type="button" class="m3e-menu__item" data-menu="copy-link">Copy link to this view</button>
       <div class="m3e-menu__label">Keyboard</div>
-      <p class="library-menu__shortcuts"><kbd>D</kbd> Discover · <kbd>G</kbd> Library · <kbd>W</kbd> Watch</p>`;
+      <p class="library-menu__shortcuts"><kbd>D</kbd> Discover · <kbd>G</kbd> Library · <kbd>W</kbd> Watch · <kbd>/</kbd> Search · <kbd>F</kbd> Filter</p>`;
     menu.addEventListener("click", (event) => {
       const item = event.target.closest("[data-menu]");
       if (!item) return;
       if (item.dataset.menu === "import") $("#importFile").click();
       if (item.dataset.menu === "data") openData();
+      if (item.dataset.menu === "saved") openSavedViews();
       if (item.dataset.menu === "settings") openSettings();
+      if (item.dataset.menu === "copy-link") {
+        navigator.clipboard.writeText(location.href).then(() => snackbar.show("Link copied"), () => {});
+      }
     });
     M3E.openMenu(trigger, menu, { align: "end" });
   }
@@ -1566,6 +2125,7 @@
     snackbar = createSnackbar($("#snackbar"));
     settingsOverlay = createOverlay({ element: $("#settings"), scrim: $("#scrim") });
     dataOverlay = createOverlay({ element: $("#dataDialog"), scrim: $("#scrim") });
+    savedViewsOverlay = createOverlay({ element: $("#savedViewsDialog"), scrim: $("#scrim") });
     theme = M3ETheme.createController({ scheme: "system", density: "comfortable" });
 
     const loaded = await XBStore.loadAll();
@@ -1613,21 +2173,65 @@
         requestAnimationFrame(() => window.scrollTo(0, prefs.scrollPositions[prefs.visualization] || 0));
       });
     });
-    $("#search").addEventListener("input", debounce((e) => {
+
+    // Search command center
+    const searchInput = $("#search");
+    const searchWrap = $("#searchWrap");
+    const searchPanel = $("#searchPanel");
+    let searchFocused = false;
+    const showPanel = () => {
+      if (searchFocused) searchPanel.hidden = false;
+    };
+    const hidePanel = () => {
+      // delay to allow chip clicks
+      setTimeout(() => { if (!searchFocused) searchPanel.hidden = true; }, 120);
+    };
+    searchInput.addEventListener("focus", () => { searchFocused = true; searchPanel.hidden = false; updateSearchPanel(); searchWrap.classList.add("is-focused"); });
+    searchInput.addEventListener("blur", () => { searchFocused = false; hidePanel(); searchWrap.classList.remove("is-focused"); });
+    searchInput.addEventListener("input", debounce((e) => {
       prefs.search = e.target.value;
-      railSelection = null;
+      if (prefs.search) pushRecentSearch(prefs.search);
       persistPrefs();
       render();
+      updateSearchPanel();
+      searchPanel.hidden = false;
     }, 180));
-    $("#search").addEventListener("keydown", (e) => {
-      if (e.key !== "Escape") return;
-      if (e.currentTarget.value) {
-        prefs.search = "";
-        e.currentTarget.value = "";
-        persistPrefs();
-        render();
-      } else e.currentTarget.blur();
+    searchInput.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        if (e.currentTarget.value) {
+          prefs.search = "";
+          e.currentTarget.value = "";
+          persistPrefs();
+          render();
+        } else { e.currentTarget.blur(); searchPanel.hidden = true; }
+        e.stopPropagation();
+      }
+      if (e.key === "Enter" && e.currentTarget.value.trim()) {
+        pushRecentSearch(e.currentTarget.value);
+        searchPanel.hidden = true;
+        e.currentTarget.blur();
+      }
     });
+    // quick filters in search panel
+    searchPanel.addEventListener("click", (e) => {
+      const q = e.target.closest("[data-quick]");
+      if (!q) return;
+      const v = q.dataset.quick;
+      if (v === "author") {
+        const topAuthor = XBLibrary.authors(allItems)[0];
+        if (topAuthor) { prefs.filters = Object.assign({}, prefs.filters, { author: topAuthor.name }); persistPrefs(); render(); }
+      } else {
+        const [k, val] = v.split(":");
+        prefs.filters = Object.assign({}, prefs.filters, { [k]: val });
+        persistPrefs(); render();
+      }
+      searchPanel.hidden = true;
+      snackbar.show("Filter applied");
+    });
+    document.addEventListener("pointerdown", (e) => {
+      if (!searchWrap.contains(e.target)) searchPanel.hidden = true;
+    });
+
     $("#filterBtn").addEventListener("click", openFilters);
     $("#filterScrim").addEventListener("click", closeFilters);
     $("#filterClose").addEventListener("click", closeFilters);
@@ -1641,6 +2245,7 @@
     $("#sortBtn").addEventListener("click", () => openSort($("#sortBtn")));
     $("#moreBtn").addEventListener("click", () => openLibraryMenu($("#moreBtn")));
     $("#capturePill").addEventListener("click", openData);
+    $("#savedViewsClose").addEventListener("click", () => savedViewsOverlay.close());
     $("#bulkbar").addEventListener("click", async (event) => {
       const action = event.target.closest("[data-bulk]");
       if (!action) return;
@@ -1649,20 +2254,25 @@
       if (action.dataset.bulk === "seen") {
         ids.forEach((id) => { library.viewed[id] = Date.now(); });
         await XBStore.saveLibrary(library);
-        selectedIds.clear();
-        selectionMode = false;
-        render();
-        updateBulkBar();
-        snackbar.show(ids.length + " marked seen");
+        selectedIds.clear(); selectionMode = false; render(); updateBulkBar(); snackbar.show(ids.length + " marked seen");
+      }
+      if (action.dataset.bulk === "unseen") {
+        ids.forEach((id) => { delete library.viewed[id]; delete library.lastOpened[id]; });
+        await XBStore.saveLibrary(library);
+        selectedIds.clear(); selectionMode = false; render(); updateBulkBar(); snackbar.show(ids.length + " marked unseen");
       }
       if (action.dataset.bulk === "archive") {
         ids.forEach((id) => { library.archived[id] = true; });
         await XBStore.saveLibrary(library);
-        selectedIds.clear();
-        selectionMode = false;
-        render();
-        updateBulkBar();
-        snackbar.show(ids.length + " archived");
+        selectedIds.clear(); selectionMode = false; render(); updateBulkBar(); snackbar.show(ids.length + " archived · kept, removed from discovery");
+      }
+      if (action.dataset.bulk === "copy") {
+        const links = ids.map((id) => { const it = allItems.find((x) => x.id === id); return it ? it.post.tweet_url : ""; }).filter(Boolean).join("\n");
+        try { await navigator.clipboard.writeText(links); snackbar.show("Copied " + ids.length + " links"); } catch { snackbar.show("Couldn’t copy", { error: true }); }
+      }
+      if (action.dataset.bulk === "open") {
+        ids.slice(0, 8).forEach((id) => { const it = allItems.find((x) => x.id === id); if (it && it.post.tweet_url) window.open(it.post.tweet_url, "_blank", "noopener"); });
+        snackbar.show("Opened " + Math.min(ids.length, 8) + " originals");
       }
       if (action.dataset.bulk === "export") {
         const chosen = new Set(ids);
@@ -1687,11 +2297,24 @@
     $("#viewerNext").addEventListener("click", () => stepViewer(1));
     $("#ctxToggle").addEventListener("click", () => {
       $("#viewer").classList.toggle("is-context");
+      scheduleViewerHide();
     });
     $("#viewerHelp").addEventListener("click", showViewerHelp);
-    bindEscape(() => {
-      if (viewerOpen) closeViewer();
+    $("#viewerFilmstripBtn").addEventListener("click", () => {
+      const v = $("#viewer");
+      const on = v.classList.toggle("is-filmstrip");
+      $("#viewerFilmstrip").hidden = !on;
+      prefs.viewerFilmstrip = on;
+      persistPrefs();
     });
+    $("#viewerFocusBtn").addEventListener("click", () => {
+      $("#viewer").classList.toggle("is-focus");
+      scheduleViewerHide();
+    });
+    // viewer auto-hide on mouse idle
+    $("#viewer").addEventListener("mousemove", scheduleViewerHide);
+    $("#viewer").addEventListener("pointermove", scheduleViewerHide);
+    bindEscape(() => { if (viewerOpen) closeViewer(); });
     document.addEventListener("keydown", (e) => {
       const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
       if (!viewerOpen) {
@@ -1703,12 +2326,17 @@
         if (key === "w") $("[data-view=reels]").click();
         if (key === "f") openFilters();
         if (key === "s") openSort($("#sortBtn"));
+        if (key === "c" && prefs.visualization === "grid") {
+          // toggle cinema for watch? ignore
+        }
         return;
       }
       if (typing) return;
       if (e.key === "ArrowRight") stepViewer(1);
       if (e.key === "ArrowLeft") stepViewer(-1);
       if (e.key.toLowerCase() === "i") $("#viewer").classList.toggle("is-context");
+      if (e.key.toLowerCase() === "f") $("#viewerFilmstripBtn").click();
+      if (e.key.toLowerCase() === "c") $("#viewerFocusBtn").click();
       if (e.key.toLowerCase() === "o") {
         const item = viewerList[viewerIndex];
         if (item && item.post.tweet_url) window.open(item.post.tweet_url, "_blank", "noopener");
@@ -1720,15 +2348,6 @@
       if (e.key === "?") showViewerHelp();
     });
 
-    /* Swipe navigation on the theater stage.
-       Critical: the custom player chrome (play / seek / mute / …) lives INSIDE
-       `#viewerStage`. Those controls call stopPropagation on pointerdown so the
-       seek bar can scrub, which means a Play click never updates touchX/touchY
-       here — but pointerup still bubbles. With touchX stuck at 0 (or at the
-       last media tap), |clientX - touchX| is almost always > 60, so every Play
-       press was misread as a horizontal swipe and stepped to the next/previous
-       item. Track an explicit "gesture began on media" flag and ignore any
-       pointer that started (or ended) on player chrome. */
     let touchX = 0;
     let touchY = 0;
     let swipeArmed = false;
@@ -1738,10 +2357,7 @@
 
     const stage = $("#viewerStage");
     stage.addEventListener("pointerdown", (e) => {
-      if (e.target.closest(SWIPE_IGNORE)) {
-        swipeArmed = false;
-        return;
-      }
+      if (e.target.closest(SWIPE_IGNORE)) { swipeArmed = false; return; }
       swipeArmed = true;
       touchX = e.clientX;
       touchY = e.clientY;
@@ -1756,6 +2372,10 @@
       else if (Math.abs(dx) > 60) stepViewer(dx < 0 ? 1 : -1);
     });
     stage.addEventListener("pointercancel", () => { swipeArmed = false; });
+
+    // peek hover
+    $("#viewerPeekNext").addEventListener("click", () => stepViewer(1));
+    $("#viewerPeekPrev").addEventListener("click", () => stepViewer(-1));
   }
 
   boot().catch((err) => {

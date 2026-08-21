@@ -28,6 +28,8 @@
     variant: "vibrant",
     tileSize: "medium",
     density: "comfortable",
+    layoutMode: "uniform",
+    groupBy: "none",
     showMetadata: true,
     fullCaptions: false,
     autoplayPreviews: true,
@@ -47,6 +49,13 @@
     lastItemId: null,
     lastScroll: 0,
     scrollPositions: {},
+    railScrolls: {},
+    recentSearches: [],
+    watchFilter: "all",
+    savedViews: [],
+    viewerFilmstrip: false,
+    cinemaMode: false,
+    focusMode: false,
     customSeed: "",
   };
 
@@ -116,6 +125,13 @@
     library.progress = library.progress || {};
     library.lastOpened = library.lastOpened || {};
     const prefs = Object.assign({}, PREF_DEFAULTS, data[KEYS.prefs] || {});
+    // backfill for upgrades
+    if (!Array.isArray(prefs.recentSearches)) prefs.recentSearches = [];
+    if (!prefs.railScrolls || typeof prefs.railScrolls !== "object") prefs.railScrolls = {};
+    if (!Array.isArray(prefs.savedViews)) prefs.savedViews = [];
+    if (!prefs.layoutMode) prefs.layoutMode = "uniform";
+    if (!prefs.groupBy) prefs.groupBy = "none";
+    if (!prefs.watchFilter) prefs.watchFilter = "all";
     return {
       bookmarks: Array.isArray(data[KEYS.bookmarks]) ? data[KEYS.bookmarks] : [],
       capture: data[KEYS.capture] || null,
