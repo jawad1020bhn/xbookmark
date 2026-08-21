@@ -1217,9 +1217,10 @@
     $("#settingsBtn").addEventListener("click", openSettings);
     $("#dataBtn").addEventListener("click", openData);
     $("#capturePill").addEventListener("click", openData);
-    $("#importFile").addEventListener("change", (e) => {
+    $("#importBtn").addEventListener("click", () => $("#importFile").click());
+    $("#importFile").addEventListener("change", async (e) => {
       const file = e.target.files && e.target.files[0];
-      if (file) importFile(file);
+      if (file) await importFile(file);
       e.target.value = "";
     });
 

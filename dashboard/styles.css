@@ -96,6 +96,21 @@ body {
   justify-content: flex-end;
 }
 
+.appbar__import {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+@media (max-width: 1080px) {
+  .appbar__import {
+    min-width: 40px;
+    padding-inline: 10px;
+  }
+  .appbar__import span { display: none; }
+}
+
 .chiprow {
   display: flex;
   align-items: center;
