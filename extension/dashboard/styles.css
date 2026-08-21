@@ -516,6 +516,118 @@ body {
 .switch[data-on="true"]::after { left: 19px; }
 .btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .stats-list { padding-left: 18px; line-height: 1.7; }
+/* ---- import -------------------------------------------------------------- */
+.appbar__import { flex: 0 0 auto; }
+
+.import { width: min(600px, calc(100vw - var(--md-sys-spacing-8))); }
+.import__heading { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.import__sub { color: var(--md-sys-color-on-surface-variant); margin: 0; }
+.import__mark {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  border-radius: var(--md-sys-shape-corner-large);
+  display: grid;
+  place-items: center;
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+
+.dropzone {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 28px 20px;
+  border: 2px dashed var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-large);
+  background: var(--md-sys-color-surface-container-low);
+  color: var(--md-sys-color-on-surface);
+  font: inherit;
+  cursor: pointer;
+  text-align: center;
+  transition:
+    border-color var(--md-sys-motion-spring-fast-effects),
+    background var(--md-sys-motion-spring-fast-effects);
+}
+.dropzone:hover { border-color: var(--md-sys-color-primary); }
+.dropzone[data-drag="true"] {
+  border-color: var(--md-sys-color-primary);
+  border-style: solid;
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+.dropzone > svg { color: var(--md-sys-color-primary); }
+.dropzone[data-drag="true"] > svg { color: inherit; }
+.dropzone__hint { color: var(--md-sys-color-on-surface-variant); }
+.dropzone[data-drag="true"] .dropzone__hint { color: inherit; }
+
+.import__about { margin-top: 16px; }
+.import__note { color: var(--md-sys-color-on-surface-variant); margin: 0; }
+.import__warn { color: var(--md-sys-color-error); margin: 0; }
+.import__issues { color: var(--md-sys-color-on-surface-variant); }
+
+.import__loading { display: grid; gap: 14px; padding: 24px 0; justify-items: center; text-align: center; }
+.import__loading .m3e-progress { max-width: 260px; }
+
+.import__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+}
+.import__stat {
+  display: grid;
+  gap: 2px;
+  padding: 12px;
+  border-radius: var(--md-sys-shape-corner-large);
+  background: var(--md-sys-color-surface-container-highest);
+}
+.import__stat .m3e-label-small { color: var(--md-sys-color-on-surface-variant); }
+
+.import__files { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.import__files li {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: var(--md-sys-shape-corner-medium);
+  background: var(--md-sys-color-surface-container-low);
+}
+.import__file-name { font-weight: 600; word-break: break-all; }
+.import__files .m3e-body-small { color: var(--md-sys-color-on-surface-variant); }
+
+.import__modes { display: grid; gap: 8px; }
+.import__mode {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-large);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+.import__mode .m3e-body-small { color: var(--md-sys-color-on-surface-variant); }
+.import__mode[aria-pressed="true"] {
+  border-color: var(--md-sys-color-primary);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+.import__mode[aria-pressed="true"] .m3e-body-small { color: inherit; }
+.import__mode[data-mode="replace"][aria-pressed="true"] {
+  border-color: var(--md-sys-color-error);
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+}
+
+.import__check { accent-color: var(--md-sys-color-primary); width: 20px; height: 20px; flex: 0 0 auto; }
+.switch-row .import__note { display: block; }
+
+body.is-dropping .stage { opacity: 0.6; }
+
 .m3e-menu__label {
   padding: 8px 12px 4px;
   font-size: 11px;
@@ -540,6 +652,8 @@ body {
   .search { grid-area: search; }
   .appbar__tools { grid-area: tools; }
   .views { display: none; }
+  .appbar__import-label { display: none; }
+  .appbar__import { padding-inline: 12px; }
   .appbar__tools::before { content: none; }
   /* compact view switcher as icon row is already in tools; show views below */
   .chiprow { padding-bottom: 4px; }

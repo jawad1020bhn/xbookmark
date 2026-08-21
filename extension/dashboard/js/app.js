@@ -48,6 +48,7 @@
   let snackbar;
   let settingsOverlay;
   let dataOverlay;
+  let importOverlay;
   let viewerOpen = false;
   let viewerIndex = 0;
   let viewerList = [];
@@ -279,10 +280,10 @@
       "<h2 class=\"m3e-headline-small m3e-headline-small--emphasized\">Your library is empty</h2>" +
       "<p class=\"m3e-body-medium\">Capture bookmarks on x.com, or import a JSON export. Everything stays on this device.</p>" +
       "<div class=\"empty__actions\">" +
-      "<button class=\"m3e-button m3e-button--filled m3e-state\" data-act=\"import\">Import JSON</button>" +
+      "<button class=\"m3e-button m3e-button--filled m3e-state\" data-act=\"import\">Import posts</button>" +
       "<button class=\"m3e-button m3e-button--tonal m3e-state\" data-act=\"data\">Data &amp; capture</button>" +
       "</div>";
-    el.querySelector("[data-act=import]").onclick = () => $("#importFile").click();
+    el.querySelector("[data-act=import]").onclick = () => openImport();
     el.querySelector("[data-act=data]").onclick = () => openData();
     return el;
   }
@@ -943,7 +944,7 @@
       <section class="set">
         <h3 class="m3e-title-small">Bring data in</h3>
         <div class="btn-row">
-          <button class="m3e-button m3e-button--filled m3e-state" data-act="import">Import JSON / JSONL</button>
+          <button class="m3e-button m3e-button--filled m3e-state" data-act="import">Import from a file…</button>
         </div>
       </section>
       <section class="set">
@@ -965,7 +966,7 @@
     $("#dataBody").onclick = (e) => {
       const act = e.target.closest("[data-act]");
       if (!act) return;
-      if (act.dataset.act === "import") $("#importFile").click();
+      if (act.dataset.act === "import") { dataOverlay.close(); openImport(); }
       if (act.dataset.act === "export-lib") exportData(false);
       if (act.dataset.act === "export-full") exportData(true);
       if (act.dataset.act === "clear-progress") {
@@ -1020,41 +1021,344 @@
     snackbar.show("Export ready");
   }
 
-  async function importFile(file) {
-    const text = await file.text();
-    let posts = [];
-    let extra = null;
+  /* ---- import -------------------------------------------------------------
+     A JSON/JSONL export is somebody's whole archive; dropping it into storage
+     unseen is not a thing to do quietly. The dialog reads the file, says what
+     is in it, asks how duplicates should be handled, and only then writes —
+     with one undo step held in memory afterwards.
+     -------------------------------------------------------------------------- */
+  const IMPORT_MODES = [
+    { id: "skip", label: "Keep existing", hint: "Add only posts you don’t already have." },
+    { id: "update", label: "Update existing", hint: "Refresh stored posts with the imported copy." },
+    { id: "replace", label: "Replace library", hint: "Discard the current library and keep only this file." },
+  ];
+
+  const importState = {
+    phase: "idle", // idle · reading · review · error
+    mode: "skip",
+    restoreState: false,
+    summary: null,
+    error: "",
+    dragging: false,
+  };
+
+  function resetImport() {
+    importState.phase = "idle";
+    importState.mode = "skip";
+    importState.restoreState = false;
+    importState.summary = null;
+    importState.error = "";
+    importState.dragging = false;
+  }
+
+  function openImport() {
+    resetImport();
+    renderImport();
+    importOverlay.open();
+  }
+
+  function pickImportFiles() {
+    $("#importFile").click();
+  }
+
+  function fmtDay(ms) {
+    if (!ms) return "—";
     try {
-      if (file.name.endsWith(".jsonl") || text.trim().startsWith("{") && text.includes("\n{")) {
-        posts = text.split(/\n+/).filter(Boolean).map((line) => JSON.parse(line));
-      } else {
-        const json = JSON.parse(text);
-        if (Array.isArray(json)) posts = json;
-        else if (Array.isArray(json.bookmarks)) {
-          posts = json.bookmarks;
-          extra = json;
-        } else if (json.tweet_id) posts = [json];
-      }
-    } catch (e) {
-      snackbar.show("Couldn’t parse that file", { error: true });
+      return new Date(ms).toLocaleDateString(undefined, { dateStyle: "medium" });
+    } catch {
+      return "—";
+    }
+  }
+
+  function plural(n, one, many) {
+    return n.toLocaleString() + " " + (n === 1 ? one : many || one + "s");
+  }
+
+  function importStat(value, label) {
+    return (
+      '<div class="import__stat"><span class="m3e-title-medium m3e-title-medium--emphasized m3e-tabular">' +
+      escapeHtml(value) +
+      '</span><span class="m3e-label-small">' +
+      escapeHtml(label) +
+      "</span></div>"
+    );
+  }
+
+  function importDropzoneHtml() {
+    return (
+      '<button type="button" class="dropzone m3e-state" id="dropzone" data-drag="' + (importState.dragging ? "true" : "false") + '">' +
+      '<svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor" aria-hidden="true"><path d="M12 3 7 8l1.4 1.4L11 6.8V15h2V6.8l2.6 2.6L17 8l-5-5ZM5 15v3a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-3h-2v3a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1v-3H5Z"/></svg>' +
+      '<span class="m3e-title-small">Drop an export here</span>' +
+      '<span class="m3e-body-small dropzone__hint">or choose a file — .json or .jsonl, several at once is fine</span>' +
+      "</button>" +
+      '<section class="set import__about">' +
+      '<h3 class="m3e-title-small">What can be imported</h3>' +
+      '<ul class="stats-list m3e-body-small">' +
+      "<li><b>x-bookmarks.json</b> / <b>x-bookmarks.jsonl</b> — from the extension popup</li>" +
+      "<li><b>x-library.json</b> and <b>x-library-backup.json</b> — from this dashboard</li>" +
+      "<li>A plain array of captured posts</li>" +
+      "</ul>" +
+      '<p class="m3e-body-small import__note">Nothing leaves this device. Files are read in the browser and merged into local storage.</p>' +
+      "</section>"
+    );
+  }
+
+  function importReviewHtml(sum) {
+    const modeCards = IMPORT_MODES.map(
+      (m) =>
+        '<button type="button" class="import__mode m3e-state" data-mode="' + m.id + '" aria-pressed="' +
+        (importState.mode === m.id ? "true" : "false") + '">' +
+        '<span class="m3e-label-large">' + escapeHtml(m.label) + "</span>" +
+        '<span class="m3e-body-small">' + escapeHtml(m.hint) + "</span>" +
+        "</button>"
+    ).join("");
+
+    const files = sum.files
+      .map(
+        (f) =>
+          '<li><span class="import__file-name">' + escapeHtml(f.file || "file") + "</span>" +
+          '<span class="m3e-body-small">' + escapeHtml(f.source) + " · " + plural(f.posts, "post") +
+          (f.exportedAt ? " · exported " + escapeHtml(fmtDay(Date.parse(f.exportedAt))) : "") +
+          "</span></li>"
+      )
+      .join("");
+
+    const issues = sum.issues.length
+      ? '<section class="set"><h3 class="m3e-title-small">Skipped</h3><ul class="stats-list m3e-body-small import__issues">' +
+        sum.issues.slice(0, 6).map((i) => "<li>" + escapeHtml(i) + "</li>").join("") +
+        (sum.issues.length > 6 ? "<li>" + (sum.issues.length - 6) + " more…</li>" : "") +
+        "</ul></section>"
+      : "";
+
+    const extras = sum.extras
+      ? '<section class="set"><label class="switch-row" for="importRestore">' +
+        '<span><span class="m3e-body-medium">Also restore viewed, archived &amp; playback progress</span>' +
+        '<span class="m3e-body-small import__note">This backup carries dashboard state for its posts.</span></span>' +
+        '<input type="checkbox" id="importRestore" class="import__check"' + (importState.restoreState ? " checked" : "") + " />" +
+        "</label></section>"
+      : "";
+
+    const willAdd = importState.mode === "replace" ? sum.posts.length : sum.fresh;
+    const willTouch =
+      importState.mode === "update" ? sum.existing : importState.mode === "replace" ? bookmarks.length : 0;
+
+    const impact =
+      importState.mode === "replace"
+        ? '<p class="m3e-body-small import__warn">Replaces ' + plural(bookmarks.length, "stored post") + " with " + sum.posts.length.toLocaleString() + " from this file.</p>"
+        : '<p class="m3e-body-small import__note">' +
+          plural(willAdd, "new post") + " will be added" +
+          (importState.mode === "update" && willTouch ? ", " + willTouch.toLocaleString() + " refreshed" : "") +
+          (importState.mode === "skip" && sum.existing ? ", " + plural(sum.existing, "already-stored post") + " left untouched" : "") +
+          ".</p>";
+
+    return (
+      '<section class="set">' +
+      '<div class="import__stats">' +
+      importStat(sum.posts.length.toLocaleString(), "posts in file") +
+      importStat(sum.fresh.toLocaleString(), "new to you") +
+      importStat(sum.existing.toLocaleString(), "already stored") +
+      importStat(sum.media.toLocaleString(), "media items") +
+      "</div>" +
+      '<p class="m3e-body-small import__note">' +
+      plural(sum.photos, "photo") + " · " + plural(sum.videos, "video") + " · " + plural(sum.gifs, "GIF") +
+      (sum.noMedia ? " · " + sum.noMedia.toLocaleString() + " text-only" : "") +
+      (sum.authors ? " · " + plural(sum.authors, "author") : "") +
+      (sum.newest ? " · posted " + escapeHtml(fmtDay(sum.oldest)) + " – " + escapeHtml(fmtDay(sum.newest)) : "") +
+      "</p>" +
+      "</section>" +
+      '<section class="set"><h3 class="m3e-title-small">File</h3><ul class="import__files">' + files + "</ul></section>" +
+      '<section class="set"><h3 class="m3e-title-small">If a post is already in the library</h3>' +
+      '<div class="import__modes" role="group" aria-label="Duplicate handling">' + modeCards + "</div>" +
+      impact +
+      "</section>" +
+      extras +
+      issues
+    );
+  }
+
+  function renderImport() {
+    const body = $("#importBody");
+    const actions = $("#importActions");
+    const sub = $("#importSub");
+
+    if (importState.phase === "reading") {
+      sub.textContent = "Reading your file…";
+      body.innerHTML =
+        '<div class="import__loading">' +
+        '<div class="m3e-progress m3e-progress--indeterminate" role="progressbar" aria-label="Reading file"><div class="m3e-progress__indicator"></div></div>' +
+        '<p class="m3e-body-medium">Parsing and checking for duplicates…</p></div>';
+      actions.innerHTML = '<button type="button" class="m3e-button m3e-button--text m3e-state" data-act="cancel">Cancel</button>';
+    } else if (importState.phase === "error") {
+      sub.textContent = "Nothing was changed";
+      body.innerHTML =
+        '<section class="set"><p class="m3e-body-medium import__warn">' + escapeHtml(importState.error) + "</p>" +
+        '<p class="m3e-body-small import__note">Expected a JSON or JSONL export from the extension popup or this dashboard.</p></section>';
+      actions.innerHTML =
+        '<button type="button" class="m3e-button m3e-button--text m3e-state" data-act="cancel">Close</button>' +
+        '<button type="button" class="m3e-button m3e-button--filled m3e-state" data-act="pick" data-autofocus>Choose another file</button>';
+    } else if (importState.phase === "review" && importState.summary) {
+      const sum = importState.summary;
+      sub.textContent = sum.files.length > 1 ? plural(sum.files.length, "file") + " ready" : sum.files[0].source;
+      body.innerHTML = importReviewHtml(sum);
+      const count = importState.mode === "replace" ? sum.posts.length : importState.mode === "update" ? sum.posts.length : sum.fresh;
+      const disabled = count === 0;
+      actions.innerHTML =
+        '<button type="button" class="m3e-button m3e-button--text m3e-state" data-act="cancel">Cancel</button>' +
+        '<button type="button" class="m3e-button m3e-button--text m3e-state" data-act="pick">Choose another</button>' +
+        '<button type="button" class="m3e-button ' +
+        (importState.mode === "replace" ? "m3e-button--error-filled" : "m3e-button--filled") +
+        ' m3e-state" data-act="apply" data-autofocus' + (disabled ? " disabled" : "") + ">" +
+        (importState.mode === "replace"
+          ? "Replace with " + plural(sum.posts.length, "post")
+          : disabled
+          ? "Nothing new to import"
+          : "Import " + plural(count, "post")) +
+        "</button>";
+    } else {
+      sub.textContent = "JSON or JSONL exported from the extension";
+      body.innerHTML = importDropzoneHtml();
+      actions.innerHTML =
+        '<button type="button" class="m3e-button m3e-button--text m3e-state" data-act="cancel">Cancel</button>' +
+        '<button type="button" class="m3e-button m3e-button--filled m3e-state" data-act="pick" data-autofocus>Choose file</button>';
+    }
+  }
+
+  function onImportClick(e) {
+    const modeBtn = e.target.closest("[data-mode]");
+    if (modeBtn) {
+      importState.mode = modeBtn.dataset.mode;
+      renderImport();
       return;
     }
-    const map = new Map(bookmarks.map((b) => [b.tweet_id, b]));
-    let added = 0;
-    posts.forEach((p) => {
-      if (!p || !p.tweet_id) return;
-      if (map.has(p.tweet_id)) return;
-      map.set(p.tweet_id, p);
-      added++;
-    });
-    bookmarks = Array.from(map.values());
-    if (extra && extra.library) {
-      library = Object.assign({}, library, extra.library);
-      persistLibrary();
+    if (e.target.closest("#dropzone")) {
+      pickImportFiles();
+      return;
     }
+    const act = e.target.closest("[data-act]");
+    if (!act) return;
+    if (act.dataset.act === "cancel") importOverlay.close();
+    if (act.dataset.act === "pick") pickImportFiles();
+    if (act.dataset.act === "apply") applyImport();
+  }
+
+  async function readImportFiles(fileList) {
+    const files = Array.from(fileList || []).filter(Boolean);
+    if (!files.length) return;
+
+    if (!importOverlay.isOpen) importOverlay.open();
+    importState.phase = "reading";
+    importState.dragging = false;
+    renderImport();
+
+    const parsed = [];
+    for (const file of files) {
+      try {
+        const text = await file.text();
+        parsed.push(XBImport.parseText(text, file.name));
+      } catch (err) {
+        parsed.push({ file: file.name, posts: [], source: "Unreadable", exportedAt: null, extras: null, seen: 0, invalid: 0, issues: [err.message || "Could not be read."] });
+      }
+    }
+
+    const summary = XBImport.analyze(parsed, bookmarks);
+    if (!summary.posts.length) {
+      importState.phase = "error";
+      importState.error = summary.issues[0] || "No captured posts were found in that file.";
+      renderImport();
+      return;
+    }
+
+    importState.summary = summary;
+    importState.restoreState = !!summary.extras;
+    importState.phase = "review";
+    renderImport();
+  }
+
+  async function applyImport() {
+    const sum = importState.summary;
+    if (!sum) return;
+
+    const mode = importState.mode;
+    const snapshot = { bookmarks: bookmarks.slice(), library: JSON.parse(JSON.stringify(library)) };
+    const { list, stats } = XBImport.merge(bookmarks, sum.posts, mode);
+    bookmarks = list;
+
+    const restore = $("#importRestore");
+    if (sum.extras && sum.extras.library && restore && restore.checked) {
+      const inc = sum.extras.library;
+      library = {
+        viewed: Object.assign({}, library.viewed, inc.viewed || {}),
+        archived: Object.assign({}, library.archived, inc.archived || {}),
+        progress: Object.assign({}, library.progress, inc.progress || {}),
+        lastOpened: Object.assign({}, library.lastOpened, inc.lastOpened || {}),
+      };
+      await XBStore.saveLibrary(library);
+    }
+
     await XBStore.saveBookmarks(bookmarks);
+    importOverlay.close();
     render();
-    snackbar.show("Merged " + added + " new posts");
+
+    const parts = [];
+    if (stats.added) parts.push(stats.added.toLocaleString() + " added");
+    if (stats.updated) parts.push(stats.updated.toLocaleString() + " updated");
+    if (stats.skipped) parts.push(stats.skipped.toLocaleString() + " skipped");
+    if (stats.removed && mode === "replace") parts.push(stats.removed.toLocaleString() + " replaced");
+
+    snackbar.show(parts.length ? "Imported — " + parts.join(", ") : "Nothing to import", {
+      action: "Undo",
+      onAction: async () => {
+        bookmarks = snapshot.bookmarks;
+        library = snapshot.library;
+        await XBStore.saveBookmarks(bookmarks);
+        await XBStore.saveLibrary(library);
+        render();
+        snackbar.show("Import undone");
+      },
+    });
+  }
+
+  /* Dropping a file anywhere on the page is the same gesture as using the
+     button, so accept it there too and open the dialog on the way in. */
+  function bindImportDnd() {
+    const hasFiles = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+    let depth = 0;
+
+    window.addEventListener("dragenter", (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth++;
+      if (!importOverlay.isOpen) openImport();
+      if (importState.phase === "idle" && !importState.dragging) {
+        importState.dragging = true;
+        renderImport();
+      }
+      document.body.classList.add("is-dropping");
+    });
+    window.addEventListener("dragover", (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    });
+    window.addEventListener("dragleave", (e) => {
+      if (!hasFiles(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) {
+        document.body.classList.remove("is-dropping");
+        if (importState.dragging) {
+          importState.dragging = false;
+          if (importState.phase === "idle") renderImport();
+        }
+      }
+    });
+    window.addEventListener("drop", (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth = 0;
+      document.body.classList.remove("is-dropping");
+      importState.dragging = false;
+      readImportFiles(e.dataTransfer.files);
+    });
   }
 
   /* ---- filter sheet ------------------------------------------------------ */
@@ -1168,6 +1472,7 @@
     snackbar = createSnackbar($("#snackbar"));
     settingsOverlay = createOverlay({ element: $("#settings"), scrim: $("#scrim") });
     dataOverlay = createOverlay({ element: $("#dataDialog"), scrim: $("#scrim") });
+    importOverlay = createOverlay({ element: $("#importDialog"), scrim: $("#scrim") });
     theme = M3ETheme.createController({ scheme: "system", density: "comfortable" });
 
     const loaded = await XBStore.loadAll();
@@ -1217,11 +1522,18 @@
     $("#settingsBtn").addEventListener("click", openSettings);
     $("#dataBtn").addEventListener("click", openData);
     $("#capturePill").addEventListener("click", openData);
+    $("#importBtn").addEventListener("click", openImport);
+    $("#importBody").addEventListener("click", onImportClick);
+    $("#importActions").addEventListener("click", onImportClick);
+    $("#importBody").addEventListener("change", (e) => {
+      if (e.target.id === "importRestore") importState.restoreState = e.target.checked;
+    });
     $("#importFile").addEventListener("change", (e) => {
-      const file = e.target.files && e.target.files[0];
-      if (file) importFile(file);
+      const files = e.target.files;
+      if (files && files.length) readImportFiles(files);
       e.target.value = "";
     });
+    bindImportDnd();
 
     $("#viewerClose").addEventListener("click", closeViewer);
     $("#viewerPrev").addEventListener("click", () => stepViewer(-1));
