@@ -106,6 +106,9 @@
       if (f.kind === "photo" && item.type !== "photo") return false;
       if (f.kind === "video" && item.type !== "video") return false;
       if (f.kind === "gif" && item.type !== "animated_gif") return false;
+      if (f.shape === "portrait" && !(item.aspect > 0 && item.aspect < 0.85)) return false;
+      if (f.shape === "square" && !(item.aspect >= 0.85 && item.aspect < 1.2)) return false;
+      if (f.shape === "wide" && !(item.aspect >= 1.2)) return false;
       if (f.author && item.author.toLowerCase() !== String(f.author).toLowerCase().replace(/^@/, "")) return false;
       if (f.postedFrom && item.postedAt && item.postedAt < parseDate(f.postedFrom)) return false;
       if (f.postedTo && item.postedAt && item.postedAt > parseDate(f.postedTo) + DAY) return false;

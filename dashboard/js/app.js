@@ -7,19 +7,19 @@
   const { escapeHtml, bindRipple, bindWindowClass, bindCarousel, createSnackbar, createOverlay, debounce, bindEscape } = window.M3E;
 
   const SORTS = {
-    Time: [
+    Date: [
       { id: "newest_posted", label: "Newest posted" },
       { id: "oldest_posted", label: "Oldest posted" },
       { id: "capture_order", label: "Capture order" },
     ],
-    Popularity: [
+    Engagement: [
       { id: "most_liked", label: "Most liked" },
       { id: "most_reposted", label: "Most reposted" },
       { id: "most_replied", label: "Most replied to" },
       { id: "most_viewed", label: "Most viewed" },
       { id: "engagement", label: "Best engagement rate" },
     ],
-    Chance: [
+    Discovery: [
       { id: "shuffle", label: "Shuffle" },
       { id: "forgotten", label: "Forgotten first" },
     ],
@@ -56,7 +56,9 @@
   let gridObserver = null;
   let renderedCount = 0;
   let railSelection = null;
+  let showAllCollections = false;
   const selectedIds = new Set();
+  let selectionMode = false;
   let longPressTimer = 0;
   const GRID_PAGE = 48;
   const scrollMemory = { y: 0 };
@@ -229,6 +231,7 @@
     actions.innerHTML =
       (item.post.tweet_url ? '<a href="' + escapeHtml(item.post.tweet_url) + '" target="_blank" rel="noopener" aria-label="Open original post" title="Open original">↗</a>' : "") +
       '<button type="button" data-tile-act="copy" aria-label="Copy post link" title="Copy link">⧉</button>' +
+      '<button type="button" data-tile-act="archive" aria-label="' + (item.archived ? "Restore from archive" : "Archive") + '" title="' + (item.archived ? "Restore" : "Archive") + '">◇</button>' +
       '<button type="button" data-tile-act="remove" aria-label="Remove from library" title="Remove">×</button>' +
       '<button type="button" data-tile-act="retry" aria-label="Retry preview" title="Retry preview">↻</button>';
     tile.appendChild(actions);
@@ -243,7 +246,7 @@
     }
 
     const activate = () => {
-      if (selectedIds.size) { toggleSelection(item.id); return; }
+      if (selectionMode || selectedIds.size) { toggleSelection(item.id); return; }
       const open = () => {
         tile.style.viewTransitionName = "none";
         openViewer(item.id, o.list || filtered);
@@ -278,6 +281,13 @@
       event.stopPropagation();
       if (action.dataset.tileAct === "retry") retry();
       if (action.dataset.tileAct === "remove") removeItems([item.id], true);
+      if (action.dataset.tileAct === "archive") {
+        if (library.archived[item.id]) delete library.archived[item.id];
+        else library.archived[item.id] = true;
+        await XBStore.saveLibrary(library);
+        render();
+        snackbar.show(library.archived[item.id] ? "Archived" : "Restored");
+      }
       if (action.dataset.tileAct === "copy") {
         try { await navigator.clipboard.writeText(item.post.tweet_url || ""); snackbar.show("Copied!"); }
         catch { snackbar.show("Couldn’t copy", { error: true }); }
@@ -396,6 +406,17 @@
     return el;
   }
 
+  function collectionSignal(col, item, reason) {
+    if (col.id === "continue") return "RESUME · " + ((item.progress && M3EMedia.formatDuration(item.progress.t * 1000)) || "IN PROGRESS");
+    if (col.id === "unseen") return "NEVER OPENED";
+    if (col.id === "recent") return Date.now() - item.capturedAt < 86400000 ? "NEW TODAY" : "SAVED " + relative(item.capturedAt).toUpperCase();
+    if (col.id === "popular") return item.eng.views ? item.eng.views.toLocaleString() + " VIEWS" : "POPULAR";
+    if (col.id === "quick-watch") return "QUICK · " + M3EMedia.formatDuration(item.duration);
+    if (col.id === "forgotten") return "REDISCOVER";
+    if (col.id === "top-picks") return item.unseen ? "PICK · UNSEEN" : "TOP PICK";
+    return String(reason || col.title).replace(/^Still waiting to be /i, "").toUpperCase();
+  }
+
   function renderRails(main) {
     const working = XBLibrary.applyFilters(allItems, prefs.filters, prefs.search);
     if (!working.length) {
@@ -403,17 +424,30 @@
       return;
     }
     const cols = XBLibrary.collections(working);
+    const preferredIds = ["continue", "top-picks", "recent", "unseen", "popular", "forgotten"];
+    const primary = preferredIds.map((id) => cols.find((col) => col.id === id)).filter(Boolean);
+    const explore = cols.filter((col) => !preferredIds.includes(col.id));
+    const visibleCols = showAllCollections ? primary.concat(explore) : primary.slice(0, 5);
+    const recentCount = working.filter((item) => item.capturedAt && Date.now() - item.capturedAt <= 7 * 86400000).length;
+    const unseenVideos = working.filter((item) => item.type === "video" && item.unseen).length;
+    const unavailable = working.filter((item) => !item.playable || item.state !== "available").length;
+    const inProgress = working.filter((item) => item.progress && item.progress.t >= 3).length;
     const hero = document.createElement("header");
-    hero.className = "hero";
+    hero.className = "hero hero--library";
     hero.innerHTML =
-      "<p class=\"m3e-label-large hero__kicker\">Library</p>" +
-      "<h1 class=\"m3e-headline-medium m3e-headline-medium--emphasized\">What to look at</h1>" +
-      "<p class=\"m3e-body-medium hero__sub\">" +
-      working.length.toLocaleString() + " media items · " +
-      bookmarks.length.toLocaleString() + " posts</p>";
+      "<p class=\"m3e-label-large hero__kicker\">Your library</p>" +
+      "<h1 class=\"m3e-display-small m3e-display-small--emphasized\">Find something worth your attention.</h1>" +
+      "<p class=\"m3e-body-large hero__sub\">" +
+      working.length.toLocaleString() + " media · " + bookmarks.length.toLocaleString() + " posts</p>" +
+      '<div class="library-health" aria-label="Library status">' +
+      '<span><b>' + recentCount.toLocaleString() + '</b> new</span>' +
+      '<span><b>' + unseenVideos.toLocaleString() + '</b> unwatched videos</span>' +
+      '<span><b>' + inProgress.toLocaleString() + '</b> in progress</span>' +
+      '<span class="' + (unavailable ? "has-warning" : "") + '"><b>' + unavailable.toLocaleString() + '</b> unavailable</span>' +
+      "</div>";
     main.appendChild(hero);
 
-    cols.forEach((col) => {
+    visibleCols.forEach((col) => {
       const section = document.createElement("section");
       section.className = "rail";
       section.id = "rail-" + col.id;
@@ -460,7 +494,7 @@
         const t = tileEl(item, { list: col.items, large: true, size: "medium" });
         const why = document.createElement("span");
         why.className = "tile__why m3e-label-small";
-        why.textContent = col.reasons[i];
+        why.textContent = collectionSignal(col, item, col.reasons[i]);
         t.appendChild(why);
         scroller.appendChild(t);
       });
@@ -476,6 +510,20 @@
       bindCarousel(scroller, { prev, next });
       enhanceRail(scroller, progress);
     });
+
+    if (explore.length) {
+      const more = document.createElement("section");
+      more.className = "explore-collections";
+      more.innerHTML = showAllCollections
+        ? '<button type="button" class="m3e-button m3e-button--text m3e-state">Show fewer collections ↑</button>'
+        : '<div><p class="m3e-title-medium">Explore your library</p><p class="m3e-body-small">Quick watches, photo stories, favorite creators and more.</p></div><button type="button" class="m3e-button m3e-button--tonal m3e-state">Explore all collections →</button>';
+      more.querySelector("button").onclick = () => {
+        showAllCollections = !showAllCollections;
+        render();
+        if (!showAllCollections) $("#stage").focus();
+      };
+      main.appendChild(more);
+    }
   }
 
   function enhanceRail(scroller, progress) {
@@ -516,12 +564,17 @@
 
   function renderGrid(main) {
     const toolbar = document.createElement("div");
-    toolbar.className = "gridbar";
-    toolbar.innerHTML =
-      "<p class=\"m3e-body-medium\" id=\"gridCount\"></p>" +
-      "<div class=\"m3e-segmented\" role=\"group\" aria-label=\"Tile size\">" +
-      sizeBtn("dense", "S") + sizeBtn("medium", "M") + sizeBtn("large", "L") +
-      "</div>";
+    toolbar.className = "gridbar workspace-bar";
+    toolbar.innerHTML = `
+      <div><p class="m3e-title-medium" id="gridCount"></p><p class="m3e-body-small workspace-bar__hint">Your complete, searchable archive</p></div>
+      <div class="workspace-bar__actions">
+        <button type="button" class="command-button m3e-state" data-grid-act="sort">${escapeHtml("Sort · " + shortSortLabel(prefs.sort))}</button>
+        <button type="button" class="command-button m3e-state" data-grid-act="filter">${escapeHtml(filterButtonLabel())}</button>
+        <div class="density-control"><span class="m3e-label-small">Density</span><div class="m3e-segmented" role="group" aria-label="Tile density">
+          ${sizeBtn("dense", "S")}${sizeBtn("medium", "M")}${sizeBtn("large", "L")}
+        </div></div>
+        <button type="button" class="command-button command-button--accent m3e-state" data-grid-act="select">Select</button>
+      </div>`;
     main.appendChild(toolbar);
     $("#gridCount", toolbar).textContent = (railSelection ? railSelection.title + " · " : "") + filtered.length.toLocaleString() + " items";
     $$("[data-size]", toolbar).forEach((b) => {
@@ -531,6 +584,13 @@
         render();
       });
     });
+    $("[data-grid-act=sort]", toolbar).onclick = (event) => openSort(event.currentTarget);
+    $("[data-grid-act=filter]", toolbar).onclick = openFilters;
+    $("[data-grid-act=select]", toolbar).onclick = () => {
+      selectionMode = true;
+      updateBulkBar();
+      snackbar.show("Select items, or right-click any card");
+    };
 
     if (!filtered.length) {
       main.appendChild(emptyFilter(describeConstraint()));
@@ -800,6 +860,16 @@
     };
     ctx.querySelector("[data-act=remove]").onclick = () => confirmRemove(item);
 
+    const summary = $("#viewerSummary");
+    summary.innerHTML =
+      '<div class="viewer__summary-copy"><strong>@' + escapeHtml(item.author || "unknown") + '</strong><span>' + escapeHtml((item.text || item.alt || "").slice(0, 120)) + '</span></div>' +
+      (p.tweet_url ? '<a href="' + escapeHtml(p.tweet_url) + '" target="_blank" rel="noopener">Open on X ↗</a>' : "") +
+      '<div class="viewer__summary-nav"><button type="button" data-step="-1">← Previous</button><button type="button" data-step="1">Next →</button></div>';
+    $$("[data-step]", summary).forEach((button) => {
+      button.disabled = button.dataset.step === "-1" ? viewerIndex <= 0 : viewerIndex >= viewerList.length - 1;
+      button.onclick = () => stepViewer(Number(button.dataset.step));
+    });
+
     $("#viewerPos").textContent = viewerIndex + 1 + " / " + viewerList.length;
     $("#viewerPrev").disabled = viewerIndex <= 0;
     $("#viewerNext").disabled = viewerIndex >= viewerList.length - 1;
@@ -842,9 +912,10 @@
 
   function updateBulkBar() {
     const bar = $("#bulkbar");
-    bar.hidden = selectedIds.size === 0;
+    bar.hidden = !selectionMode && selectedIds.size === 0;
     $("#selectedCount").textContent = selectedIds.size.toLocaleString();
-    document.body.classList.toggle("is-selecting", selectedIds.size > 0);
+    document.body.classList.toggle("is-selecting", selectionMode || selectedIds.size > 0);
+    $$("[data-bulk]:not([data-bulk=cancel])", bar).forEach((button) => { button.disabled = selectedIds.size === 0; });
     $$(".tile[data-id]").forEach((tile) => {
       const on = selectedIds.has(tile.dataset.id);
       tile.classList.toggle("is-selected", on);
@@ -853,6 +924,7 @@
   }
 
   function toggleSelection(id) {
+    selectionMode = true;
     if (selectedIds.has(id)) selectedIds.delete(id);
     else selectedIds.add(id);
     updateBulkBar();
@@ -901,6 +973,7 @@
       return post.media_items.length ? [post] : [];
     });
     selectedIds.clear();
+    selectionMode = false;
     await XBStore.saveBookmarks(bookmarks);
     await XBStore.saveLibrary(library);
     if (viewerOpen) closeViewer();
@@ -947,7 +1020,9 @@
     $("#search").value = prefs.search || "";
     $("#resultCount").textContent = filtered.length.toLocaleString();
     $("#resultAnnouncement").textContent = filtered.length.toLocaleString() + (filtered.length === 1 ? " result" : " results");
-    $("#sortLabel").textContent = sortLabel(prefs.sort);
+    $("#sortLabel").textContent = "Sort · " + shortSortLabel(prefs.sort);
+    $("#filterLabel").textContent = filterButtonLabel();
+    $("#filterBtn").classList.toggle("has-active", activeFilterCount() > 0);
     renderFilterChips();
     renderCapturePill();
     applyTheme();
@@ -965,6 +1040,19 @@
     return "Newest posted";
   }
 
+  function shortSortLabel(id) {
+    return sortLabel(id).replace(" posted", "").replace("Most ", "");
+  }
+
+  function activeFilterCount() {
+    return Object.values(prefs.filters || {}).filter(Boolean).length + (railSelection ? 1 : 0);
+  }
+
+  function filterButtonLabel() {
+    const count = activeFilterCount();
+    return count ? "Filter · " + count : "Filter";
+  }
+
   function renderFilterChips() {
     const host = $("#chips");
     host.innerHTML = "";
@@ -972,6 +1060,7 @@
     const chips = [];
     if (railSelection) chips.push({ key: "collection", label: railSelection.title });
     if (f.kind) chips.push({ key: "kind", label: f.kind });
+    if (f.shape) chips.push({ key: "shape", label: f.shape });
     if (f.author) chips.push({ key: "author", label: "@" + f.author });
     if (f.seen) chips.push({ key: "seen", label: f.seen });
     if (f.archive === "archived") chips.push({ key: "archive", label: "archived" });
@@ -1002,13 +1091,14 @@
     pill.dataset.status = status;
     const st = s.stats || {};
     const waiting = Number(st.newItems) || 0;
+    const lastRun = s.updatedAt ? relative(Date.parse(s.updatedAt)) : "";
     const label = {
-      idle: "Capture idle",
-      capturing: "Capturing…",
+      idle: lastRun ? "Capture · " + lastRun : "Capture ready",
+      capturing: "● Capturing…",
       paused: "Capture paused",
-      completed: "Capture complete",
-      stopped_by_user: "Capture stopped",
-      stopped_by_error: "Capture error",
+      completed: lastRun ? "Capture complete · " + lastRun : "Capture complete",
+      stopped_by_user: lastRun ? "Capture stopped · " + lastRun : "Capture stopped",
+      stopped_by_error: "Capture issue",
     }[status] || status;
     const reason = s.lastStopReason ? STOP_REASONS[s.lastStopReason] || s.lastStopReason : "";
     pill.title = reason;
@@ -1055,7 +1145,7 @@
         ${seg("variant", "Color character", [["tonalSpot","Calm"],["vibrant","Vibrant"],["expressive","Expressive"],["neutral","Neutral"]])}
       </section>
       <section class="set">
-        <h3 class="m3e-title-small">Media presentation</h3>
+        <h3 class="m3e-title-small">Browsing</h3>
         ${seg("tileSize", "Tile size", [["dense","Dense"],["medium","Medium"],["large","Large"]])}
         ${seg("density", "Interface density", [["compact","Compact"],["comfortable","Comfortable"],["spacious","Spacious"]])}
         ${tog("showMetadata", "Show media metadata")}
@@ -1076,13 +1166,13 @@
         </label>
       </section>
       <section class="set">
-        <h3 class="m3e-title-small">Motion &amp; accessibility</h3>
+        <h3 class="m3e-title-small">Accessibility</h3>
         ${tog("reduceMotion", "Reduce motion")}
         ${tog("largeControls", "Increase control size")}
         ${tog("alwaysAlt", "Always expose alt text")}
       </section>
       <section class="set">
-        <h3 class="m3e-title-small">Browsing</h3>
+        <h3 class="m3e-title-small">Session</h3>
         ${tog("markViewedOnOpen", "Opening media marks it viewed")}
         ${tog("restoreSession", "Restore previous browsing session")}
       </section>
@@ -1297,69 +1387,108 @@
   }
 
   /* ---- filter sheet ------------------------------------------------------ */
+  function filterOption(key, value, label, active) {
+    return '<button type="button" class="filter-option" data-filter-key="' + key + '" data-filter-value="' + value + '" aria-pressed="' + active + '">' + label + "</button>";
+  }
+
   function openFilters() {
     const authors = XBLibrary.authors(allItems).slice(0, 40);
     const f = prefs.filters || {};
     $("#filterBody").innerHTML = `
-      <label class="field">Media
-        <select data-f="kind">
-          <option value="">All media</option>
-          <option value="photo"${f.kind==="photo"?" selected":""}>Photos</option>
-          <option value="video"${f.kind==="video"?" selected":""}>Videos</option>
-          <option value="gif"${f.kind==="gif"?" selected":""}>GIFs</option>
-        </select>
-      </label>
-      <label class="field">Author
-        <input list="authorList" data-f="author" value="${escapeHtml(f.author||"")}" placeholder="@username">
-        <datalist id="authorList">${authors.map((a)=>'<option value="'+escapeHtml(a.name)+'">').join("")}</datalist>
-      </label>
-      <label class="field">Posted from <input type="date" data-f="postedFrom" value="${escapeHtml(f.postedFrom||"")}"></label>
-      <label class="field">Posted to <input type="date" data-f="postedTo" value="${escapeHtml(f.postedTo||"")}"></label>
-      <label class="field">Captured from <input type="date" data-f="capturedFrom" value="${escapeHtml(f.capturedFrom||"")}"></label>
-      <label class="field">Captured to <input type="date" data-f="capturedTo" value="${escapeHtml(f.capturedTo||"")}"></label>
-      <label class="field">Min duration (s) <input type="number" data-f="durationMin" value="${escapeHtml(f.durationMin||"")}"></label>
-      <label class="field">Max duration (s) <input type="number" data-f="durationMax" value="${escapeHtml(f.durationMax||"")}"></label>
-      <label class="field">Seen
-        <select data-f="seen">
-          <option value="">Any</option>
-          <option value="unseen"${f.seen==="unseen"?" selected":""}>Unseen</option>
-          <option value="viewed"${f.seen==="viewed"?" selected":""}>Viewed</option>
-        </select>
-      </label>
-      <label class="field">Archive
-        <select data-f="archive">
-          <option value="">Active</option>
-          <option value="archived"${f.archive==="archived"?" selected":""}>Archived</option>
-        </select>
-      </label>
-      <label class="field">Alt text
-        <select data-f="alt">
-          <option value="">Any</option>
-          <option value="yes"${f.alt==="yes"?" selected":""}>Has alt text</option>
-        </select>
-      </label>
-      <label class="field">Playable source
-        <select data-f="playable">
-          <option value="">Any</option>
-          <option value="yes"${f.playable==="yes"?" selected":""}>Has playable source</option>
-          <option value="no"${f.playable==="no"?" selected":""}>Missing source</option>
-        </select>
-      </label>
-      <label class="field">Saved progress
-        <select data-f="progress">
-          <option value="">Any</option>
-          <option value="yes"${f.progress==="yes"?" selected":""}>Has progress</option>
-        </select>
-      </label>
-      <button class="m3e-button m3e-button--filled m3e-button--block m3e-state" id="applyFilters">Apply</button>
+      <section class="filter-group">
+        <h3>Media</h3>
+        <div class="filter-options" data-choice="kind">
+          ${filterOption("kind", "", "All", !f.kind)}
+          ${filterOption("kind", "photo", "Photo", f.kind === "photo")}
+          ${filterOption("kind", "video", "Video", f.kind === "video")}
+          ${filterOption("kind", "gif", "GIF", f.kind === "gif")}
+        </div>
+      </section>
+      <section class="filter-group">
+        <h3>Status</h3>
+        <div class="filter-options">
+          ${filterOption("seen", "unseen", "Unseen", f.seen === "unseen")}
+          ${filterOption("seen", "viewed", "Viewed", f.seen === "viewed")}
+          ${filterOption("archive", "archived", "Archived", f.archive === "archived")}
+          ${filterOption("progress", "yes", "In progress", f.progress === "yes")}
+        </div>
+      </section>
+      <section class="filter-group">
+        <h3>Captured</h3>
+        <div class="filter-options">
+          <button type="button" class="filter-option" data-date-days="1">Today</button>
+          <button type="button" class="filter-option" data-date-days="7">7 days</button>
+          <button type="button" class="filter-option" data-date-days="30">30 days</button>
+        </div>
+      </section>
+      <section class="filter-group">
+        <h3>Shape</h3>
+        <div class="filter-options">
+          ${filterOption("shape", "portrait", "Portrait", f.shape === "portrait")}
+          ${filterOption("shape", "square", "Square", f.shape === "square")}
+          ${filterOption("shape", "wide", "Wide", f.shape === "wide")}
+        </div>
+      </section>
+      <section class="filter-group">
+        <h3>Playback</h3>
+        <div class="filter-options">
+          ${filterOption("playable", "yes", "Playable", f.playable === "yes")}
+          ${filterOption("playable", "no", "Unavailable", f.playable === "no")}
+        </div>
+      </section>
+      <details class="filter-advanced">
+        <summary>More filters</summary>
+        <div class="filter-advanced__fields">
+          <label class="field">Author
+            <input list="authorList" data-f="author" value="${escapeHtml(f.author||"")}" placeholder="@username">
+            <datalist id="authorList">${authors.map((a)=>'<option value="'+escapeHtml(a.name)+'">').join("")}</datalist>
+          </label>
+          <label class="field">Posted from <input type="date" data-f="postedFrom" value="${escapeHtml(f.postedFrom||"")}"></label>
+          <label class="field">Posted to <input type="date" data-f="postedTo" value="${escapeHtml(f.postedTo||"")}"></label>
+          <label class="field">Captured from <input type="date" data-f="capturedFrom" value="${escapeHtml(f.capturedFrom||"")}"></label>
+          <label class="field">Captured to <input type="date" data-f="capturedTo" value="${escapeHtml(f.capturedTo||"")}"></label>
+          <label class="field">Minimum duration (seconds) <input type="number" min="0" data-f="durationMin" value="${escapeHtml(f.durationMin||"")}"></label>
+          <label class="field">Maximum duration (seconds) <input type="number" min="0" data-f="durationMax" value="${escapeHtml(f.durationMax||"")}"></label>
+          <label class="field">Alt text
+            <select data-f="alt"><option value="">Any</option><option value="yes"${f.alt==="yes"?" selected":""}>Has alt text</option><option value="no"${f.alt==="no"?" selected":""}>No alt text</option></select>
+          </label>
+        </div>
+      </details>
+      <div class="filter-apply">
+        <span><b id="filterResultCount">${XBLibrary.applyFilters(allItems, f, prefs.search).length.toLocaleString()}</b> results</span>
+        <button class="m3e-button m3e-button--filled m3e-state" id="applyFilters">Apply filters</button>
+      </div>
     `;
+    const draft = Object.assign({}, f);
+    $$("[data-filter-key]", $("#filterBody")).forEach((button) => {
+      button.onclick = () => {
+        const key = button.dataset.filterKey;
+        const value = button.dataset.filterValue;
+        if (draft[key] === value || value === "") delete draft[key];
+        else draft[key] = value;
+        $$("[data-filter-key=\"" + key + "\"]", $("#filterBody")).forEach((other) =>
+          other.setAttribute("aria-pressed", String((draft[key] || "") === other.dataset.filterValue))
+        );
+        $("#filterResultCount").textContent = XBLibrary.applyFilters(allItems, draft, prefs.search).length.toLocaleString();
+      };
+    });
+    $$("[data-date-days]", $("#filterBody")).forEach((button) => {
+      button.onclick = () => {
+        const date = new Date(Date.now() - (Number(button.dataset.dateDays) - 1) * 86400000);
+        draft.capturedFrom = date.toISOString().slice(0, 10);
+        $("[data-f=capturedFrom]", $("#filterBody")).value = draft.capturedFrom;
+        $$("[data-date-days]", $("#filterBody")).forEach((other) => other.setAttribute("aria-pressed", String(other === button)));
+        $("#filterResultCount").textContent = XBLibrary.applyFilters(allItems, draft, prefs.search).length.toLocaleString();
+      };
+    });
     $("#filterSheet").hidden = false;
     $("#filterScrim").dataset.open = "true";
     $("#applyFilters").onclick = () => {
-      const next = {};
+      const next = Object.assign({}, draft);
       $$("[data-f]", $("#filterBody")).forEach((el) => {
         const v = el.value.trim();
         if (v) next[el.dataset.f] = v;
+        else delete next[el.dataset.f];
       });
       prefs.filters = next;
       persistPrefs();
@@ -1370,6 +1499,27 @@
   function closeFilters() {
     $("#filterSheet").hidden = true;
     $("#filterScrim").dataset.open = "false";
+  }
+
+  function openLibraryMenu(trigger) {
+    const menu = document.createElement("div");
+    menu.className = "m3e-menu library-menu";
+    menu.setAttribute("role", "menu");
+    menu.innerHTML = `
+      <div class="m3e-menu__label">Library</div>
+      <button type="button" class="m3e-menu__item" data-menu="import">Import bookmarks</button>
+      <button type="button" class="m3e-menu__item" data-menu="data">Data &amp; storage</button>
+      <button type="button" class="m3e-menu__item" data-menu="settings">Settings</button>
+      <div class="m3e-menu__label">Keyboard</div>
+      <p class="library-menu__shortcuts"><kbd>D</kbd> Discover · <kbd>G</kbd> Library · <kbd>W</kbd> Watch</p>`;
+    menu.addEventListener("click", (event) => {
+      const item = event.target.closest("[data-menu]");
+      if (!item) return;
+      if (item.dataset.menu === "import") $("#importFile").click();
+      if (item.dataset.menu === "data") openData();
+      if (item.dataset.menu === "settings") openSettings();
+    });
+    M3E.openMenu(trigger, menu, { align: "end" });
   }
 
   function openSort(trigger) {
@@ -1480,20 +1630,30 @@
       render();
     });
     $("#sortBtn").addEventListener("click", () => openSort($("#sortBtn")));
-    $("#settingsBtn").addEventListener("click", openSettings);
-    $("#dataBtn").addEventListener("click", openData);
+    $("#moreBtn").addEventListener("click", () => openLibraryMenu($("#moreBtn")));
     $("#capturePill").addEventListener("click", openData);
     $("#bulkbar").addEventListener("click", async (event) => {
       const action = event.target.closest("[data-bulk]");
       if (!action) return;
       const ids = Array.from(selectedIds);
-      if (action.dataset.bulk === "cancel") { selectedIds.clear(); updateBulkBar(); }
+      if (action.dataset.bulk === "cancel") { selectedIds.clear(); selectionMode = false; updateBulkBar(); }
       if (action.dataset.bulk === "seen") {
         ids.forEach((id) => { library.viewed[id] = Date.now(); });
         await XBStore.saveLibrary(library);
         selectedIds.clear();
+        selectionMode = false;
         render();
+        updateBulkBar();
         snackbar.show(ids.length + " marked seen");
+      }
+      if (action.dataset.bulk === "archive") {
+        ids.forEach((id) => { library.archived[id] = true; });
+        await XBStore.saveLibrary(library);
+        selectedIds.clear();
+        selectionMode = false;
+        render();
+        updateBulkBar();
+        snackbar.show(ids.length + " archived");
       }
       if (action.dataset.bulk === "export") {
         const chosen = new Set(ids);
@@ -1507,7 +1667,6 @@
       }
       if (action.dataset.bulk === "delete" && confirm("Delete " + ids.length + " selected media items?")) removeItems(ids, true);
     });
-    $("#importBtn").addEventListener("click", () => $("#importFile").click());
     $("#importFile").addEventListener("change", async (e) => {
       const file = e.target.files && e.target.files[0];
       if (file) await importFile(file);
@@ -1527,10 +1686,14 @@
     document.addEventListener("keydown", (e) => {
       const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
       if (!viewerOpen) {
-        if (e.key === "/" && !typing) {
-          e.preventDefault();
-          $("#search").focus();
-        }
+        if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+        const key = e.key.toLowerCase();
+        if (e.key === "/") { e.preventDefault(); $("#search").focus(); }
+        if (key === "d") $("[data-view=rails]").click();
+        if (key === "g") $("[data-view=grid]").click();
+        if (key === "w") $("[data-view=reels]").click();
+        if (key === "f") openFilters();
+        if (key === "s") openSort($("#sortBtn"));
         return;
       }
       if (typing) return;
