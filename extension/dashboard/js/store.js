@@ -18,7 +18,8 @@
 
   const PREF_DEFAULTS = {
     visualization: "rails",
-    collection: "all",
+    lastHomeView: "rails",
+    scope: "home",
     sort: "newest_posted",
     search: "",
     filters: {},

@@ -106,6 +106,8 @@
       if (f.kind === "photo" && item.type !== "photo") return false;
       if (f.kind === "video" && item.type !== "video") return false;
       if (f.kind === "gif" && item.type !== "animated_gif") return false;
+      /* "motion" is the navigation-level scope: anything that plays. */
+      if (f.kind === "motion" && item.type !== "video" && item.type !== "animated_gif") return false;
       if (f.author && item.author.toLowerCase() !== String(f.author).toLowerCase().replace(/^@/, "")) return false;
       if (f.postedFrom && item.postedAt && item.postedAt < parseDate(f.postedFrom)) return false;
       if (f.postedTo && item.postedAt && item.postedAt > parseDate(f.postedTo) + DAY) return false;
