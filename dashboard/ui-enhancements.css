@@ -1,0 +1,288 @@
+/* Dashboard interaction and onboarding polish.
+   Kept separate from the core layout so these progressive enhancements can be
+   audited without changing the Material token layer. */
+
+/* Strong, visible keyboard affordance for every custom control. */
+:where(.tile, .swatch, .switch-row, .capture-pill, .rail__scroller, .m3e-button,
+  .m3e-icon-button, .m3e-chip, .m3e-segmented__item):focus-visible {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 2px;
+}
+
+/* Onboarding ------------------------------------------------------------- */
+.empty--onboarding {
+  max-width: 920px;
+  margin-top: clamp(32px, 7vh, 88px);
+}
+.empty__lead {
+  max-width: 620px;
+  margin-inline: auto;
+  color: var(--md-sys-color-on-surface-variant);
+}
+.empty__art {
+  position: relative;
+  width: 132px;
+  height: 92px;
+  margin: 0 auto 16px;
+  opacity: .9;
+}
+.empty__art span {
+  position: absolute;
+  width: 68px;
+  height: 82px;
+  border-radius: 14px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-primary-container);
+  box-shadow: var(--md-sys-elevation-level2);
+}
+.empty__art span:nth-child(1) { left: 0; rotate: -9deg; background: var(--md-sys-color-secondary-container); }
+.empty__art span:nth-child(2) { left: 32px; top: -8px; z-index: 2; }
+.empty__art span:nth-child(3) { right: 0; rotate: 9deg; background: var(--md-sys-color-tertiary-container); }
+.empty--onboarding .m3e-button--filled { min-width: 180px; }
+.empty__steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  max-width: 660px;
+  margin: 32px auto 22px;
+  padding: 0;
+  list-style: none;
+  text-align: left;
+}
+.empty__steps li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--md-sys-color-surface-container);
+}
+.empty__steps strong {
+  display: grid;
+  place-items: center;
+  flex: 0 0 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: var(--md-sys-color-on-primary-container);
+  background: var(--md-sys-color-primary-container);
+}
+.empty__steps span, .empty__steps small { display: block; }
+.empty__steps small { margin-top: 2px; color: var(--md-sys-color-on-surface-variant); }
+.empty__preview {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  align-items: end;
+  gap: 10px;
+  height: 150px;
+  overflow: hidden;
+  padding: 12px;
+  border-radius: 20px 20px 0 0;
+  background: var(--md-sys-color-surface-container-low);
+  mask-image: linear-gradient(#000 60%, transparent);
+}
+.empty__preview span {
+  height: calc(82px + (var(--i) * 9px));
+  border-radius: 12px;
+  background: linear-gradient(100deg,
+    var(--md-sys-color-surface-container) 40%,
+    var(--md-sys-color-surface-container-high) 50%,
+    var(--md-sys-color-surface-container) 60%);
+  background-size: 200% 100%;
+  animation: shimmer 1.3s infinite;
+  animation-delay: calc(var(--i) * -90ms);
+}
+@keyframes shimmer { to { background-position-x: -200%; } }
+
+/* Tiles ------------------------------------------------------------------ */
+.tile {
+  /* The base stylesheet is intentionally reasserted after a full typo audit. */
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.tile img { width: 100%; }
+.tile__meta { z-index: 2; }
+.tile__badge {
+  font-size: 12px;
+  background: rgb(0 0 0 / .72);
+}
+.tile__progress { background: rgb(255 255 255 / .3); }
+.tile__caption { bottom: 0; }
+.grid .tile {
+  aspect-ratio: 4 / 5 !important;
+  content-visibility: auto;
+  contain-intrinsic-size: 0 240px;
+}
+.rail__scroller .tile { aspect-ratio: 3 / 4 !important; }
+.tile__saved {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  opacity: 0;
+  translate: 0 3px;
+  transition: opacity 140ms ease, translate 140ms ease;
+}
+.tile__actions {
+  position: absolute;
+  z-index: 5;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  translate: 0 -4px;
+  transition: opacity 140ms ease, translate 140ms ease;
+}
+.tile__actions :where(button, a) {
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: #fff;
+  background: rgb(0 0 0 / .72);
+  font: 700 18px/1 sans-serif;
+  text-decoration: none;
+  cursor: pointer;
+}
+.tile__actions [data-tile-act="retry"] { display: none; }
+.tile.is-broken::after {
+  content: "Preview unavailable";
+  pointer-events: none;
+}
+.tile.is-broken .tile__actions [data-tile-act="retry"] { display: grid; }
+.tile.is-selected {
+  outline: 3px solid var(--md-sys-color-primary);
+  outline-offset: -3px;
+}
+.tile.is-selected::after {
+  content: "✓";
+  position: absolute;
+  z-index: 6;
+  top: 10px;
+  left: 10px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  color: var(--md-sys-color-on-primary);
+  background: var(--md-sys-color-primary);
+}
+.tile.is-loading {
+  background: linear-gradient(100deg,
+    var(--md-sys-color-surface-container) 40%,
+    var(--md-sys-color-surface-container-high) 50%,
+    var(--md-sys-color-surface-container) 60%);
+  background-size: 200% 100%;
+  animation: shimmer 1.3s infinite;
+}
+@media (hover: hover) {
+  .tile { transition: transform 160ms ease, box-shadow 160ms ease; }
+  .tile:hover { transform: translateY(-2px); box-shadow: var(--md-sys-elevation-level2); }
+  .tile:hover .tile__actions, .tile:focus-within .tile__actions,
+  .tile:hover .tile__saved { opacity: 1; translate: 0; }
+}
+
+/* Rails ------------------------------------------------------------------ */
+.rail__head-actions { display: flex; align-items: center; gap: 8px; }
+.rail__wrap::before, .rail__wrap::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 12px;
+  width: 38px;
+  pointer-events: none;
+}
+.rail__wrap::before { left: 0; background: linear-gradient(90deg, var(--md-sys-color-surface), transparent); }
+.rail__wrap::after { right: 0; background: linear-gradient(-90deg, var(--md-sys-color-surface), transparent); }
+.rail__scroller { cursor: grab; }
+.rail__scroller.is-dragging { cursor: grabbing; scroll-snap-type: none; }
+.rail__progress {
+  display: block;
+  width: min(220px, 45%);
+  height: 3px;
+  margin: 2px auto 0;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--md-sys-color-surface-container-highest);
+}
+.rail__progress::after {
+  content: "";
+  display: block;
+  width: var(--rail-progress, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: var(--md-sys-color-primary);
+  transition: width 100ms linear;
+}
+
+/* Selection and viewer --------------------------------------------------- */
+.bulkbar {
+  position: fixed;
+  z-index: var(--md-sys-z-modal);
+  left: 50%;
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  translate: -50% 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 8px 16px;
+  border-radius: 999px;
+  color: var(--md-sys-color-on-surface);
+  background: var(--md-sys-color-surface-container-high);
+  box-shadow: var(--md-sys-elevation-level3);
+}
+.bulkbar[hidden] { display: none; }
+.viewer__tools { display: flex; align-items: center; gap: 4px; }
+.viewer__bar { padding-top: calc(8px + env(safe-area-inset-top)); }
+.viewer__frame img {
+  scale: var(--viewer-zoom, 1);
+  transition: scale 160ms ease;
+  cursor: zoom-in;
+}
+.viewer__frame img.is-zoomed { cursor: zoom-out; }
+body:has(.viewer:not([hidden])) .views { display: none; }
+.sheet { padding-bottom: calc(32px + env(safe-area-inset-bottom)); }
+
+.chiprow {
+  position: sticky;
+  top: 61px;
+  z-index: calc(var(--md-sys-z-toolbar) - 1);
+  background: color-mix(in srgb, var(--md-sys-color-surface) 92%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+@media (max-width: 700px) {
+  .empty__steps { grid-template-columns: 1fr; }
+  .empty__preview { grid-template-columns: repeat(3, 1fr); }
+  .empty__preview span:nth-child(n+4) { display: none; }
+  .bulkbar {
+    right: 8px;
+    left: 8px;
+    justify-content: center;
+    translate: 0;
+    border-radius: 18px;
+  }
+  .bulkbar strong { display: none; }
+  .viewer.is-context .viewer__context {
+    border-radius: 22px 22px 0 0;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+    box-shadow: 0 -8px 30px rgb(0 0 0 / .35);
+  }
+  .rail__head { align-items: center; }
+  .rail__count { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile, .tile__saved, .tile__actions, .viewer__frame img, .rail__progress::after {
+    transition: none !important;
+  }
+  .tile:hover { transform: none; }
+  .empty__preview span, .tile.is-loading { animation: none; }
+  .rail__scroller { scroll-behavior: auto; scroll-snap-type: none; }
+}

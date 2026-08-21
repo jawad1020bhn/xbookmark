@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="../shared/m3e/tokens.css" />
   <link rel="stylesheet" href="../shared/m3e/components.css" />
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="ui-enhancements.css" />
 </head>
 <body>
   <a class="skip" href="#stage">Skip to media</a>
@@ -70,7 +71,10 @@
         <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3l6.3 6.3 6.3-6.3z"/></svg>
       </button>
       <span class="m3e-label-large" id="viewerPos">1 / 1</span>
-      <button type="button" class="m3e-button m3e-button--text m3e-state" id="ctxToggle">Details</button>
+      <div class="viewer__tools">
+        <button type="button" class="viewer__help m3e-icon-button m3e-state" id="viewerHelp" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">?</button>
+        <button type="button" class="m3e-button m3e-button--text m3e-state" id="ctxToggle">Details</button>
+      </div>
     </div>
     <div class="viewer__body">
       <button type="button" class="viewer__nav viewer__nav--prev m3e-icon-button m3e-state" id="viewerPrev" aria-label="Previous">‹</button>
@@ -106,10 +110,19 @@
     <div class="m3e-dialog__content" id="dataBody"></div>
   </div>
 
+  <div class="bulkbar" id="bulkbar" hidden role="toolbar" aria-label="Selected media actions">
+    <strong><span id="selectedCount">0</span> selected</strong>
+    <button type="button" class="m3e-button m3e-button--text m3e-state" data-bulk="seen">Mark seen</button>
+    <button type="button" class="m3e-button m3e-button--text m3e-state" data-bulk="export">Export</button>
+    <button type="button" class="m3e-button m3e-button--text m3e-state" data-bulk="delete">Delete</button>
+    <button type="button" class="m3e-icon-button m3e-state" data-bulk="cancel" aria-label="Cancel selection">×</button>
+  </div>
+
   <div class="m3e-snackbar" id="snackbar" role="status" aria-live="polite" data-open="false">
     <span class="m3e-snackbar__text"></span>
     <button class="m3e-snackbar__action" hidden></button>
   </div>
+  <div class="visually-hidden" id="resultAnnouncement" aria-live="polite" aria-atomic="true"></div>
 
   <input type="file" id="importFile" accept=".json,.jsonl,application/json" hidden />
 
