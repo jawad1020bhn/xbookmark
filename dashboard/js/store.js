@@ -46,6 +46,7 @@
     shuffleSeed: 1,
     lastItemId: null,
     lastScroll: 0,
+    scrollPositions: {},
     customSeed: "",
   };
 

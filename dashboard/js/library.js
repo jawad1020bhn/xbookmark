@@ -106,6 +106,9 @@
       if (f.kind === "photo" && item.type !== "photo") return false;
       if (f.kind === "video" && item.type !== "video") return false;
       if (f.kind === "gif" && item.type !== "animated_gif") return false;
+      if (f.shape === "portrait" && !(item.aspect > 0 && item.aspect < 0.85)) return false;
+      if (f.shape === "square" && !(item.aspect >= 0.85 && item.aspect < 1.2)) return false;
+      if (f.shape === "wide" && !(item.aspect >= 1.2)) return false;
       if (f.author && item.author.toLowerCase() !== String(f.author).toLowerCase().replace(/^@/, "")) return false;
       if (f.postedFrom && item.postedAt && item.postedAt < parseDate(f.postedFrom)) return false;
       if (f.postedTo && item.postedAt && item.postedAt > parseDate(f.postedTo) + DAY) return false;
@@ -193,66 +196,242 @@
     return list;
   }
 
-  function why(kind, item, now) {
-    const n = now || Date.now();
-    switch (kind) {
-      case "unseen":
-        return "Captured, never opened";
-      case "recent": {
-        const days = Math.max(0, Math.round((n - item.capturedAt) / DAY));
-        return days <= 1 ? "Captured today" : "Captured " + days + " days ago";
+  function clamp01(value) {
+    return Math.max(0, Math.min(1, Number(value) || 0));
+  }
+
+  function ageScore(date, now, halfLifeDays) {
+    if (!date) return 0;
+    const age = Math.max(0, now - date) / DAY;
+    return Math.pow(0.5, age / halfLifeDays);
+  }
+
+  /* Engagement values on X follow a power law: a viral post can have a
+     million likes while most saves have a few dozen. Log scaling stops one
+     outlier from owning every rail. Rate is confidence-weighted so 1 like on
+     1 view does not outrank a post with meaningful reach. */
+  function engagementSignals(items) {
+    let maxImpact = 0;
+    let maxRate = 0;
+    const raw = new Map();
+    items.forEach((item) => {
+      const impact = Math.log1p(item.eng.likes + item.eng.rts * 2.5 + item.eng.replies * 1.5);
+      const confidence = item.eng.views / (item.eng.views + 1000);
+      const rate = Math.log1p(item.eng.rate * 100) * confidence;
+      maxImpact = Math.max(maxImpact, impact);
+      maxRate = Math.max(maxRate, rate);
+      raw.set(item.id, { impact, rate });
+    });
+    const scores = new Map();
+    items.forEach((item) => {
+      const value = raw.get(item.id);
+      const impact = maxImpact ? value.impact / maxImpact : 0;
+      const rate = maxRate ? value.rate / maxRate : 0;
+      scores.set(item.id, impact * 0.76 + rate * 0.24);
+    });
+    return scores;
+  }
+
+  /* Keep a rail from turning into four attachments from one post, or twenty
+     consecutive saves from one creator. We only reorder within a small
+     look-ahead window, preserving the ranking while adding useful variety. */
+  function diversify(list, groupPostMedia) {
+    if (groupPostMedia) return list;
+    const pending = list.slice();
+    const result = [];
+    while (pending.length) {
+      const recent = result.slice(-3);
+      let pick = 0;
+      const lookAhead = Math.min(10, pending.length);
+      for (let i = 0; i < lookAhead; i++) {
+        const candidate = pending[i];
+        const samePost = recent.some((x) => x.post.tweet_id === candidate.post.tweet_id);
+        const sameAuthor = recent.some((x) => x.author && x.author === candidate.author);
+        if (!samePost && !sameAuthor) { pick = i; break; }
+        if (!samePost && pick === 0) pick = i;
       }
-      case "popular":
-        return (item.eng.likes || 0).toLocaleString() + " likes at capture";
-      case "long":
-        return (window.M3EMedia && M3EMedia.formatDuration(item.duration)) || "Longer than 30s";
-      case "portrait":
-        return "Tall frame";
-      case "wide":
-        return "Wide frame";
-      case "alt":
-        return "Has alt text";
-      case "forgotten":
-        return item.lastOpened ? "Not reopened recently" : "Never revisited";
-      case "gifs":
-        return "Animated GIF";
-      case "continue": {
-        const t = item.progress && item.progress.t;
-        return t ? "Resume from " + (window.M3EMedia ? M3EMedia.formatDuration(t * 1000) : Math.round(t) + "s") : "In progress";
-      }
-      default:
-        return "";
+      result.push(pending.splice(pick, 1)[0]);
     }
+    return result;
+  }
+
+  function ranked(items, score, options) {
+    const opts = options || {};
+    /* A rail renders 40 cards. Keeping a larger 120-item tail makes viewer
+       navigation useful without doing quadratic diversity work on a library
+       that may contain tens of thousands of media items. */
+    if (opts.groupPostMedia) {
+      const groups = new Map();
+      items.forEach((item) => {
+        const id = item.post.tweet_id;
+        if (!groups.has(id)) groups.set(id, []);
+        groups.get(id).push(item);
+      });
+      return Array.from(groups.values())
+        .map((group) => ({
+          group: group.sort((a, b) => a.position - b.position),
+          score: Math.max(...group.map(score)),
+          capturedAt: Math.max(...group.map((item) => item.capturedAt)),
+        }))
+        .sort((a, b) => b.score - a.score || b.capturedAt - a.capturedAt ||
+          hashId(a.group[0].post.tweet_id) - hashId(b.group[0].post.tweet_id))
+        .flatMap((entry) => entry.group)
+        .slice(0, 120);
+    }
+    const list = items.slice().sort((a, b) =>
+      score(b) - score(a) || b.capturedAt - a.capturedAt || hashId(a.id) - hashId(b.id)
+    ).slice(0, 120);
+    return diversify(list, false);
+  }
+
+  function durationLabel(item) {
+    return (root.M3EMedia && root.M3EMedia.formatDuration(item.duration)) ||
+      (item.duration ? Math.round(item.duration / 1000) + "s" : "Video");
   }
 
   function collections(items, now) {
     const n = now || Date.now();
-    const likes = items.map((i) => i.eng.likes).filter((x) => x > 0).sort((a, b) => a - b);
-    const p80 = likes.length ? likes[Math.floor(likes.length * 0.8)] : Infinity;
+    if (!items.length) return [];
+
+    const engagementScore = engagementSignals(items);
+    const quality = (item) => engagementScore.get(item.id) || 0;
+    const fresh = (item) => ageScore(item.capturedAt, n, 14);
+    const postFresh = (item) => ageScore(item.postedAt, n, 45);
+    const complete = (item) => {
+      if (!item.progress || !item.duration) return false;
+      return item.progress.t * 1000 >= item.duration * 0.92;
+    };
+    const topPick = (item) =>
+      quality(item) * 0.42 + fresh(item) * 0.24 + postFresh(item) * 0.08 +
+      (item.unseen ? 0.16 : 0) + (item.playable ? 0.06 : 0) + (item.alt ? 0.04 : 0);
+
+    const uniquePostsByAuthor = new Map();
+    items.forEach((item) => {
+      if (!item.author) return;
+      if (!uniquePostsByAuthor.has(item.author)) uniquePostsByAuthor.set(item.author, new Set());
+      uniquePostsByAuthor.get(item.author).add(item.post.tweet_id);
+    });
+    const authorCounts = new Map(Array.from(uniquePostsByAuthor, ([author, posts]) => [author, posts.size]));
+    const creatorFloor = Math.max(2, Math.ceil(new Set(items.map((i) => i.post.tweet_id)).size * 0.03));
 
     const defs = [
-      { id: "continue", title: "Continue watching", hint: "Videos with saved progress", empty: "Nothing in progress. Open a video and watch past a few seconds to resume later.", pred: (i) => i.type === "video" && i.progress && i.progress.t >= 3 },
-      { id: "unseen", title: "Unseen", hint: "Captured but never opened", empty: "You’ve opened everything currently in the library.", pred: (i) => i.unseen && !i.archived },
-      { id: "recent", title: "Recently captured", hint: "Added in the last 7 days", empty: "No new captures this week. Run capture from the extension popup.", pred: (i) => n - i.capturedAt <= RECENT_MS },
-      { id: "popular", title: "Popular", hint: "Source posts with unusually strong engagement", empty: "Not enough engagement data yet — capture more posts.", pred: (i) => i.eng.likes >= p80 && i.eng.likes > 0 },
-      { id: "long", title: "Long videos", hint: "Longer than 30 seconds", empty: "No long videos in this library.", pred: (i) => i.type === "video" && i.duration >= LONG_VIDEO_MS },
-      { id: "portrait", title: "Portrait", hint: "Tall photos and screenshots", empty: "No portrait media yet.", pred: (i) => i.aspect > 0 && i.aspect < PORTRAIT_MAX },
-      { id: "wide", title: "Wide", hint: "Landscape and panoramic frames", empty: "No wide media yet.", pred: (i) => i.aspect >= WIDE_MIN },
-      { id: "alt", title: "Alt text available", hint: "Media with authored alternative text", empty: "None of these items include alt text.", pred: (i) => !!i.alt },
-      { id: "forgotten", title: "Forgotten", hint: "Older items not revisited recently", empty: "Nothing has gone stale yet.", pred: (i) => i.capturedAt && n - i.capturedAt > FORGOTTEN_MS && (!i.lastOpened || n - i.lastOpened > FORGOTTEN_MS) },
-      { id: "gifs", title: "GIFs", hint: "Animated media", empty: "No GIFs captured.", pred: (i) => i.type === "animated_gif" },
+      {
+        id: "continue", title: "Pick up where you left off",
+        hint: "In-progress videos, with the most recently opened first",
+        pred: (i) => i.type === "video" && i.progress && i.progress.t >= 3 && !complete(i),
+        score: (i) => i.lastOpened || i.viewedAt || 0,
+        reason: (i) => "Resume at " + (root.M3EMedia ? root.M3EMedia.formatDuration(i.progress.t * 1000) : Math.round(i.progress.t) + "s"),
+      },
+      {
+        id: "top-picks", title: "Top picks for you",
+        hint: "A balanced mix of quality, freshness and things you haven’t opened",
+        pred: (i) => !i.archived && i.playable,
+        score: topPick,
+        reason: (i) => i.unseen ? "Strong pick · not opened yet" : "Worth another look",
+      },
+      {
+        id: "unseen", title: "Ready to discover",
+        hint: "The best of your unopened saves",
+        pred: (i) => i.unseen && !i.archived,
+        score: (i) => quality(i) * 0.55 + fresh(i) * 0.45,
+        reason: (i) => fresh(i) > 0.7 ? "New and unopened" : "Saved, never opened",
+      },
+      {
+        id: "recent", title: "Freshly saved",
+        hint: "Recent captures, newest and most promising first",
+        pred: (i) => i.capturedAt && n - i.capturedAt <= RECENT_MS && !i.archived,
+        score: (i) => fresh(i) * 0.72 + quality(i) * 0.28,
+        reason: (i) => {
+          const days = Math.max(0, Math.floor((n - i.capturedAt) / DAY));
+          return days < 1 ? "Saved today" : days === 1 ? "Saved yesterday" : "Saved " + days + " days ago";
+        },
+      },
+      {
+        id: "popular", title: "Standout saves",
+        hint: "Posts with the strongest engagement, adjusted for reach",
+        pred: (i) => quality(i) >= 0.48 && i.eng.reactions > 0,
+        score: quality,
+        min: Math.min(3, items.length),
+        reason: (i) => i.eng.likes.toLocaleString() + " likes · " + i.eng.rts.toLocaleString() + " reposts",
+      },
+      {
+        id: "quick-watch", title: "Quick watches",
+        hint: "Short videos and GIFs for when you only have a minute",
+        pred: (i) => isMotion(i.type) && i.playable && i.duration > 0 && i.duration <= 60000,
+        score: (i) => quality(i) * 0.45 + fresh(i) * 0.35 + (i.unseen ? 0.2 : 0),
+        reason: (i) => durationLabel(i) + " · quick watch",
+      },
+      {
+        id: "deep-dives", title: "Longer watches",
+        hint: "Videos worth setting aside a little more time for",
+        pred: (i) => i.type === "video" && i.playable && i.duration > 60000,
+        score: (i) => quality(i) * 0.52 + (i.unseen ? 0.3 : 0) + fresh(i) * 0.18,
+        reason: (i) => durationLabel(i) + " video",
+      },
+      {
+        id: "photo-stories", title: "Photo stories",
+        hint: "Multi-image posts kept together in their original order",
+        pred: (i) => i.type === "photo" && Array.isArray(i.post.media_items) && i.post.media_items.length > 1,
+        score: (i) => quality(i) * 0.5 + fresh(i) * 0.3 + (i.unseen ? 0.2 : 0),
+        groupPostMedia: true,
+        reason: (i) => "Image " + i.position + " of " + i.post.media_items.length,
+      },
+      {
+        id: "favorite-creators", title: "Creators you save often",
+        hint: "More from the people who keep showing up in your library",
+        pred: (i) => (authorCounts.get(i.author) || 0) >= creatorFloor,
+        score: (i) => (authorCounts.get(i.author) || 0) + quality(i) + fresh(i) * 0.5,
+        min: 2,
+        reason: (i) => (authorCounts.get(i.author) || 0) + " saved posts from @" + i.author,
+      },
+      {
+        id: "hidden-gems", title: "Hidden gems",
+        hint: "Older unopened saves that are easy to miss",
+        pred: (i) => i.unseen && i.capturedAt && n - i.capturedAt > 14 * DAY,
+        score: (i) => quality(i) * 0.62 + ageScore(i.capturedAt, n, 120) * 0.18 + (i.alt ? 0.2 : 0),
+        reason: () => "Still waiting to be discovered",
+      },
+      {
+        id: "forgotten", title: "Rediscover",
+        hint: "Things you enjoyed before but haven’t revisited lately",
+        pred: (i) => !i.unseen && i.lastOpened && n - i.lastOpened > FORGOTTEN_MS,
+        score: (i) => quality(i) * 0.55 + clamp01((n - i.lastOpened) / (180 * DAY)) * 0.45,
+        reason: (i) => "Last opened " + Math.max(1, Math.floor((n - i.lastOpened) / DAY)) + " days ago",
+      },
+      {
+        id: "accessible", title: "Described media",
+        hint: "Photos and videos with creator-written alt text",
+        pred: (i) => !!i.alt,
+        score: (i) => quality(i) * 0.55 + fresh(i) * 0.45,
+        min: 3,
+        reason: () => "Includes alt text",
+      },
     ];
 
-    return defs.map((d) => {
-      const list = items.filter(d.pred);
+    const rails = defs.map((d) => {
+      const candidates = items.filter(d.pred);
+      const list = ranked(candidates, d.score, { groupPostMedia: d.groupPostMedia });
       return {
         id: d.id,
         title: d.title,
         hint: d.hint,
-        empty: d.empty,
         items: list,
-        reasons: list.map((it) => why(d.id, it, n)),
+        total: candidates.length,
+        reasons: list.map((item) => d.reason(item)),
+        min: d.min || 1,
       };
+    }).filter((rail) => rail.items.length >= rail.min);
+
+    /* With a tiny library, several algorithms can return the exact same set.
+       Keep useful specialist rails, but remove adjacent clones so the page
+       feels curated rather than repetitive. */
+    return rails.filter((rail, index, all) => {
+      if (rail.id === "continue" || rail.id === "top-picks") return true;
+      const signature = rail.items.slice(0, 12).map((i) => i.id).join("|");
+      return !all.slice(0, index).some((earlier) =>
+        earlier.items.length === rail.items.length &&
+        earlier.items.slice(0, 12).map((i) => i.id).join("|") === signature
+      );
     });
   }
 
