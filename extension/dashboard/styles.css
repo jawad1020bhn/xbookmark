@@ -18,6 +18,17 @@
   --shell-nav: 0px;                 /* width of the navigation region */
   --pane-margin: var(--md-sys-margin-compact);
   --pane-max: 1600px;
+  /* Inline gutter that keeps the app bar's content aligned with the pane's
+     content on every window width. The pane is capped at --pane-max and
+     centred inside the content column, so from --pane-max + 2·margin up the
+     bar has to add the centring offset to its own margin — otherwise the
+     headline sits 100px+ left of the content it is supposed to label. */
+  --pane-gutter: calc(
+    var(--shell-nav) +
+    (100vw - var(--shell-nav) - min(100vw - var(--shell-nav), var(--pane-max))) / 2 +
+    var(--pane-margin)
+  );
+  --toolbar-h: 60px;                /* floating toolbar height, compact */
   --toolbar-inset: calc(80px + var(--md-sys-spacing-3) + env(safe-area-inset-bottom));
 }
 
@@ -49,9 +60,10 @@ body {
   width: 100%;
   max-width: var(--pane-max);
   margin-inline: auto;
-  /* Clear the floating toolbar (64px) plus a comfortable gap, at every size. */
+  /* Clear the floating toolbar (its own height) plus a comfortable gap, at
+     every size. */
   padding: var(--md-sys-spacing-4) var(--pane-margin)
-           calc(var(--toolbar-inset) + 64px + var(--md-sys-spacing-6));
+           calc(var(--toolbar-inset) + var(--toolbar-h) + var(--md-sys-spacing-6));
 }
 
 /* =============================================================================
@@ -235,7 +247,10 @@ body {
     "lead actions"
     "chips chips";
   gap: var(--md-sys-spacing-3) var(--md-sys-spacing-4);
-  padding: var(--md-sys-spacing-4) var(--pane-margin) var(--md-sys-spacing-3);
+  /* --pane-gutter, not --pane-margin: the bar is full-bleed while the pane is
+     width-capped and centred, so the bar's inline padding must include the
+     pane's centring offset or the two stop lining up on wide windows. */
+  padding: var(--md-sys-spacing-4) var(--pane-gutter) var(--md-sys-spacing-3);
   background: var(--md-sys-color-surface);
   transition: background-color var(--md-sys-motion-spring-default-effects),
               box-shadow var(--md-sys-motion-spring-default-effects),
@@ -334,6 +349,7 @@ body {
 @media (max-width: 599px) {
   body.is-searching .appbar__lead { display: none; }
   body.is-searching .appbar__actions { grid-column: 1 / -1; }
+  body.is-searching .appbar__chips { display: none; }
   body.is-searching .appbar__search { display: flex; flex: 1; width: auto; }
   body.is-searching .appbar__searchbtn { display: none; }
 }
@@ -346,17 +362,45 @@ body {
   right: calc(var(--md-sys-spacing-3) + 72px);
   bottom: var(--toolbar-inset);
   justify-content: center;
+  justify-content: safe center;
   gap: var(--md-sys-spacing-1);
-  height: 60px;
+  height: var(--toolbar-h);
   padding-inline: var(--md-sys-spacing-2);
+  /* On the very narrowest windows the five controls cannot all sit in the
+     pill; scroll instead of clipping the trailing filter button. `safe
+     center` hands overflow back to flex-start so the start stays reachable. */
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
+.shell__toolbar::-webkit-scrollbar { display: none; }
 .views__label { display: none; }
-.toolbar__sort { max-width: 180px; }
-.toolbar__sort > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* On compact the sort trigger is icon-only: the current order is carried by
+   the button's aria-label, not by pixels. Labels come back once the toolbar
+   actually has room for them (720px and up — at 600–719 the labelled pill is
+   wider than the pane and clips the filter button). */
+.toolbar__sort > span { display: none; }
+.toolbar__sort { max-width: none; }
+@media (min-width: 720px) {
+  .views__label { display: inline; }
+  .toolbar__sort > span {
+    display: inline;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .toolbar__sort { max-width: 180px; }
 }
+/* Compact: the toolbar must fit between the window edges with the FAB beside
+   it. Icon-only buttons get the M3 8dp internal padding instead of the 24dp a
+   labelled button needs, and the group gap collapses to 4dp. */
+@media (max-width: 599px) {
+  .shell__toolbar { gap: var(--md-sys-spacing-1); padding-inline: var(--md-sys-spacing-1); }
+  .shell__toolbar .m3e-button { --_padding: var(--md-sys-spacing-2); min-width: 0; }
+  .m3e-toolbar__divider { margin-inline: var(--md-sys-spacing-0); }
+}
+
 .toolbar__filter { position: relative; overflow: visible; }
 .toolbar__badge {
   position: absolute;
@@ -425,7 +469,7 @@ body {
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
-.spotlight__title { margin: 0; }
+.spotlight__title { margin: 0; overflow-wrap: anywhere; }
 .spotlight__body { margin: 0; opacity: 0.9; }
 .spotlight__actions {
   display: flex;
@@ -536,13 +580,17 @@ body {
 /* =============================================================================
    8 · Grid — multi-column masonry so mixed aspect ratios stay uncropped
    ============================================================================= */
+/* Column minima are the smallest width that still yields the intended count
+   on the narrowest phone of the class — `columns: 2 160px` measured 2×160+gap
+   = 332px against a ~288px pane on a 320px phone, so the "2 column" mobile
+   grid silently collapsed to one oversized column of tiles. */
 .grid {
   column-gap: var(--md-sys-spacing-3);
   column-fill: balance;
-  columns: 2 160px;
+  columns: 2 128px;
 }
-.grid--dense { columns: 3 120px; }
-.grid--large { columns: 2 260px; }
+.grid--dense { columns: 3 84px; }
+.grid--large { columns: 2 150px; }
 .grid > * {
   break-inside: avoid;
   margin-block-end: var(--md-sys-spacing-3);
@@ -782,6 +830,9 @@ body {
 .btn-row { display: flex; flex-wrap: wrap; gap: var(--md-sys-spacing-2); }
 
 .dialog { width: min(560px, calc(100vw - var(--md-sys-spacing-8))); }
+/* Mobile browsers resize `vh` when their chrome collapses; `dvh` follows the
+   live viewport so a tall settings dialog never grows past the visible area. */
+.m3e-dialog { max-height: min(80dvh, 720px); }
 .dialog__icon {
   display: grid;
   place-items: center;
@@ -946,6 +997,7 @@ body {
   :root {
     --shell-nav: 96px;
     --pane-margin: var(--md-sys-margin-medium);
+    --toolbar-h: 64px;
     --toolbar-inset: calc(var(--md-sys-spacing-5) + env(safe-area-inset-bottom));
   }
   .shell__rail { display: flex; }
@@ -955,7 +1007,7 @@ body {
     grid-template-areas:
       "lead actions"
       "chips chips";
-    padding-inline: var(--pane-margin);
+    padding-inline: var(--pane-gutter);
   }
   .appbar__search { display: flex; }
   .appbar__searchbtn { display: none; }
@@ -982,14 +1034,20 @@ body {
     left: calc(var(--shell-nav) + 50% - var(--shell-nav) / 2);
     right: auto;
     translate: -50% 0;
-    height: 64px;
+    height: var(--toolbar-h);
     padding-inline: var(--md-sys-spacing-3);
   }
-  .views__label { display: inline; }
+  /* Labelled buttons in the pill use the "small" internal padding (16dp); the
+     default 24dp makes the toolbar wider than the pane between 600–720px. */
+  .shell__toolbar .m3e-button { --_padding: var(--md-sys-spacing-4); }
 
-  .grid { columns: 3 180px; }
-  .grid--dense { columns: 4 140px; }
-  .grid--large { columns: 2 320px; }
+  /* Column minima tuned so the advertised column count actually occurs: with
+     the rail and margins subtracted, `columns: 3 180px` only ever produced 2
+     columns at 600–839px. Each pair below is the minimum width that yields
+     the intended count at the *narrowest* width of the window class. */
+  .grid { columns: 3 140px; }
+  .grid--dense { columns: 4 110px; }
+  .grid--large { columns: 2 240px; }
 
   .m3e-carousel--multi { --_item: 200px; }
   .m3e-carousel--hero { --_item: min(72%, 520px); }
@@ -1010,9 +1068,9 @@ body {
   .appbar__mark { display: grid; }
   .appbar__overflow { display: inline-flex; }
   .rail__foot { display: none; }
-  .grid { columns: 4 200px; }
-  .grid--dense { columns: 5 150px; }
-  .grid--large { columns: 3 340px; }
+  .grid { columns: 4 160px; }
+  .grid--dense { columns: 5 128px; }
+  .grid--large { columns: 3 300px; }
   .m3e-carousel--multi { --_item: 220px; }
 }
 
@@ -1050,9 +1108,9 @@ body {
   .shell__fab { left: var(--md-sys-spacing-6); }
   .shell__fab .m3e-fab__label { display: inline; }
 
-  .grid { columns: 4 240px; }
-  .grid--dense { columns: 6 160px; }
-  .grid--large { columns: 3 380px; }
+  .grid { columns: 4 200px; }
+  .grid--dense { columns: 6 140px; }
+  .grid--large { columns: 3 300px; }
   .m3e-carousel--multi { --_item: 240px; }
   .m3e-carousel--hero { --_item: min(60%, 620px); }
   .spotlight { padding: var(--md-sys-spacing-10); }
@@ -1060,7 +1118,7 @@ body {
 
 @media (min-width: 1600px) {
   :root { --pane-margin: var(--md-sys-margin-extra-large); }
-  .grid { columns: 5 260px; }
+  .grid { columns: 6 200px; }
 }
 
 /* =============================================================================
