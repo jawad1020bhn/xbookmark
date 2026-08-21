@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Library · X Bookmarks</title>
+  <link rel="stylesheet" href="../shared/m3e/fonts.css" />
+  <link rel="stylesheet" href="../shared/m3e/tokens.css" />
+  <link rel="stylesheet" href="../shared/m3e/components.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <a class="skip" href="#stage">Skip to media</a>
+
+  <header class="appbar" id="appbar">
+    <div class="appbar__brand">
+      <span class="appbar__mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M4 5h16v3H4V5Zm0 5.5h16V19a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8.5Zm3 3v5h10v-5H7Z"/></svg>
+      </span>
+      <div>
+        <p class="m3e-title-medium m3e-title-medium--emphasized">Library</p>
+        <p class="m3e-label-small appbar__count"><span id="resultCount">0</span> items</p>
+      </div>
+    </div>
+
+    <label class="search">
+      <span class="visually-hidden">Search post text</span>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5Zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14Z"/></svg>
+      <input id="search" type="search" placeholder="Search post text" autocomplete="off" />
+    </label>
+
+    <div class="appbar__tools">
+      <div class="m3e-segmented views" role="group" aria-label="Visualization">
+        <button type="button" class="m3e-segmented__item m3e-state" data-view="rails" aria-pressed="true">Rails</button>
+        <button type="button" class="m3e-segmented__item m3e-state" data-view="grid">Grid</button>
+        <button type="button" class="m3e-segmented__item m3e-state" data-view="reels">Scroll</button>
+      </div>
+      <button type="button" class="m3e-button m3e-button--tonal m3e-state" id="sortBtn">
+        <span id="sortLabel">Newest posted</span>
+      </button>
+      <button type="button" class="m3e-icon-button m3e-state" id="filterBtn" aria-label="Filters">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M10 18h4v-2h-4v2ZM3 6v2h18V6H3Zm3 7h12v-2H6v2Z"/></svg>
+      </button>
+      <button type="button" class="m3e-icon-button m3e-state" id="dataBtn" aria-label="Data">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M4 6h16v2H4V6Zm0 5h16v2H4v-2Zm0 5h10v2H4v-2Z"/></svg>
+      </button>
+      <button type="button" class="m3e-icon-button m3e-state" id="settingsBtn" aria-label="Settings">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.03 7.03 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.59.24-1.13.55-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.81 8.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.93 14.1a.5.5 0 0 0-.12.64l1.92 3.32c.13.23.4.32.64.22l2.39-.96c.5.39 1.04.7 1.63.94l.36 2.54c.05.24.25.42.49.42h3.8c.24 0 .44-.18.49-.42l.36-2.54c.59-.24 1.13-.55 1.63-.94l2.39.96c.24.1.51 0 .64-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="chiprow">
+    <div id="chips" class="chips"></div>
+    <button type="button" class="m3e-button m3e-button--text m3e-button--xs m3e-state" id="clearFilters" hidden>Clear all</button>
+    <button type="button" class="capture-pill" id="capturePill" hidden><span>Capture idle</span></button>
+  </div>
+
+  <main id="stage" class="stage" tabindex="-1"></main>
+
+  <!-- Immersive viewer -->
+  <div id="viewer" class="viewer" hidden aria-hidden="true" role="dialog" aria-modal="true" aria-label="Media viewer">
+    <div class="viewer__bar">
+      <button type="button" class="m3e-icon-button m3e-state" id="viewerClose" aria-label="Close">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3l6.3 6.3 6.3-6.3z"/></svg>
+      </button>
+      <span class="m3e-label-large" id="viewerPos">1 / 1</span>
+      <button type="button" class="m3e-button m3e-button--text m3e-state" id="ctxToggle">Details</button>
+    </div>
+    <div class="viewer__body">
+      <button type="button" class="viewer__nav viewer__nav--prev m3e-icon-button m3e-state" id="viewerPrev" aria-label="Previous">‹</button>
+      <div class="viewer__stage" id="viewerStage"></div>
+      <button type="button" class="viewer__nav viewer__nav--next m3e-icon-button m3e-state" id="viewerNext" aria-label="Next">›</button>
+      <aside class="viewer__context" id="viewerContext"></aside>
+    </div>
+  </div>
+
+  <!-- Filter sheet -->
+  <div class="m3e-scrim" id="filterScrim" data-open="false"></div>
+  <aside id="filterSheet" class="sheet" hidden>
+    <header class="sheet__head">
+      <h2 class="m3e-title-large">Filters</h2>
+      <button type="button" class="m3e-icon-button m3e-state" id="filterClose" aria-label="Close filters">×</button>
+    </header>
+    <div id="filterBody" class="sheet__body"></div>
+  </aside>
+
+  <!-- Settings -->
+  <div class="m3e-scrim" id="scrim" data-open="false"></div>
+  <div class="m3e-dialog" id="settings" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" data-open="false" aria-hidden="true">
+    <div class="m3e-dialog__header">
+      <h2 class="m3e-title-large m3e-title-large--emphasized m3e-dialog__title" id="settingsTitle">Settings</h2>
+    </div>
+    <div class="m3e-dialog__content" id="settingsBody"></div>
+  </div>
+
+  <div class="m3e-dialog" id="dataDialog" role="dialog" aria-modal="true" aria-labelledby="dataTitle" data-open="false" aria-hidden="true">
+    <div class="m3e-dialog__header">
+      <h2 class="m3e-title-large m3e-title-large--emphasized m3e-dialog__title" id="dataTitle">Data</h2>
+    </div>
+    <div class="m3e-dialog__content" id="dataBody"></div>
+  </div>
+
+  <div class="m3e-snackbar" id="snackbar" role="status" aria-live="polite" data-open="false">
+    <span class="m3e-snackbar__text"></span>
+    <button class="m3e-snackbar__action" hidden></button>
+  </div>
+
+  <input type="file" id="importFile" accept=".json,.jsonl,application/json" hidden />
+
+  <script src="../shared/m3e/color.js"></script>
+  <script src="../shared/m3e/theme.js"></script>
+  <script src="../shared/m3e/interactions.js"></script>
+  <script src="../shared/m3e/media.js"></script>
+  <script src="../shared/m3e/video-controls.js"></script>
+  <script src="js/demo.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/library.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
