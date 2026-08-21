@@ -330,7 +330,7 @@
       head.innerHTML =
         "<div><h2 class=\"m3e-title-medium m3e-title-medium--emphasized\">" + escapeHtml(col.title) + "</h2>" +
         "<p class=\"m3e-body-small rail__hint\">" + escapeHtml(col.hint) + "</p></div>" +
-        "<span class=\"m3e-label-medium rail__count\">" + col.items.length + "</span>";
+        "<span class=\"m3e-label-medium rail__count\">" + (col.total || col.items.length).toLocaleString() + "</span>";
       section.appendChild(head);
 
       if (!col.items.length) {
