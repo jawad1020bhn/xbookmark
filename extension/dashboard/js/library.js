@@ -9,8 +9,6 @@
   "use strict";
 
   const DAY = 86400000;
-  const RECENT_MS = 7 * DAY;
-  const FORGOTTEN_MS = 30 * DAY;
   const LONG_VIDEO_MS = 30000;
   const PORTRAIT_MAX = 0.85;
   const WIDE_MIN = 1.4;
@@ -106,6 +104,8 @@
       if (f.kind === "photo" && item.type !== "photo") return false;
       if (f.kind === "video" && item.type !== "video") return false;
       if (f.kind === "gif" && item.type !== "animated_gif") return false;
+      /* "motion" is the navigation-level scope: anything that plays. */
+      if (f.kind === "motion" && item.type !== "video" && item.type !== "animated_gif") return false;
       if (f.author && item.author.toLowerCase() !== String(f.author).toLowerCase().replace(/^@/, "")) return false;
       if (f.postedFrom && item.postedAt && item.postedAt < parseDate(f.postedFrom)) return false;
       if (f.postedTo && item.postedAt && item.postedAt > parseDate(f.postedTo) + DAY) return false;
@@ -193,68 +193,9 @@
     return list;
   }
 
-  function why(kind, item, now) {
-    const n = now || Date.now();
-    switch (kind) {
-      case "unseen":
-        return "Captured, never opened";
-      case "recent": {
-        const days = Math.max(0, Math.round((n - item.capturedAt) / DAY));
-        return days <= 1 ? "Captured today" : "Captured " + days + " days ago";
-      }
-      case "popular":
-        return (item.eng.likes || 0).toLocaleString() + " likes at capture";
-      case "long":
-        return (window.M3EMedia && M3EMedia.formatDuration(item.duration)) || "Longer than 30s";
-      case "portrait":
-        return "Tall frame";
-      case "wide":
-        return "Wide frame";
-      case "alt":
-        return "Has alt text";
-      case "forgotten":
-        return item.lastOpened ? "Not reopened recently" : "Never revisited";
-      case "gifs":
-        return "Animated GIF";
-      case "continue": {
-        const t = item.progress && item.progress.t;
-        return t ? "Resume from " + (window.M3EMedia ? M3EMedia.formatDuration(t * 1000) : Math.round(t) + "s") : "In progress";
-      }
-      default:
-        return "";
-    }
-  }
-
-  function collections(items, now) {
-    const n = now || Date.now();
-    const likes = items.map((i) => i.eng.likes).filter((x) => x > 0).sort((a, b) => a - b);
-    const p80 = likes.length ? likes[Math.floor(likes.length * 0.8)] : Infinity;
-
-    const defs = [
-      { id: "continue", title: "Continue watching", hint: "Videos with saved progress", empty: "Nothing in progress. Open a video and watch past a few seconds to resume later.", pred: (i) => i.type === "video" && i.progress && i.progress.t >= 3 },
-      { id: "unseen", title: "Unseen", hint: "Captured but never opened", empty: "You’ve opened everything currently in the library.", pred: (i) => i.unseen && !i.archived },
-      { id: "recent", title: "Recently captured", hint: "Added in the last 7 days", empty: "No new captures this week. Run capture from the extension popup.", pred: (i) => n - i.capturedAt <= RECENT_MS },
-      { id: "popular", title: "Popular", hint: "Source posts with unusually strong engagement", empty: "Not enough engagement data yet — capture more posts.", pred: (i) => i.eng.likes >= p80 && i.eng.likes > 0 },
-      { id: "long", title: "Long videos", hint: "Longer than 30 seconds", empty: "No long videos in this library.", pred: (i) => i.type === "video" && i.duration >= LONG_VIDEO_MS },
-      { id: "portrait", title: "Portrait", hint: "Tall photos and screenshots", empty: "No portrait media yet.", pred: (i) => i.aspect > 0 && i.aspect < PORTRAIT_MAX },
-      { id: "wide", title: "Wide", hint: "Landscape and panoramic frames", empty: "No wide media yet.", pred: (i) => i.aspect >= WIDE_MIN },
-      { id: "alt", title: "Alt text available", hint: "Media with authored alternative text", empty: "None of these items include alt text.", pred: (i) => !!i.alt },
-      { id: "forgotten", title: "Forgotten", hint: "Older items not revisited recently", empty: "Nothing has gone stale yet.", pred: (i) => i.capturedAt && n - i.capturedAt > FORGOTTEN_MS && (!i.lastOpened || n - i.lastOpened > FORGOTTEN_MS) },
-      { id: "gifs", title: "GIFs", hint: "Animated media", empty: "No GIFs captured.", pred: (i) => i.type === "animated_gif" },
-    ];
-
-    return defs.map((d) => {
-      const list = items.filter(d.pred);
-      return {
-        id: d.id,
-        title: d.title,
-        hint: d.hint,
-        empty: d.empty,
-        items: list,
-        reasons: list.map((it) => why(d.id, it, n)),
-      };
-    });
-  }
+  /* Smart shelves used to live here as ten hard-coded predicates. Ranking,
+     personalisation and de-duplication now live in curator.js; this module
+     stays what it says it is — the media model, filters and sorts. */
 
   function authors(items) {
     const map = new Map();
@@ -282,7 +223,6 @@
     flatten,
     applyFilters,
     sortItems,
-    collections,
     authors,
     stats,
     mediaId,
