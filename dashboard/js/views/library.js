@@ -1,13 +1,16 @@
 /* =============================================================================
    Library — the power tool
 
-   Two levels of control, never more:
+   Three controls, three deliberate interaction patterns:
 
-     Level 1 (always visible)  count · [All][Photos][Videos][GIFs] · Filter / Sort / View
-     Level 2 (on demand)       the filter panel: Type, Status, Captured, Shape, Advanced
+     View    → a nested menu (Layout / Size / Group) — or a bottom sheet on
+               compact windows
+     Filter  → an inline panel and chips, multi-select with OR within a group
+               and AND across groups
+     Random  → the DEFAULT ordering: a stable, session-scoped random sequence
+               (Balanced by default). Deterministic Sort lives in the overflow.
 
-   Everything else — saved views, grouping, export — lives behind a menu, because
-   a control you use once a month should not cost a row of screen space forever.
+   On compact windows each control opens a bottom sheet with large tap targets.
    ============================================================================= */
 (function (root) {
   "use strict";
@@ -130,6 +133,11 @@
   }
 
   /* ------------------------------------------------------------ level one -- */
+  /* Three controls, three patterns — never the same shape twice:
+       View    → a nested menu (Layout / Size / Group)
+       Filter  → an inline panel (multi-select, AND/OR)
+       Random  → the default ordering; a nested menu (Reshuffle + mode)
+     Deterministic Sort lives behind the overflow menu. */
   function bar(items, app) {
     const s = St.state;
     const total = St.derived.all.length;
@@ -140,47 +148,245 @@
     count.appendChild(document.createTextNode(items.length === 1 ? " item" : " items"));
     if (filtered) count.appendChild(h("span", { text: "of " + num(total) }));
 
-    /* Kind is the one filter frequent enough to earn permanent real estate. */
+    /* Type is a multi-select toggle group: OR within (Photo OR Video), AND
+       across the other filters. "All" is the empty state. */
     const kinds = h(".seg.libbar__kinds", { role: "group", "aria-label": "Media type" });
     KINDS.forEach((k) => {
-      const on = (s.filters.kind || "") === k.id;
+      const on = k.id ? St.filterHas("kind", k.id) : !valueList(s.filters.kind).length;
       const b = h("button.seg__item", { type: "button", "aria-pressed": String(on), text: k.label });
-      b.addEventListener("click", () => St.setFilter("kind", k.id || null));
+      b.addEventListener("click", () => {
+        if (!k.id) St.setFilter("kind", null);
+        else St.toggleFilter("kind", k.id);
+      });
       kinds.appendChild(b);
     });
 
     const right = h(".libbar__right");
-    const n = St.activeFilterCount();
+    const fn = St.activeFilterCount();
 
-    const filterBtn = h("button.ctl" + (n ? ".ctl--on" : ""), {
+    const filterBtn = h("button.ctl" + (fn ? ".ctl--on" : ""), {
       type: "button",
       "aria-expanded": String(s.filtersOpen),
-      html: icon("filter", 16) + "<span>Filter</span>" + (n ? '<span class="ctl__badge">' + n + "</span>" : ""),
+      html: icon("filter", 16) + "<span>Filter</span>" + (fn ? '<span class="ctl__badge">' + fn + "</span>" : ""),
     });
-    filterBtn.addEventListener("click", () => St.set({ filtersOpen: !s.filtersOpen }, "force"));
-
-    const sortBtn = h("button.ctl", {
-      type: "button", html: icon("sort", 16) + "<span>" + esc(sortLabel(s.sort)) + "</span>",
-    });
-    sortBtn.addEventListener("click", () => sortMenu(sortBtn, app));
+    filterBtn.addEventListener("click", () => openFilter(app));
 
     const viewBtn = h("button.ctl", {
       type: "button", html: icon("view", 16) + "<span>View</span>",
     });
-    viewBtn.addEventListener("click", () => viewMenu(viewBtn, app));
+    viewBtn.addEventListener("click", () => openView(viewBtn, app));
+
+    /* Random is the DEFAULT ordering — a stable random sequence (Balanced by
+       default). Highlighted while it's active; selecting a deterministic Sort
+       from the overflow dims it again. */
+    const shuffleBtn = h("button.ctl" + (s.sort === "shuffle" ? ".ctl--on" : ""), {
+      type: "button",
+      "aria-label": "Random order",
+      html: icon("sort", 16) + "<span>Random</span>",
+    });
+    shuffleBtn.addEventListener("click", () => openShuffle(shuffleBtn, app));
 
     const moreBtn = h("button.iconctl", {
       type: "button", "aria-label": "More library actions", html: icon("more", 18),
     });
     moreBtn.addEventListener("click", () => overflowMenu(moreBtn, app));
 
-    right.append(filterBtn, sortBtn, viewBtn, moreBtn);
+    right.append(viewBtn, filterBtn, shuffleBtn, moreBtn);
     return h(".libbar", count, kinds, right);
   }
 
+  function valueList(v) {
+    if (Array.isArray(v)) return v;
+    return v == null || v === "" || v === false ? [] : [v];
+  }
+
+  /* Compact windows (phone/tablet) get bottom sheets; expanded windows get
+     anchored menus. The threshold matches the libbar wrap breakpoint so a
+     sheet is used exactly when the toolbar stops fitting on one line. */
+  function isCompact() {
+    return typeof matchMedia === "function" && matchMedia("(max-width: 899px)").matches;
+  }
+
+  function openView(trigger, app) {
+    if (isCompact()) viewSheet(app);
+    else viewMenu(trigger, app);
+  }
+
+  function openShuffle(trigger, app) {
+    if (isCompact()) shuffleSheet(app);
+    else shuffleMenu(trigger, app);
+  }
+
+  /* On compact windows Filter is a full-height sheet rather than the inline
+     panel, which is cramped on a phone. */
+  function openFilter(app) {
+    if (isCompact()) filterSheet(app);
+    else St.set({ filtersOpen: !St.state.filtersOpen }, "force");
+  }
+
+  /* A bottom sheet built on the shared M3 sheet primitive. Content is product-
+     voiced (pills / segmented) so it matches the rest of the toolbar. */
+  function sheet(title, contentNode, opts) {
+    const o = opts || {};
+    const scrim = h(".m3e-scrim", { "data-open": "false" });
+    const el = h(".m3e-sheet.m3e-sheet--bottom", {
+      role: "dialog", "aria-modal": "true", "aria-label": title,
+      "data-open": "false", "aria-hidden": "true", tabindex: "-1",
+    });
+    el.appendChild(h(".m3e-sheet__handle"));
+    const header = h(".m3e-sheet__header",
+      h(".m3e-sheet__title.t-title", { text: title }));
+    if (o.action) {
+      const btn = h("button.ctl.ctl--accent", { type: "button", text: o.action });
+      btn.addEventListener("click", () => { if (o.onAction) o.onAction(); overlay.close(); });
+      header.appendChild(btn);
+    } else if (o.done !== false) {
+      const done = h("button.ctl", { type: "button", text: "Done" });
+      done.addEventListener("click", () => overlay.close());
+      header.appendChild(done);
+    }
+    el.appendChild(header);
+    const content = h(".m3e-sheet__content");
+    content.appendChild(contentNode);
+    el.appendChild(content);
+    document.body.appendChild(scrim);
+    document.body.appendChild(el);
+    if (root.M3E && root.M3E.bindRipple) root.M3E.bindRipple(el);
+    const overlay = root.M3E.createOverlay({
+      element: el, scrim,
+      onClose: () => setTimeout(() => { el.remove(); scrim.remove(); }, 260),
+    });
+    overlay.open();
+    return overlay;
+  }
+
+  /* A labelled group of toggle pills, shared by the View, Shuffle and Filter
+     sheets. Each group syncs its own pressed state in place after a click, so a
+     sheet never needs to rebuild to reflect a selection. `multi` enables
+     OR-within-group selection. */
+  function pillGroup(label, pairs, currentFn, onPick, opts) {
+    const o = opts || {};
+    const block = h(".sheet__block");
+    block.appendChild(h(".sheet__label", { text: label }));
+    const row = h(".sheet__opts");
+    const sync = () => {
+      const cur = o.multi ? (currentFn() || []) : currentFn();
+      Array.from(row.children).forEach((btn, i) => {
+        const v = pairs[i][0];
+        btn.setAttribute("aria-pressed", String(o.multi ? cur.indexOf(v) >= 0 : cur === v));
+      });
+    };
+    pairs.forEach((pair) => {
+      const value = pair[0], text = pair[1];
+      const b = h("button.pill", { type: "button", text });
+      b.addEventListener("click", () => { onPick(value); sync(); });
+      row.appendChild(b);
+    });
+    sync();
+    block.appendChild(row);
+    return block;
+  }
+
   function sortLabel(id) {
+    if (id === "shuffle") return "Random";
     const s = St.SORTS.find((x) => x.id === id);
     return s ? s.label : "Sort";
+  }
+
+  /* --- mobile bottom sheets --------------------------------------------------
+     Compact windows replace the anchored menus with full-width bottom sheets:
+     larger tap targets, a Done action in the header, room to breathe. The data
+     is identical to the desktop menus; only the presentation changes. Each pill
+     syncs itself in place, so the sheet reflects a selection without rebuilding. */
+  function viewSheet(app) {
+    const s = St.state;
+    const content = h(".sheet__body");
+    content.appendChild(pillGroup("Layout",
+      [["natural", "Masonry"], ["grid", "Grid"]], () => s.layout,
+      (v) => St.set({ layout: v })));
+    content.appendChild(pillGroup("Size",
+      [["compact", "Compact"], ["comfortable", "Comfortable"], ["large", "Large"]], () => s.size,
+      (v) => St.set({ size: v })));
+    content.appendChild(pillGroup("Group",
+      GROUPS.map((g) => [g.id, g.label]), () => s.groupBy,
+      (v) => St.set({ groupBy: v })));
+    sheet("View", content);
+  }
+
+  function shuffleSheet(app) {
+    const s = St.state;
+    const content = h(".sheet__body");
+    const now = h("button.ctl.ctl--accent.sheet__primary", {
+      type: "button", html: icon("refresh", 16) + "<span>Reshuffle</span>",
+    });
+    now.addEventListener("click", () => { St.shuffle(); });
+    content.appendChild(now);
+    content.appendChild(pillGroup("Mode",
+      St.SHUFFLE_STRATEGIES.map((o) => [o.id, o.label]), () => s.shuffleStrategy,
+      (v) => St.shuffle({ strategy: v })));
+    content.appendChild(h(".sheet__hint", {
+      text: s.shuffleStrategy === "balanced"
+        ? "Varied creators, posts and media types."
+        : "No logic, just chance.",
+    }));
+    sheet("Random", content, { done: false });
+  }
+
+  function filterSheet(app) {
+    const content = h(".sheet__body");
+    content.appendChild(sheetBlock("Type", options("kind", [
+      ["photo", "Photos"], ["video", "Videos"], ["gif", "GIFs"],
+    ], true)));
+    content.appendChild(sheetBlock("Status", [
+      options("seen", [["unseen", "Unseen"], ["viewed", "Seen"]]),
+      options("progress", [["yes", "In progress"], ["no", "Not started"]]),
+      options("archive", [["archived", "Include archived"]]),
+    ]));
+    content.appendChild(sheetBlock("Shape", options("shape", [
+      ["portrait", "Portrait"], ["square", "Square"], ["wide", "Wide"],
+    ], true)));
+    content.appendChild(sheetBlock("Captured", [
+      quickCaptured(),
+      h(".filters__pair", dateField("From", "capturedFrom"), dateField("To", "capturedTo")),
+    ]));
+    content.appendChild(sheetBlock("Advanced", [
+      authorField(),
+      h(".filters__pair", numberField("Min seconds", "durationMin"), numberField("Max seconds", "durationMax")),
+      options("alt", [["yes", "Has alt text"], ["no", "No alt text"]]),
+      options("playable", [["no", "Unavailable only"]]),
+    ]));
+    sheet("Filters", content, { action: "Reset", onAction: () => St.clearFilters() });
+  }
+
+  function sheetBlock(label, content) {
+    return h(".sheet__block", h(".sheet__label", { text: label }), content);
+  }
+
+  /* Quick relative-date chips for the Captured group: Today / 7 days / 30 days
+     / Any. Sets a capturedFrom floor; "Any" clears it. */
+  function quickCaptured() {
+    const DAY = 86400000;
+    const presets = [["today", "Today", 1], ["7d", "7 days", 7], ["30d", "30 days", 30]];
+    const box = h(".filters__opts");
+    const dateFor = (days) => new Date(Date.now() - days * DAY).toISOString().slice(0, 10);
+    const isActive = (days) => St.state.filters.capturedFrom === dateFor(days);
+    const sync = () => {
+      Array.from(box.children).forEach((btn, i) => {
+        if (i < presets.length) btn.setAttribute("aria-pressed", String(isActive(presets[i][2])));
+        else btn.setAttribute("aria-pressed", String(!St.state.filters.capturedFrom));
+      });
+    };
+    presets.forEach((p) => {
+      const days = p[2];
+      const b = h("button.pill", { type: "button", text: p[1] });
+      b.addEventListener("click", () => { St.setFilter("capturedFrom", isActive(days) ? null : dateFor(days)); sync(); });
+      box.appendChild(b);
+    });
+    const any = h("button.pill", { type: "button", text: "Any" });
+    any.addEventListener("click", () => { St.setFilter("capturedFrom", null); St.setFilter("capturedTo", null); sync(); });
+    box.appendChild(any);
+    sync();
+    return box;
   }
 
   /* ---------------------------------------------------------------- menus -- */
@@ -227,6 +433,15 @@
   function viewMenu(trigger, app) {
     const s = St.state;
     menu(trigger, (el, close) => {
+      el.appendChild(h(".m3e-menu__label", { text: "Layout" }));
+      [["natural", "Masonry — true proportions"], ["grid", "Grid — uniform squares"]].forEach(([id, label]) => {
+        el.appendChild(menuItem(label, {
+          selected: s.layout === id,
+          icon: s.layout === id ? "check" : null,
+          on: () => { close(); St.set({ layout: id }); },
+        }));
+      });
+      el.appendChild(h("hr.m3e-menu__divider"));
       el.appendChild(h(".m3e-menu__label", { text: "Size" }));
       [["compact", "Compact"], ["comfortable", "Comfortable"], ["large", "Large"]].forEach(([id, label]) => {
         el.appendChild(menuItem(label, {
@@ -236,16 +451,7 @@
         }));
       });
       el.appendChild(h("hr.m3e-menu__divider"));
-      el.appendChild(h(".m3e-menu__label", { text: "Arrangement" }));
-      [["natural", "Masonry — true proportions"], ["grid", "Grid — uniform squares"]].forEach(([id, label]) => {
-        el.appendChild(menuItem(label, {
-          selected: s.layout === id,
-          icon: s.layout === id ? "check" : null,
-          on: () => { close(); St.set({ layout: id }); },
-        }));
-      });
-      el.appendChild(h("hr.m3e-menu__divider"));
-      el.appendChild(h(".m3e-menu__label", { text: "Grouping" }));
+      el.appendChild(h(".m3e-menu__label", { text: "Group" }));
       GROUPS.forEach((g) => {
         el.appendChild(menuItem(g.label, {
           selected: s.groupBy === g.id,
@@ -256,9 +462,54 @@
     });
   }
 
+  /* Random is the default Library ordering. The menu offers Reshuffle (a new
+     stable random order for this session) and the mode: Balanced (the smart
+     mode — varied creators, posts and media types) or Pure random. Filters are
+     always preserved. */
+  function shuffleMenu(trigger, app) {
+    const s = St.state;
+    menu(trigger, (el, close) => {
+      el.appendChild(menuAction("Reshuffle", icon("refresh", 16), () => {
+        close();
+        St.shuffle();
+        app.toast("New random order");
+      }));
+      el.appendChild(h("hr.m3e-menu__divider"));
+      el.appendChild(h(".m3e-menu__label", { text: "Mode" }));
+      St.SHUFFLE_STRATEGIES.forEach((opt) => {
+        el.appendChild(menuItem(opt.label, {
+          selected: s.shuffleStrategy === opt.id,
+          icon: s.shuffleStrategy === opt.id ? "check" : null,
+          on: () => { close(); St.shuffle({ strategy: opt.id }); },
+        }));
+      });
+      el.appendChild(h("hr.m3e-menu__divider"));
+      el.appendChild(h(".menu__hint", {
+        text: s.shuffleStrategy === "balanced"
+          ? "Varied creators, posts and media types. Stable until you reshuffle."
+          : "No logic, just chance. Stable until you reshuffle.",
+      }));
+    });
+  }
+
+  /* An action menu item: bold, leading icon, no checkmark — for verbs that do
+     something (Reshuffle) rather than set a preference. */
+  function menuAction(label, iconHtml, on) {
+    const it = h("button.m3e-menu__item.m3e-menu__item--action", { type: "button", role: "menuitem" });
+    it.insertAdjacentHTML("beforeend", iconHtml);
+    it.appendChild(h("span", { text: label }));
+    it.addEventListener("click", on);
+    return it;
+  }
+
   function overflowMenu(trigger, app) {
     const views = St.state.prefs.savedViews || [];
     menu(trigger, (el, close) => {
+      el.appendChild(menuItem(
+        St.state.sort === "shuffle" ? "Random order" : ("Sort by: " + sortLabel(St.state.sort)),
+        { icon: "sort", on: () => { close(); sortMenu(trigger, app); } }
+      ));
+      el.appendChild(h("hr.m3e-menu__divider"));
       el.appendChild(h(".m3e-menu__label", { text: "Views" }));
       if (!views.length) el.appendChild(h(".menu__hint", { text: "Save the current search, filters and sort as a reusable view." }));
       views.forEach((v) => {
@@ -308,11 +559,19 @@
       }, "star"));
     }
 
+    /* Each value in a group becomes its own chip so a multi-select (Photo OR
+       Video) can drop one value without clearing the group. */
     entries.forEach(([key, value]) => {
-      box.appendChild(chip(chipLabel(key, value), () => St.setFilter(key, null)));
+      const vals = Array.isArray(value) ? value : [value];
+      vals.forEach((v) => {
+        box.appendChild(chip(chipLabel(key, v), () => {
+          if (Array.isArray(s.filters[key]) && s.filters[key].length > 1) St.toggleFilter(key, v);
+          else St.setFilter(key, null);
+        }));
+      });
     });
 
-    if (entries.length > 1) {
+    if (St.activeFilterCount() > 1) {
       const clear = h("button.ctl", { type: "button", text: "Clear all" });
       clear.addEventListener("click", () => St.clearFilters());
       box.appendChild(clear);
@@ -362,7 +621,7 @@
     const grid = h(".filters__grid");
     grid.appendChild(block("Type", options("kind", [
       ["photo", "Photos"], ["video", "Videos"], ["gif", "GIFs"],
-    ])));
+    ], true)));
     grid.appendChild(block("Status", [
       options("seen", [["unseen", "Unseen"], ["viewed", "Seen"]]),
       options("archive", [["archived", "Include archived"]]),
@@ -370,7 +629,7 @@
     ]));
     grid.appendChild(block("Shape", options("shape", [
       ["portrait", "Portrait"], ["square", "Square"], ["wide", "Wide"],
-    ])));
+    ], true)));
     grid.appendChild(block("Captured", [
       h(".filters__pair",
         dateField("From", "capturedFrom"),
@@ -412,14 +671,25 @@
     return h(".filters__block", h("h4", { text: title }), content);
   }
 
-  function options(key, pairs) {
+  function options(key, pairs, multi) {
     const box = h(".filters__opts");
+    const sync = () => {
+      Array.from(box.children).forEach((btn, i) => {
+        const v = pairs[i][0];
+        const on = multi ? St.filterHas(key, v) : St.state.filters[key] === v;
+        btn.setAttribute("aria-pressed", String(on));
+      });
+    };
     pairs.forEach(([value, label]) => {
-      const on = St.state.filters[key] === value;
-      const b = h("button.pill", { type: "button", "aria-pressed": String(on), text: label });
-      b.addEventListener("click", () => St.setFilter(key, on ? null : value));
+      const b = h("button.pill", { type: "button", text: label });
+      b.addEventListener("click", () => {
+        if (multi) St.toggleFilter(key, value);
+        else St.setFilter(key, St.state.filters[key] === value ? null : value);
+        sync();
+      });
       box.appendChild(b);
     });
+    sync();
     return box;
   }
 

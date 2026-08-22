@@ -29,6 +29,78 @@
   let hideTimer = null;
   let onClosed = null;
 
+  /* Details pane can be dragged to taste, within a sensible band. The choice
+     is remembered between sessions like every other viewer preference. */
+  const PANE_MIN = 300;
+  const PANE_MAX = 560;
+  const PANE_KEYSTEP = 24;
+
+  function paneWidth() {
+    const saved = St.state.prefs.viewerPaneWidth;
+    const v = Number(saved);
+    return Number.isFinite(v) && v >= PANE_MIN && v <= PANE_MAX ? Math.round(v) : 372;
+  }
+
+  function applyPaneWidth(px) {
+    el.style.setProperty("--viewer-pane-width", px + "px");
+    refs.divider.setAttribute("aria-valuenow", String(px));
+  }
+
+  function persistPaneWidth(px) {
+    St.setPrefs({ viewerPaneWidth: px });
+  }
+
+  /* Pointer-drag + keyboard adjust of the details pane. The drag tracks the
+     viewport edge nearest the cursor (RTL aware) and clamps to the band. */
+  function bindResize(divider) {
+    const setFromClient = (clientX) => {
+      const rect = el.getBoundingClientRect();
+      const fromRight = root.getComputedStyle(el).direction !== "rtl";
+      const px = fromRight ? clientX - rect.left : rect.right - clientX;
+      applyPaneWidth(Math.max(PANE_MIN, Math.min(PANE_MAX, Math.round(px))));
+    };
+
+    let dragging = false;
+    let moved = false;
+
+    divider.addEventListener("pointerdown", (e) => {
+      dragging = true; moved = false;
+      el.classList.add("is-resizing");
+      divider.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    divider.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      moved = true;
+      setFromClient(e.clientX);
+    });
+    const end = (e) => {
+      if (!dragging) return;
+      dragging = false;
+      el.classList.remove("is-resizing");
+      try { divider.releasePointerCapture(e.pointerId); } catch (_) {}
+      if (moved) persistPaneWidth(paneWidth());
+    };
+    divider.addEventListener("pointerup", end);
+    divider.addEventListener("pointercancel", end);
+
+    divider.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      e.preventDefault();
+      e.stopPropagation(); /* keep it from paging the viewer (← →) */
+      const dir = e.key === "ArrowRight" ? 1 : -1;
+      const rtl = root.getComputedStyle(el).direction === "rtl";
+      const next = Math.max(PANE_MIN, Math.min(PANE_MAX, paneWidth() + (rtl ? -dir : dir) * PANE_KEYSTEP));
+      applyPaneWidth(next);
+      persistPaneWidth(next);
+    });
+
+    divider.addEventListener("dblclick", () => {
+      applyPaneWidth(372);
+      persistPaneWidth(372);
+    });
+  }
+
   /* ------------------------------------------------------------- structure -- */
   function build() {
     if (el) return el;
@@ -77,6 +149,18 @@
     const main = h(".viewer__main", stage, prev, next, chrome);
     const pane = h(".viewer__pane");
 
+    /* Resizable divider — only meaningful in context (list-detail) state. */
+    const divider = h("button.viewer__divider", {
+      type: "button",
+      "aria-label": "Resize details pane",
+      "aria-orientation": "vertical",
+      "aria-valuenow": "372",
+      "aria-valuemin": String(PANE_MIN),
+      "aria-valuemax": String(PANE_MAX),
+      tabindex: "0",
+    });
+    bindResize(divider);
+
     el = h(".viewer", {
       id: "viewer",
       role: "dialog",
@@ -84,9 +168,9 @@
       "aria-label": "Media viewer",
       tabindex: "-1",
       hidden: true,
-    }, main, pane);
+    }, main, divider, pane);
 
-    refs = { stage, frame, top, pos, by, cap, track, prev, next, strip, pane, chrome, stripBtn, focusBtn, detailsBtn, main };
+    refs = { stage, frame, top, pos, by, cap, track, prev, next, strip, pane, chrome, stripBtn, focusBtn, detailsBtn, main, divider };
 
     prev.addEventListener("click", () => step(-1));
     next.addEventListener("click", () => step(1));
@@ -114,6 +198,7 @@
 
     el.hidden = false;
     document.body.style.overflow = "hidden";
+    applyPaneWidth(paneWidth());
     setState(St.state.viewerState || "standard", true);
     paint();
     el.focus({ preventScroll: true });

@@ -69,6 +69,13 @@
     await St.load();
     St.readUrl();
 
+    /* Every fresh dashboard load is a new discovery cycle, so Discover surfaces
+     * different content each time — and a new Library random seed, so the
+     * default ordering is fresh too. Both are stable for the rest of the
+     * session. Done before subscribe so their notifies are no-ops. */
+    St.newDiscoveryCycle();
+    St.rollSessionRandom();
+
     theme = root.M3ETheme.createController(themeSettings(), () => {
       syncChrome();
       /* The scheme may have flipped with the OS; product colours are CSS, but
@@ -86,6 +93,7 @@
     root.M3E.bindWindowClass();
     bindGlobalKeys();
     bindScrollMemory();
+    bindPointer();
 
     St.subscribe(onStateChange);
     root.XBStore.onChanged(onStorageChange);
@@ -108,6 +116,19 @@
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute("content", dark ? "#0B0B0F" : "#FAF9FC");
     document.documentElement.dataset.controls = St.state.prefs.largeControls ? "large" : "normal";
+    syncPointer();
+  }
+
+  /* Interaction contract, made explicit rather than left to emerge from CSS.
+     `data-pointer` on the root records the primary input model so any
+     component can branch: hover devices reveal secondary info on hover;
+     touch surfaces can't, and fall back to always-visible affordances.
+     Re-evaluated whenever the browser reports a change of primary pointer. */
+  function syncPointer() {
+    const canHover = typeof matchMedia === "function"
+      ? matchMedia("(hover: hover) and (pointer: fine)").matches
+      : true;
+    document.documentElement.dataset.pointer = canHover ? "hover" : "touch";
   }
 
   function themeSettings() {
@@ -527,6 +548,14 @@
     }, { passive: true });
   }
 
+  function bindPointer() {
+    if (typeof matchMedia !== "function") return;
+    const mq = matchMedia("(hover: hover) and (pointer: fine)");
+    const handler = () => syncPointer();
+    if (mq.addEventListener) mq.addEventListener("change", handler);
+    else if (mq.addListener) mq.addListener(handler);
+  }
+
   function saveScroll(workspace) {
     if (!workspace || workspace === "watch") return;
     const positions = St.state.prefs.scrollPositions || {};
@@ -625,6 +654,9 @@
   }
 
   function openItem(item, list, viewerState) {
+    /* Opening something Discover surfaced marks it engaged — a normal cooldown
+       and a small quality signal, instead of being treated as ignored. */
+    St.markEngaged(item.id);
     const items = list && list.length ? list : St.derived.items;
     const index = Math.max(0, items.findIndex((i) => i.id === item.id));
     if (viewerState) St.state.viewerState = viewerState;

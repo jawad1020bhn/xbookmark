@@ -14,13 +14,52 @@
   const St = root.XBState;
 
   const CAP = 80;
+  const IDLE_MS = 2600;
   let observer = null;
   let scroller = null;
+  let idleTimer = null;
+  let progressEl = null;
+  let progressRaf = 0;
 
   function teardown() {
     if (observer) { observer.disconnect(); observer = null; }
     root.M3EMedia.stopAll();
+    clearTimeout(idleTimer);
+    cancelAnimationFrame(progressRaf);
+    document.body.classList.remove("is-watch-idle");
     scroller = null;
+    progressEl = null;
+  }
+
+  /* Chrome fade: while watching, every overlay except playback/navigation
+     fades out after a beat of stillness and returns on the slightest motion.
+     The cursor goes with it, so the video reads as the whole surface. */
+  function wake() {
+    document.body.classList.remove("is-watch-idle");
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      /* Keep chrome if something within it holds focus, or a control is open. */
+      if (scroller && scroller.matches(":focus-within")) { wake(); return; }
+      document.body.classList.add("is-watch-idle");
+    }, IDLE_MS);
+  }
+
+  /* The one idle mark that survives the fade: a thin line for how far the
+     centred video has played. Position is navigation, not chrome. */
+  function startProgress() {
+    cancelAnimationFrame(progressRaf);
+    const tick = () => {
+      const video = currentVideo();
+      if (video && progressEl) {
+        const d = Number.isFinite(video.duration) ? video.duration : 0;
+        progressEl.hidden = false;
+        progressEl.firstElementChild.style.width = d ? Math.min(100, (video.currentTime / d) * 100) + "%" : "0";
+      } else if (progressEl) {
+        progressEl.hidden = true;
+      }
+      progressRaf = requestAnimationFrame(tick);
+    };
+    progressRaf = requestAnimationFrame(tick);
   }
 
   function feedItems() {
@@ -49,20 +88,33 @@
 
     scroller = h(".watch", { tabindex: "0", "aria-label": "Watch feed" });
 
-    const exit = h("button.watch__exit", {
+    const exit = h("button.watch__exit.watch__chrome", {
       type: "button", "aria-label": "Leave watch mode",
       html: icon("close", 16) + "<span>Exit</span>",
     });
     exit.addEventListener("click", () => app.go(St.state.prefs.lastWorkspace || "discover"));
 
-    const rail = h(".watch__rail", { "aria-hidden": "true" });
+    const rail = h(".watch__rail.watch__chrome", { "aria-hidden": "true" });
     items.forEach(() => rail.appendChild(h(".watch__tick")));
 
     items.forEach((item, i) => scroller.appendChild(slide(item, i, items, app)));
 
+    progressEl = h(".watch__progress", { hidden: true, "aria-hidden": "true" }, h("i"));
+
     mount.appendChild(scroller);
     mount.appendChild(exit);
     mount.appendChild(rail);
+    mount.appendChild(progressEl);
+
+    /* Chrome fade. Any pointer motion, key, or touch wakes the chrome; a beat
+       of stillness fades it. Scroll wakes too, since paging is an interaction. */
+    scroller.addEventListener("pointermove", wake, { passive: true });
+    scroller.addEventListener("pointerdown", wake, { passive: true });
+    scroller.addEventListener("scroll", wake, { passive: true });
+    scroller.addEventListener("wheel", wake, { passive: true });
+    exit.addEventListener("pointerenter", wake);
+    wake();
+    startProgress();
 
     /* Play only what is centred. Without the observer (very old engines, or a
        non-visual runtime) the feed still scrolls — it just hydrates eagerly. */
@@ -114,9 +166,9 @@
         style: { width: "28px", height: "28px", borderRadius: "50%", objectFit: "cover" } }) : null,
       h("b", { text: item.authorName || "@" + item.author })
     );
-    el.appendChild(h(".watch__meta", who, captionOf(item)));
+    el.appendChild(h(".watch__meta.watch__chrome", who, captionOf(item)));
 
-    const side = h(".watch__side");
+    const side = h(".watch__side.watch__chrome");
     side.appendChild(sideBtn(item.archived ? "unarchive" : "archive",
       item.archived ? "Unarchive" : "Archive",
       () => { St.setArchived([item.id], !item.archived); }));
@@ -172,6 +224,7 @@
 
   function onKey(e) {
     if (!scroller) return;
+    wake();
     const step = scroller.clientHeight;
     if (e.key === "ArrowDown" || e.key === "j") { e.preventDefault(); scroller.scrollBy({ top: step, behavior: "smooth" }); }
     else if (e.key === "ArrowUp" || e.key === "k") { e.preventDefault(); scroller.scrollBy({ top: -step, behavior: "smooth" }); }

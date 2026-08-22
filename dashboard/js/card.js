@@ -140,7 +140,10 @@
     /* --- contextual "why" --------------------------------------------------- */
     if (o.why) box.appendChild(h("span.card__why", { text: o.why }));
 
-    /* --- info layer --------------------------------------------------------- */
+    /* --- information layer ---------------------------------------------------------
+       Disclosed on hover (pointer) or focus (keyboard). On touch there is no
+       hover to discover it through, so a compact persistent caption —
+       `.card__touch` — is always rendered and shown only on touch surfaces. */
     const info = h(".card__info");
     info.appendChild(h(".card__author", { text: "@" + (item.author || "unknown") }));
     const caption = firstLine(item.text);
@@ -151,6 +154,12 @@
     if (item.eng && item.eng.likes) meta.appendChild(h("span", { text: root.XBUI.compact(item.eng.likes) + " likes" }));
     if (meta.childElementCount) info.appendChild(meta);
     box.appendChild(info);
+
+    /* Persistent compact caption for touch. Same key fact as the hover layer —
+       the creator — kept to one line and always legible. A touch user should
+       never need to "discover" who a card belongs to by hovering. The full
+       layer still opens with the viewer on tap. */
+    box.appendChild(h(".card__touch", h("span.card__author", { text: "@" + (item.author || "unknown") })));
 
     /* --- selection ---------------------------------------------------------- */
     if (o.onPick) {
@@ -170,6 +179,8 @@
 
     /* --- behaviour ---------------------------------------------------------- */
     el.addEventListener("click", (e) => {
+      // A long-press already consumed the gesture as a selection toggle.
+      if (el.dataset.longpress === "1") { el.dataset.longpress = ""; return; }
       // Shift/⌘ click extends a selection instead of opening.
       if (o.onPick && (e.shiftKey || e.metaKey || e.ctrlKey)) {
         e.preventDefault();
@@ -178,6 +189,31 @@
       }
       o.onOpen(item, el);
     });
+
+    /* Long-press → selection. The touch interaction model is explicit: a tap
+       opens, a long-press manages. Only attached where selection is offered. */
+    if (o.onPick) {
+      let pressTimer = 0;
+      let startX = 0, startY = 0;
+      el.addEventListener("pointerdown", (e) => {
+        if (e.pointerType === "mouse") return;
+        startX = e.clientX; startY = e.clientY;
+        pressTimer = setTimeout(() => {
+          el.dataset.longpress = "1";
+          el.classList.add("is-pressing");
+          o.onPick(item);
+          if (root.navigator.vibrate) root.navigator.vibrate(12);
+        }, 450);
+      });
+      const cancel = () => { clearTimeout(pressTimer); el.classList.remove("is-pressing"); };
+      el.addEventListener("pointermove", (e) => {
+        if (Math.hypot(e.clientX - startX, e.clientY - startY) > 10) cancel();
+      });
+      el.addEventListener("pointerup", cancel);
+      el.addEventListener("pointerleave", cancel);
+      el.addEventListener("pointercancel", cancel);
+    }
+
     el.addEventListener("pointerenter", () => startPreview(el, item));
     el.addEventListener("pointerleave", () => { if (previewing && previewing.card === el) stopPreview(); });
     el.addEventListener("focus", () => { if (previewing) stopPreview(); });

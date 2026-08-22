@@ -1,16 +1,18 @@
 /* =============================================================================
-   Discover — the editorial homepage
+   Discover — a recommendation engine with memory
 
    The shape of the page is a magazine, not a dashboard:
 
      1. a greeting and ONE typographic line of state
      2. ONE major story — the thing you were in the middle of
-     3. three to five sections that each answer a different question
+     3. a handful of sections that each answer a different question
 
-   Deliberately *not* every collection the engine can produce. The library
-   computes thirteen; showing thirteen equal-weight rails is a shrug, not a
-   recommendation. Discover picks a small, ordered set and lets Library be the
-   place where everything is reachable.
+   The content is produced by the discovery engine (XBLibrary.discover), which
+   ranks with a shared score and remembers what it surfaced. Every dashboard
+   load is a new "cycle" — the dynamic sections (Fresh discoveries, Rediscover)
+   change, while the stable ones (Continue, New) barely move. Opening the viewer
+   or toggling UI elsewhere never reshuffles the page: a cycle only advances on
+   a fresh load or an explicit Refresh.
    ============================================================================= */
 (function (root) {
   "use strict";
@@ -18,21 +20,38 @@
   const { h, icon, esc, compact, num, still, remaining, ago } = root.XBUI;
   const St = root.XBState;
 
-  /* Priority order. The first hero-capable collection becomes the story; the
-     rest fill sections until the budget is spent. */
-  const ORDER = ["continue", "unseen", "top-picks", "recent", "quick-watch", "favorite-creators", "forgotten", "hidden-gems"];
-  const MAX_SECTIONS = 4;
-
   const SUBTITLE = {
     continue: "Pick up where you left off",
-    unseen: "Saved, never opened",
-    "top-picks": "Chosen from everything you've kept",
-    recent: "Captured in the last week",
+    "fresh-discoveries": "Things you probably forgot existed",
+    "top-picks": "Probably worth your attention",
+    "new-in-archive": "Added in the last week",
+    rediscover: "Things you haven't looked at in a while",
     "quick-watch": "A minute or less",
     "favorite-creators": "People who keep showing up",
-    forgotten: "You liked these once",
-    "hidden-gems": "Older saves that got buried",
+    all: "",
   };
+
+  /* The seven discovery sections, in editorial order, each with its shape and
+     its "see all" destination. Stability is baked into the engine: Continue and
+     New are deterministic; Top picks moves slowly; Fresh discoveries and
+     Rediscover are the dynamic ones that change every cycle. */
+  const SECTIONS = [
+    { key: "continue", layout: "rail", wide: true, seeAll: "continue" },
+    { key: "freshDiscoveries", layout: "rail", refresh: true, seeAll: "forgotten" },
+    { key: "topPicks", layout: "editorial", seeAll: "top-picks" },
+    { key: "newInArchive", layout: "rail", seeAll: "recent" },
+    { key: "rediscover", layout: "masonry", seeAll: "forgotten" },
+    { key: "quickWatch", layout: "rail", wide: true, seeAll: "quick-watch" },
+    { key: "favoriteCreators", layout: "rail", seeAll: "favorite-creators" },
+  ];
+
+  /* Collections that exist route to a focused Library view; the two
+     discovery-only sections (fresh, rediscover) route to Library sorted by
+     longest-untouched — the closest deterministic browse. */
+  function seeAll(app, dest) {
+    if (dest === "forgotten") app.go("library", { sort: "forgotten" });
+    else app.openCollection(dest);
+  }
 
   function render(mount, app) {
     const d = St.derived;
@@ -40,16 +59,15 @@
 
     if (!stats.media) { mount.appendChild(emptyArchive(app)); return; }
 
+    /* Reading derived.discovery runs the engine for this cycle and records
+       exposure — the rotation's memory. Within a cycle it is memoised, so the
+       page stays stable across re-renders (viewer open/close, etc.). */
+    const disc = d.discovery;
     const page = h(".discover");
     page.appendChild(greeting(stats, d, app));
 
-    const collections = d.collections;
-    const byId = new Map(collections.map((c) => [c.id, c]));
-
     /* --- the one story ------------------------------------------------------ */
-    const heroCol = byId.get("continue") && byId.get("continue").items.length
-      ? byId.get("continue")
-      : byId.get("top-picks") || collections[0];
+    const heroCol = disc.continue || disc.freshDiscoveries || disc.topPicks;
     const usedIds = new Set();
     if (heroCol && heroCol.items.length) {
       const item = heroCol.items[0];
@@ -58,49 +76,35 @@
     }
 
     /* --- sections -------------------------------------------------------------
-       Collections overlap by design — a video can be both unseen and popular —
-       so sections are not mutually exclusive. What would be embarrassing is two
-       rails that read as the same rail. The rule: an item may appear in at most
-       two sections, it may lead only one, and a section is dropped if most of
-       what it would show has already been shown. */
-    const seen = new Map();       // id -> how many sections it has appeared in
-    const led = new Set();        // ids already used as a section's first card
-    let budget = MAX_SECTIONS;
+       Items don't repeat across sections: each drops anything already on the
+       page, and is skipped if it can't field at least four fresh cards (so a
+       thin archive doesn't show empty-ish rails). */
+    const seen = new Set(usedIds);
+    let budget = 6;
 
-    for (const id of ORDER) {
+    for (const spec of SECTIONS) {
       if (budget <= 0) break;
-      const col = byId.get(id);
-      if (!col || !col.items.length) continue;
+      const col = disc[spec.key];
+      if (!col || !col.items || !col.items.length) continue;
 
-      const pool = col.items.filter((i) => !usedIds.has(i.id) && (seen.get(i.id) || 0) < 2);
-      if (pool.length < 4) continue;
+      const fresh = col.items.filter((i) => !seen.has(i.id));
+      if (fresh.length < 4) continue;
+      fresh.forEach((i) => seen.add(i.id));
 
-      /* Stable partition: this collection's own ranking, but anything already
-         on the page sinks to the back. A rail therefore repeats only when it
-         genuinely has nothing else to say. */
-      const novel = pool.filter((i) => !seen.has(i.id));
-      const repeat = pool.filter((i) => seen.has(i.id));
-      const fresh = novel.concat(repeat);
-
-      /* Would this rail just be the previous rail, reordered? */
-      if (novel.length < Math.min(8, Math.ceil(pool.length / 2))) continue;
-
-      /* Don't open two sections with the same picture. */
-      const lead = fresh.findIndex((i) => !led.has(i.id));
-      if (lead > 0) fresh.unshift(fresh.splice(lead, 1)[0]);
-
-      const items = fresh.slice(0, 18);
-      led.add(items[0].id);
-      items.forEach((i) => seen.set(i.id, (seen.get(i.id) || 0) + 1));
-      page.appendChild(section(col, items, app));
+      const items = fresh.slice(0, spec.layout === "editorial" ? 8 : spec.layout === "masonry" ? 14 : 18);
+      page.appendChild(section(col, items, app, {
+        layout: spec.layout,
+        wide: spec.wide,
+        refresh: spec.refresh,
+        onSeeAll: () => seeAll(app, spec.seeAll),
+      }));
       budget--;
     }
 
-    /* Nothing scored well enough for a rail (very small library) — fall back to
-       a plain grid rather than showing an empty page. */
+    /* Nothing surfaced (very small library) — fall back to a plain grid. */
     if (!page.querySelector(".section")) {
       const recent = d.all.slice().sort((a, b) => (b.capturedAt || 0) - (a.capturedAt || 0)).slice(0, 18);
-      if (recent.length) page.appendChild(section({ id: "all", title: "Everything you've saved" }, recent, app));
+      if (recent.length) page.appendChild(section({ id: "all", title: "Everything you've saved", reasons: recent.map(() => "") }, recent, app, { layout: "rail" }));
     }
 
     mount.appendChild(page);
@@ -132,9 +136,17 @@
       line.appendChild(link(num(stats.videos) + " videos", () => app.go("watch")));
     }
 
-    return h(".greet",
-      h("h1", { text: salutation + "." }),
-      line
+    return h(".discover__head",
+      h(".greet",
+        h("h1", { text: salutation + "." }),
+        line
+      ),
+      h("button.discover__refresh", {
+        type: "button",
+        "aria-label": "Refresh discoveries",
+        title: "Refresh discoveries",
+        html: icon("refresh", 18) + "<span>Refresh</span>",
+      })
     );
   }
 
@@ -142,6 +154,23 @@
     const a = h("a", { href: "#", text });
     a.addEventListener("click", (e) => { e.preventDefault(); fn(); });
     return a;
+  }
+
+  /* Wire the greeting's refresh button after it mounts. Done from render via a
+     microtask so the node is in the tree. */
+  function bindRefresh() {
+    const btn = document.querySelector(".discover__refresh");
+    if (!btn || btn.dataset.bound) return;
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", () => {
+      btn.disabled = true;
+      btn.classList.add("is-spinning");
+      St.newDiscoveryCycle();
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        btn.disabled = false;
+        btn.classList.remove("is-spinning");
+      }));
+    });
   }
 
   /* ----------------------------------------------------------------- hero -- */
@@ -206,30 +235,70 @@
   }
 
   /* -------------------------------------------------------------- section -- */
-  function section(col, items, app) {
-    const wide = col.id === "continue" || col.id === "deep-dives";
-    const el = h(".section" + (wide ? ".section--wide" : ""));
+  /* One head, three bodies. A rail is the default; an editorial grid and a
+     masonry block break the rhythm. A section may carry a Refresh action
+     (Fresh discoveries) and a custom "see all" destination. */
+  function section(col, items, app, opts) {
+    const o = opts || {};
+    const layout = o.layout || "rail";
+    if (layout === "editorial") return editorialSection(col, items, app, o);
+    if (layout === "masonry") return masonrySection(col, items, app, o);
+    return railSection(col, items, app, o);
+  }
 
-    const titles = h(".section__titles",
+  function sectionHead(col, items, app, opts) {
+    const o = opts || {};
+    const el = h(".section__head");
+
+    el.appendChild(h(".section__titles",
       h("h2", { text: col.title }),
       SUBTITLE[col.id] || col.subtitle ? h("p", { text: SUBTITLE[col.id] || col.subtitle }) : null
-    );
+    ));
 
-    const nav = h(".section__nav");
-    const prev = h("button.iconctl", { type: "button", "aria-label": "Scroll left", html: icon("chevronLeft", 18) });
-    const next = h("button.iconctl", { type: "button", "aria-label": "Scroll right", html: icon("chevronRight", 18) });
-    nav.appendChild(prev);
-    nav.appendChild(next);
+    const right = h(".section__head-right");
 
-    const right = h("div", { style: { display: "flex", alignItems: "center", gap: "6px" } });
-    if (col.total && col.total > items.length) {
-      const more = h("button.section__more", { type: "button", text: "See all " + col.total });
-      more.addEventListener("click", () => app.openCollection(col.id));
+    if (o.refresh) {
+      const refresh = h("button.section__refresh", {
+        type: "button",
+        "aria-label": "Refresh these discoveries",
+        title: "Refresh",
+        html: icon("refresh", 16) + "<span>Refresh</span>",
+      });
+      refresh.addEventListener("click", () => {
+        refresh.disabled = true;
+        refresh.classList.add("is-spinning");
+        St.newDiscoveryCycle();
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          refresh.disabled = false;
+          refresh.classList.remove("is-spinning");
+        }));
+      });
+      right.appendChild(refresh);
+    }
+
+    if (o.seeAll && col.total > items.length) {
+      const more = h("button.section__more", { type: "button", text: "See all " + num(col.total) });
+      more.addEventListener("click", o.seeAll);
       right.appendChild(more);
     }
-    right.appendChild(nav);
 
-    el.appendChild(h(".section__head", titles, right));
+    if (o.nav) {
+      const prev = h("button.iconctl", { type: "button", "aria-label": "Scroll left", html: icon("chevronLeft", 18) });
+      const next = h("button.iconctl", { type: "button", "aria-label": "Scroll right", html: icon("chevronRight", 18) });
+      el.__nav = { prev, next };
+      right.appendChild(h(".section__nav", prev, next));
+    }
+
+    if (right.childElementCount) el.appendChild(right);
+    return el;
+  }
+
+  function railSection(col, items, app, opts) {
+    const o = opts || {};
+    const el = h(".section" + (o.wide ? ".section--wide" : ""));
+
+    const head = sectionHead(col, items, app, Object.assign({ nav: true }, o));
+    el.appendChild(head);
 
     const scroller = h(".rail-scroll", { role: "list", "aria-label": col.title });
     items.forEach((item, i) => {
@@ -237,39 +306,77 @@
       wrap.appendChild(root.XBCard.card(item, {
         fixed: true,
         size: "small",
-        why: col.reasons && col.reasons[i] ? shortReason(col.reasons[i]) : "",
+        why: shortReason(col.reasons && col.reasons[col.items.indexOf(item)]),
         onOpen: () => app.openItem(item, items),
       }));
       scroller.appendChild(wrap);
     });
     el.appendChild(scroller);
 
-    const page = () => Math.max(240, scroller.clientWidth * 0.82);
-    prev.addEventListener("click", () => scroller.scrollBy({ left: -page(), behavior: "smooth" }));
-    next.addEventListener("click", () => scroller.scrollBy({ left: page(), behavior: "smooth" }));
+    if (head.__nav) {
+      const { prev, next } = head.__nav;
+      const page = () => Math.max(240, scroller.clientWidth * 0.82);
+      prev.addEventListener("click", () => scroller.scrollBy({ left: -page(), behavior: "smooth" }));
+      next.addEventListener("click", () => scroller.scrollBy({ left: page(), behavior: "smooth" }));
+      const navEl = head.querySelector(".section__nav");
+      const sync = () => {
+        const max = scroller.scrollWidth - scroller.clientWidth - 2;
+        prev.disabled = scroller.scrollLeft <= 2;
+        next.disabled = scroller.scrollLeft >= max;
+        if (navEl) navEl.hidden = max <= 0;
+      };
+      scroller.addEventListener("scroll", sync, { passive: true });
+      requestAnimationFrame(sync);
+    }
 
-    const sync = () => {
-      const max = scroller.scrollWidth - scroller.clientWidth - 2;
-      prev.disabled = scroller.scrollLeft <= 2;
-      next.disabled = scroller.scrollLeft >= max;
-      nav.hidden = max <= 0;
-    };
-    scroller.addEventListener("scroll", sync, { passive: true });
-    requestAnimationFrame(sync);
+    return el;
+  }
 
+  /* --- asymmetric editorial grid ------------------------------------------- */
+  function editorialSection(col, items, app, opts) {
+    const el = h(".section.section--editorial");
+    el.appendChild(sectionHead(col, items, app, opts || {}));
+
+    const grid = h(".editorial", { role: "list", "aria-label": col.title });
+    items.forEach((item, i) => {
+      const cls = i === 0 ? "editorial__lead" : "editorial__cell";
+      const wrap = h("div." + cls, { role: "listitem" });
+      wrap.appendChild(root.XBCard.card(item, {
+        fixed: true,
+        size: "medium",
+        why: shortReason(col.reasons && col.reasons[col.items.indexOf(item)]),
+        onOpen: () => app.openItem(item, items),
+      }));
+      grid.appendChild(wrap);
+    });
+    el.appendChild(grid);
+    return el;
+  }
+
+  /* --- masonry block -------------------------------------------------------- */
+  function masonrySection(col, items, app, opts) {
+    const el = h(".section.section--masonry");
+    el.appendChild(sectionHead(col, items, app, opts || {}));
+
+    const grid = h(".masonry", { role: "list", "aria-label": col.title });
+    items.forEach((item, i) => {
+      const wrap = h("div.masonry__item", { role: "listitem" });
+      wrap.appendChild(root.XBCard.card(item, {
+        fixed: false,
+        size: "small",
+        why: shortReason(col.reasons && col.reasons[col.items.indexOf(item)]),
+        onOpen: () => app.openItem(item, items),
+      }));
+      grid.appendChild(wrap);
+    });
+    el.appendChild(grid);
     return el;
   }
 
   /* A rail reason is a sentence; a card can hold about three words. */
   function shortReason(reason) {
     const r = String(reason || "");
-    if (/^Resume/.test(r)) return r.replace(/^Resume · /, "");
-    if (/unseen|never opened|unopened/i.test(r)) return "Unseen";
-    if (/likes/.test(r)) return r.split(" · ")[0];
-    if (/^Saved/.test(r)) return r.replace("Saved ", "");
-    if (/quick watch/.test(r)) return r.split(" · ")[0];
-    if (/Last opened/.test(r)) return r.replace("Last opened ", "");
-    if (/^\d+ saves/.test(r)) return r.split(" · ")[0];
+    if (!r) return "";
     if (r.length > 18) return "";
     return r;
   }
@@ -294,5 +401,12 @@
     );
   }
 
-  root.XBDiscover = { render };
+  /* Wire the global refresh once the greeting mounts. */
+  const origRender = render;
+  function renderAndBind(mount, app) {
+    origRender(mount, app);
+    requestAnimationFrame(bindRefresh);
+  }
+
+  root.XBDiscover = { render: renderAndBind };
 })(window);
