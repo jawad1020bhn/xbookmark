@@ -1,5 +1,5 @@
 /* AUTO-GENERATED — do not edit.
-   Mirrored from shared/m3e/media.js by tools/sync-shared.mjs.
+   Mirrored from dashboard/m3e/media.js by tools/sync-shared.mjs.
    Edit the original and re-run:  node tools/sync-shared.mjs
 */
 /* =============================================================================

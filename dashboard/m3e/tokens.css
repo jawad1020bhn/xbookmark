@@ -1,5 +1,5 @@
 /* AUTO-GENERATED — do not edit.
-   Mirrored from shared/m3e/tokens.css by tools/sync-shared.mjs.
+   Mirrored from dashboard/m3e/tokens.css by tools/sync-shared.mjs.
    Edit the original and re-run:  node tools/sync-shared.mjs
 */
 /* =============================================================================
@@ -12,7 +12,7 @@
      md.comp.*  component   per-component overrides, declared beside components
 
    Colour system tokens (--md-sys-color-*) are NOT declared here: they are
-   emitted at runtime by shared/m3e/theme.js from the dynamic colour engine,
+   emitted at runtime by dashboard/m3e/theme.js from the dynamic colour engine,
    so that seed / variant / contrast / scheme changes are a single repaint.
    ============================================================================= */
 

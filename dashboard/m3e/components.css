@@ -1,5 +1,5 @@
 /* AUTO-GENERATED — do not edit.
-   Mirrored from shared/m3e/components.css by tools/sync-shared.mjs.
+   Mirrored from dashboard/m3e/components.css by tools/sync-shared.mjs.
    Edit the original and re-run:  node tools/sync-shared.mjs
 */
 /* =============================================================================
@@ -239,7 +239,7 @@ body {
 .m3e-state[aria-disabled="true"]::before,
 .m3e-state:disabled::before { opacity: 0; }
 
-/* Ripple — spawned by shared/m3e/interactions.js on pointerdown. */
+/* Ripple — spawned by dashboard/m3e/interactions.js on pointerdown. */
 .m3e-ripple {
   position: absolute;
   border-radius: 50%;

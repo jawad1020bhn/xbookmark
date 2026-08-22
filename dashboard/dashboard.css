@@ -4,7 +4,7 @@
    Previously three files (styles.css / ui-enhancements.css / product-redesign.css)
    were loaded in cascade order. They are merged here in the same order so the
    behaviour is identical, then the 'Upgrade' section on top adds the current
-   visual direction. The shared design system (shared/m3e/*) is still loaded
+   visual direction. The shared design system (dashboard/m3e/*) is still loaded
    separately and unchanged.
    ============================================================================= */
 

@@ -17,7 +17,7 @@
 
 const THEME_KEY = "bmPopupTheme";
 
-/** Brand badge colours — keep in lockstep with shared/m3e/color.js defaults. */
+/** Brand badge colours — keep in lockstep with dashboard/m3e/color.js defaults. */
 const BADGE = {
   light: { color: "#373cff", text: "#ffffff" },
   dark: { color: "#d0bcff", text: "#001999" },
