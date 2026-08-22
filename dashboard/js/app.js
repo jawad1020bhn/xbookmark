@@ -72,6 +72,8 @@
   let settingsOverlay;
   let dataOverlay;
   let savedViewsOverlay;
+  let confirmOverlay;
+  let promptOverlay;
   let viewerOpen = false;
   let viewerIndex = 0;
   let viewerList = [];
@@ -113,6 +115,15 @@
     if (days < 30) return days + "d ago";
     if (days < 365) return Math.floor(days / 30) + "mo ago";
     return Math.floor(days / 365) + "y ago";
+  }
+
+  function fmtWatchTime(ms) {
+    const minutes = Math.round((Number(ms) || 0) / 60000);
+    if (!minutes) return "—";
+    if (minutes < 60) return minutes + "m";
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return m ? h + "h " + m + "m" : h + "h";
   }
 
   function savedLabel(ms) {
@@ -486,14 +497,10 @@
       </div>
       <p class="m3e-label-large hero__kicker">Your private visual archive</p>
       <h1 class="m3e-headline-medium m3e-headline-medium--emphasized">Your bookmarks, visualized.</h1>
-      <p class="m3e-body-large empty__lead">Turn an X bookmark export into searchable rails, smart collections and a distraction-free viewer. Your data stays on this device.</p>
+      <p class="m3e-body-large empty__lead">Import an X bookmarks export and it becomes searchable rails, smart collections and a distraction-free viewer — all kept on this device.</p>
       <div class="empty__actions">
         <button class="m3e-button m3e-button--filled m3e-state" data-act="import">Import bookmarks</button>
         <button class="m3e-button m3e-button--tonal m3e-state" data-act="sample">Browse sample library</button>
-      </div>
-      <div class="empty__after">
-        <h3 class="m3e-title-small">After import</h3>
-        <p class="m3e-body-small">Your library automatically creates collections for recent, unseen, popular, forgotten, and in-progress media — so you can rediscover what you saved without scrolling.</p>
       </div>
       <ol class="empty__steps" aria-label="Getting started">
         <li><strong>1</strong><span><b>Connect</b><small>Open X bookmarks</small></span></li>
@@ -536,11 +543,14 @@
     } else {
       suggestions = `<div class="empty__suggest"><button class="m3e-button m3e-button--tonal m3e-state" data-suggest="explore">Explore another collection</button></div>`;
     }
+    const glyph = hasSearch
+      ? '<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>'
+      : '<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M7 12h10M10 17h4"/></svg>';
     el.innerHTML =
-      "<h2 class=\"m3e-title-large\">" + escapeHtml(title) + "</h2>" +
+      '<div class="empty__glyph">' + glyph + '</div>' +
+      "<h2 class=\"m3e-title-large m3e-title-large--emphasized\">" + escapeHtml(title) + "</h2>" +
       "<p class=\"m3e-body-medium empty__reason\">" + escapeHtml(reason) + "</p>" +
-      suggestions +
-      "<p class=\"m3e-body-small empty__tip\">What should you do next? Try a suggestion above.</p>";
+      suggestions;
     const bind = (sel, fn) => { const b = el.querySelector(sel); if (b) b.onclick = fn; };
     bind('[data-suggest="clear"]', () => {
       prefs.filters = {};
@@ -605,32 +615,58 @@
     const inProgress = working.filter((item) => item.progress && item.progress.t >= 3).length;
     const newSince = working.filter((i) => !i.viewedAt).length;
 
-    // Editorial hero
+    // Editorial hero — one statement, four numbers, a way back in.
     const hero = document.createElement("header");
     hero.className = "hero hero--archive";
     const totalCaptures = bookmarks.length;
     const heroLine = newSince
       ? (newSince === working.length ? "Everything is waiting — start with Top picks." : newSince + " things are waiting for you.")
       : "Nothing is waiting — explore something forgotten.";
-    // Also show last opened item as continue memory
-    const lastId = prefs.lastItemId;
-    const lastItem = lastId ? working.find((i) => i.id === lastId) : null;
-    const continueMem = lastItem && lastItem.progress
-      ? `<div class="hero__continue">Continue from ${Math.round((lastItem.progress.t / (lastItem.progress.d || 60)) * 100)}% · <a href="#" data-act="continue">${escapeHtml(lastItem.author || "your last view")}</a></div>`
+    const totalVideoMs = working.reduce((sum, i) => sum + ((i.type === "video" || i.type === "animated_gif") ? (i.duration || 0) : 0), 0);
+    const unseenCount = working.filter((i) => i.unseen).length;
+    const heroStat = (label, value, warn) =>
+      '<div class="hero-stat' + (warn ? " is-warn" : "") + '"><b>' + value + "</b><span>" + label + "</span></div>";
+    const warnChip = unavailable
+      ? ' <span class="hero__warn">' + unavailable.toLocaleString() + " unavailable</span>"
       : "";
     hero.innerHTML =
-      "<p class=\"m3e-label-large hero__kicker\">Your visual archive</p>" +
-      "<h1 class=\"m3e-display-small m3e-display-small--emphasized\">Your visual archive</h1>" +
-      "<p class=\"m3e-body-large hero__sub\">" + working.length.toLocaleString() + " media saved across " + totalCaptures.toLocaleString() + " posts</p>" +
-      "<p class=\"m3e-body-medium hero__dynamic\">" + escapeHtml(heroLine) + "</p>" +
-      continueMem +
-      '<div class="library-health" aria-label="Library health">' +
-      '<span><b>' + recentCount.toLocaleString() + '</b> new</span>' +
-      '<span><b>' + unseenVideos.toLocaleString() + '</b> unwatched</span>' +
-      '<span><b>' + inProgress.toLocaleString() + '</b> in progress</span>' +
-      '<span class="' + (unavailable ? "has-warning" : "") + '"><b>' + unavailable.toLocaleString() + '</b> unavailable</span>' +
+      "<p class=\"m3e-label-large hero__kicker\">Private visual archive</p>" +
+      "<h1 class=\"m3e-display-small m3e-display-small--emphasized\">" + escapeHtml(heroLine) + "</h1>" +
+      "<p class=\"m3e-body-large hero__sub\">" + working.length.toLocaleString() + " media across " + totalCaptures.toLocaleString() + " posts · everything stays on this device" + warnChip + "</p>" +
+      '<div class="hero__stats" aria-label="Library summary">' +
+      heroStat("Media items", working.length.toLocaleString()) +
+      heroStat("Posts", totalCaptures.toLocaleString()) +
+      heroStat("Unseen", unseenCount.toLocaleString()) +
+      heroStat("Video time", fmtWatchTime(totalVideoMs)) +
       "</div>";
     main.appendChild(hero);
+    // Spotlight: jump straight back into the thing you were watching.
+    const lastId = prefs.lastItemId;
+    const lastItem = lastId ? working.find((i) => i.id === lastId) : null;
+    const contCol = cols.find((c) => c.id === "continue");
+    const spot = (lastItem && lastItem.progress ? lastItem : (contCol && contCol.items[0])) || null;
+    if (spot && spot.progress) {
+      const pct = Math.min(100, Math.round((spot.progress.t / (spot.progress.d || spot.duration || 1)) * 100));
+      const spotEl = document.createElement("button");
+      spotEl.type = "button";
+      spotEl.className = "spotlight m3e-state";
+      spotEl.setAttribute("aria-label", "Resume " + (spot.author ? "@" + spot.author : "your last view") + " at " + pct + "%");
+      const img = document.createElement("img");
+      img.src = M3EMedia.sizedImage(spot.media.poster || spot.media.url, "medium");
+      img.alt = "";
+      spotEl.appendChild(img);
+      spotEl.innerHTML +=
+        '<span class="spotlight__scrim" aria-hidden="true"></span>' +
+        '<span class="spotlight__progress" style="--p:' + pct + '%" aria-hidden="true"></span>' +
+        '<span class="spotlight__body">' +
+        '<span class="spotlight__kicker">Resume watching</span>' +
+        "<strong>@" + escapeHtml(spot.author || "unknown") + "</strong>" +
+        '<span class="spotlight__meta">' + pct + "% watched · " + (spot.duration ? escapeHtml(M3EMedia.formatDuration(spot.duration)) : "") + (spot.capturedAt ? " · saved " + relative(spot.capturedAt) : "") + "</span>" +
+        "</span>" +
+        '<span class="spotlight__play" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M8 5.14v14l11-7z"/></svg></span>';
+      spotEl.addEventListener("click", () => openViewer(spot.id, working));
+      main.appendChild(spotEl);
+    }
     // Timeline map — optional navigation tool for large archives
     if (working.length > 24) {
       const buckets = new Map();
@@ -660,8 +696,7 @@
         hero.appendChild(mapEl);
       }
     }
-    const cont = hero.querySelector("[data-act=continue]");
-    if (cont) cont.addEventListener("click", (e) => { e.preventDefault(); if (lastItem) openViewer(lastItem.id, working); });
+
 
     visibleCols.forEach((col) => {
       const section = document.createElement("section");
@@ -676,10 +711,8 @@
       if (count > 8) seeAll = '<button type="button" class="m3e-button m3e-button--text m3e-button--xs m3e-state" data-see-all>See all →</button>';
       else if (count > 4) seeAll = '<span class="m3e-label-medium rail__count">' + count.toLocaleString() + '</span>';
       // else tiny -> no count no action
-      const subtitle = col.subtitle ? "<p class=\"m3e-body-small rail__subtitle\">" + escapeHtml(col.subtitle) + "</p>" : "";
       head.innerHTML =
         "<div><h2 class=\"m3e-title-medium m3e-title-medium--emphasized\">" + escapeHtml(col.title) + "</h2>" +
-        subtitle +
         "<p class=\"m3e-body-small rail__hint\">" + escapeHtml(col.hint) + "</p></div>" +
         '<div class="rail__head-actions">' + seeAll + '</div>';
       const sa = head.querySelector("[data-see-all]");
@@ -816,7 +849,7 @@
       <div class="workspace-bar__primary">
         <h2 class="m3e-title-large workspace-bar__count">${total.toLocaleString()} media</h2>
         <p class="m3e-body-small workspace-bar__meta">
-          ${railSelection ? '<span class="workspace-bar__collection">UNSEEN · ' + escapeHtml(collectionLabel) + '</span> · ' : ''}Showing ${total.toLocaleString()}${prefs.search ? ' · <span class="workspace-bar__search">“' + escapeHtml(prefs.search) + '”</span>' : ''}${activeFilters ? ' · filter · ' + activeFilters : ''}
+          ${railSelection ? '<span class="workspace-bar__collection">' + escapeHtml(collectionLabel) + '</span>' : ''}${prefs.search ? '<span class="workspace-bar__search">“' + escapeHtml(prefs.search) + '”</span>' : ''}${activeFilters ? '<span class="workspace-bar__filters">' + activeFilters + ' filter' + (activeFilters === 1 ? '' : 's') + '</span>' : ''}
         </p>
         <p class="m3e-body-small workspace-bar__hint">${escapeHtml(hint)}</p>
       </div>
@@ -863,7 +896,7 @@
         b.type = "button";
         b.className = "m3e-chip m3e-state";
         b.textContent = v.name;
-        b.title = JSON.stringify(v.state);
+        b.title = viewSummary(v);
         b.onclick = () => {
           prefs.search = v.state.search || "";
           prefs.filters = v.state.filters || {};
@@ -921,13 +954,18 @@
       snackbar.show("Select items, or right-click any card");
     };
     $("[data-grid-act=save]", toolbar).onclick = () => {
-      const name = prompt("Name this view", prefs.search || railSelection?.title || "My view");
-      if (!name) return;
-      prefs.savedViews = prefs.savedViews || [];
-      prefs.savedViews.push({ name, state: { search: prefs.search, filters: Object.assign({}, prefs.filters), sort: prefs.sort, layoutMode: prefs.layoutMode, groupBy: prefs.groupBy } });
-      persistPrefs();
-      render();
-      snackbar.show('Saved view "' + name + '"');
+      askPrompt("Give this view a name you'll recognize later.", {
+        title: "Save view",
+        confirmLabel: "Save view",
+        value: prefs.search || railSelection?.title || "My view",
+      }).then((name) => {
+        if (!name) return;
+        prefs.savedViews = prefs.savedViews || [];
+        prefs.savedViews.push({ name, state: { search: prefs.search, filters: Object.assign({}, prefs.filters), sort: prefs.sort, layoutMode: prefs.layoutMode, groupBy: prefs.groupBy } });
+        persistPrefs();
+        render();
+        snackbar.show('Saved view "' + name + '"');
+      });
     };
 
     if (!filtered.length) {
@@ -977,6 +1015,19 @@
     }
   }
 
+  function viewSummary(view) {
+    const s = view && view.state ? view.state : {};
+    const bits = [];
+    if (s.search) bits.push('search “' + s.search + '”');
+    const f = s.filters || {};
+    if (f.kind) bits.push(f.kind + " only");
+    if (f.author) bits.push("@" + f.author);
+    if (f.seen) bits.push(f.seen);
+    if (s.sort && s.sort !== "newest_posted") bits.push(sortLabel(s.sort).toLowerCase());
+    if (s.groupBy && s.groupBy !== "none") bits.push("grouped by " + s.groupBy);
+    return bits.length ? bits.join(" · ") : "All items, newest first";
+  }
+
   function sizeBtn(id, label) {
     const on = prefs.tileSize === id;
     return '<button type="button" class="m3e-segmented__item m3e-state" data-size="' + id + '" aria-pressed="' + on + '">' + label + "</button>";
@@ -1011,7 +1062,7 @@
         <div class="watch-filters">${watchOpts}</div>
         <button type="button" class="command-button m3e-state" id="cinemaBtn">${prefs.cinemaMode ? "Exit Cinema" : "Cinema"}</button>
       </div>
-      <div class="watch-head__tip m3e-label-small">↑ swipe to continue ·  <span id="watchPos">1 / ${total}</span></div>
+      <div class="watch-head__tip m3e-label-small"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg> swipe to continue · <span id="watchPos">1 / ${total}</span></div>
     `;
     main.appendChild(watchHeader);
     watchHeader.querySelectorAll("[data-watch-filter]").forEach((b) => {
@@ -1417,6 +1468,71 @@
     updateBulkBar();
   }
 
+  /* ---- in-app dialogs (replace native confirm / prompt) ------------------ */
+  /* Overlays dismiss on Escape / scrim click too, so a pending promise must
+     settle from the overlay's onClose as well as from the explicit buttons. */
+  let pendingConfirm = null;
+  let pendingPrompt = null;
+
+  function settleDialog(box, value) {
+    if (!box || box.settled) return;
+    box.settled = true;
+    box.resolve(value);
+  }
+
+  function askConfirm(message, options) {
+    const o = options || {};
+    return new Promise((resolve) => {
+      const box = { resolve, settled: false };
+      pendingConfirm = box;
+      const title = $(".m3e-dialog__title", $("#confirmDialog"));
+      const body = $("#confirmBody");
+      const ok = $("#confirmOk");
+      const cancel = $("#confirmCancel");
+      if (title) title.textContent = o.title || "Are you sure?";
+      body.textContent = message;
+      ok.textContent = o.confirmLabel || "Confirm";
+      ok.className = "m3e-button m3e-state" + (o.danger ? " m3e-button--filled m3e-button--danger" : " m3e-button--filled");
+      const finish = (value) => {
+        settleDialog(box, value);
+        if (confirmOverlay.isOpen) confirmOverlay.close();
+      };
+      ok.onclick = () => finish(true);
+      cancel.onclick = () => finish(false);
+      confirmOverlay.open();
+      cancel.focus();
+    });
+  }
+
+  function askPrompt(message, options) {
+    const o = options || {};
+    return new Promise((resolve) => {
+      const box = { resolve, settled: false };
+      pendingPrompt = box;
+      const title = $(".m3e-dialog__title", $("#promptDialog"));
+      const body = $("#promptBody");
+      const input = $("#promptInput");
+      const ok = $("#promptOk");
+      const cancel = $("#promptCancel");
+      if (title) title.textContent = o.title || "Name this view";
+      if (body) body.textContent = message;
+      input.value = o.value || "";
+      ok.textContent = o.confirmLabel || "Save view";
+      const finish = (value) => {
+        settleDialog(box, value);
+        if (promptOverlay.isOpen) promptOverlay.close();
+      };
+      ok.onclick = () => finish(input.value.trim());
+      cancel.onclick = () => finish(null);
+      input.onkeydown = (e) => {
+        if (e.key === "Enter") { e.preventDefault(); finish(input.value.trim()); }
+      };
+      promptOverlay.open();
+      input.focus();
+      input.select();
+    });
+  }
+
   function showUndo(message, undo) {
     const host = $("#snackbar");
     const action = $(".m3e-snackbar__action", host);
@@ -1473,7 +1589,11 @@
   }
 
   async function confirmRemove(item) {
-    if (!confirm("Remove this media item from the library? The source post is kept if it has other attachments.")) return;
+    const ok = await askConfirm(
+      "Remove this media item from the library? The source post is kept if it has other attachments.",
+      { title: "Remove media", confirmLabel: "Remove", danger: true }
+    );
+    if (!ok) return;
     await removeItems([item.id], true);
   }
 
@@ -1501,6 +1621,7 @@
   }
 
   function syncChrome() {
+    document.body.dataset.view = prefs.visualization;
     $$("[data-view]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === prefs.visualization)));
     $("#search").value = prefs.search || "";
     $("#search").placeholder = prefs.search && railSelection ? "Search within " + railSelection.title + "…" : "Search your library…";
@@ -1580,7 +1701,7 @@
     if (!panel) return;
     const countEl = $("#searchResultCount");
     const hint = $("#searchHint");
-    if (countEl) countEl.textContent = filtered.length.toLocaleString() + " results · Search across media, captions, authors and alt text";
+    if (countEl) countEl.textContent = filtered.length.toLocaleString() + " results";
     if (hint) hint.textContent = prefs.search && railSelection ? "Searching within " + railSelection.title : "Search across media, captions, authors and alt text";
     // recent
     const recentWrap = $("#searchRecent");
@@ -1643,6 +1764,12 @@
       density: prefs.density || "comfortable",
       reducedMotion: !!prefs.reduceMotion,
     });
+    // Keep the browser chrome (tab strip, address bar) in sync with the app surface.
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) {
+      const roles = (theme.current && theme.current.roles) || {};
+      meta.setAttribute("content", roles.surface || (M3ETheme.prefersDark() ? "#1D1B20" : "#FEF7FF"));
+    }
   }
 
   /* ---- settings / data --------------------------------------------------- */
@@ -1827,15 +1954,25 @@
         navigator.clipboard.writeText(url).then(() => snackbar.show("Link to this view copied"), () => snackbar.show("Couldn’t copy"));
       }
       if (act.dataset.act === "clear-progress") {
-        if (!confirm("Clear saved video progress? The library stays intact.")) return;
-        library.progress = {};
-        persistLibrary();
-        snackbar.show("Video history cleared");
-        openData();
+        askConfirm("Clear saved video progress? The library itself stays intact.", {
+          title: "Clear video history",
+          confirmLabel: "Clear history",
+        }).then((ok) => {
+          if (!ok) return;
+          library.progress = {};
+          persistLibrary();
+          snackbar.show("Video history cleared");
+          openData();
+        });
       }
       if (act.dataset.act === "clear-all") {
-        if (!confirm("Delete the entire captured library from this browser? Exports you already saved are untouched.")) return;
-        wipeLibrary();
+        askConfirm("Delete the entire captured library from this browser? Exports you already saved are untouched.", {
+          title: "Clear entire library",
+          confirmLabel: "Delete everything",
+          danger: true,
+        }).then((ok) => {
+          if (ok) wipeLibrary();
+        });
       }
     };
   }
@@ -2126,6 +2263,16 @@
     settingsOverlay = createOverlay({ element: $("#settings"), scrim: $("#scrim") });
     dataOverlay = createOverlay({ element: $("#dataDialog"), scrim: $("#scrim") });
     savedViewsOverlay = createOverlay({ element: $("#savedViewsDialog"), scrim: $("#scrim") });
+    confirmOverlay = createOverlay({
+      element: $("#confirmDialog"),
+      scrim: $("#confirmScrim"),
+      onClose: () => { settleDialog(pendingConfirm, false); pendingConfirm = null; },
+    });
+    promptOverlay = createOverlay({
+      element: $("#promptDialog"),
+      scrim: $("#promptScrim"),
+      onClose: () => { settleDialog(pendingPrompt, null); pendingPrompt = null; },
+    });
     theme = M3ETheme.createController({ scheme: "system", density: "comfortable" });
 
     const loaded = await XBStore.loadAll();
@@ -2284,7 +2431,13 @@
         download("x-bookmarks-selection.json", JSON.stringify({ export_version: 2, exported_at: new Date().toISOString(), bookmarks: posts }, null, 2));
         snackbar.show("Selection export ready");
       }
-      if (action.dataset.bulk === "delete" && confirm("Delete " + ids.length + " selected media items?")) removeItems(ids, true);
+      if (action.dataset.bulk === "delete") {
+        const ok = await askConfirm(
+          "Delete " + ids.length + " selected media item" + (ids.length === 1 ? "" : "s") + " from the library?",
+          { title: "Delete selection", confirmLabel: "Delete", danger: true }
+        );
+        if (ok) removeItems(ids, true);
+      }
     });
     $("#importFile").addEventListener("change", async (e) => {
       const file = e.target.files && e.target.files[0];
@@ -2314,7 +2467,15 @@
     // viewer auto-hide on mouse idle
     $("#viewer").addEventListener("mousemove", scheduleViewerHide);
     $("#viewer").addEventListener("pointermove", scheduleViewerHide);
-    bindEscape(() => { if (viewerOpen) closeViewer(); });
+    bindEscape(() => {
+      if (viewerOpen) closeViewer();
+      else if (!$("#filterSheet").hidden) closeFilters();
+      else if (selectionMode || selectedIds.size) {
+        selectedIds.clear();
+        selectionMode = false;
+        updateBulkBar();
+      }
+    });
     document.addEventListener("keydown", (e) => {
       const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
       if (!viewerOpen) {
@@ -2325,7 +2486,7 @@
         if (key === "g") $("[data-view=grid]").click();
         if (key === "w") $("[data-view=reels]").click();
         if (key === "f") openFilters();
-        if (key === "s") openSort($("#sortBtn"));
+        if (key === "s") openSort($("[data-grid-act=sort]") || $("#sortBtn"));
         if (key === "c" && prefs.visualization === "grid") {
           // toggle cinema for watch? ignore
         }

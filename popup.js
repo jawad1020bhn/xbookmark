@@ -2,7 +2,7 @@
    X Bookmarks Exporter · Popup
    Material Design 3 Expressive
 
-   Colour, tokens, and interactions come from shared/m3e/*. This file owns only
+   Colour, tokens, and interactions come from dashboard/m3e/*. This file owns only
    popup behaviour: mirroring capture state into the UI, driving the transport
    controls, and exporting.
 
@@ -14,7 +14,7 @@
 (() => {
   "use strict";
 
-  // M3E is published by shared/m3e/interactions.js. If that script failed to
+  // M3E is published by dashboard/m3e/interactions.js. If that script failed to
   // load, surface a clear message instead of throwing on destructure — the
   // classic "Cannot destructure property of undefined" that blanked the popup.
   const M3E = window.M3E;
