@@ -96,21 +96,6 @@ body {
   justify-content: flex-end;
 }
 
-.appbar__import {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  white-space: nowrap;
-}
-
-@media (max-width: 1080px) {
-  .appbar__import {
-    min-width: 40px;
-    padding-inline: 10px;
-  }
-  .appbar__import span { display: none; }
-}
-
 .chiprow {
   display: flex;
   align-items: center;
@@ -554,9 +539,6 @@ body {
   .appbar__brand { grid-area: brand; }
   .search { grid-area: search; }
   .appbar__tools { grid-area: tools; }
-  .views { display: none; }
-  .appbar__tools::before { content: none; }
-  /* compact view switcher as icon row is already in tools; show views below */
   .chiprow { padding-bottom: 4px; }
   .viewer.is-context .viewer__body {
     grid-template-columns: 1fr;
@@ -565,19 +547,6 @@ body {
   .viewer__nav { display: none; }
   .viewer.is-context .viewer__context {
     max-height: 42dvh;
-  }
-}
-
-/* mobile bottom visualization switcher */
-@media (max-width: 839px) {
-  .views {
-    display: flex;
-    position: fixed;
-    left: 50%;
-    bottom: calc(12px + env(safe-area-inset-bottom));
-    transform: translateX(-50%);
-    z-index: var(--md-sys-z-toolbar);
-    box-shadow: var(--md-sys-elevation-level3);
   }
 }
 
