@@ -117,6 +117,15 @@
     return Math.floor(days / 365) + "y ago";
   }
 
+  function fmtWatchTime(ms) {
+    const minutes = Math.round((Number(ms) || 0) / 60000);
+    if (!minutes) return "—";
+    if (minutes < 60) return minutes + "m";
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return m ? h + "h " + m + "m" : h + "h";
+  }
+
   function savedLabel(ms) {
     if (!ms) return "Recently";
     const d = Date.now() - ms;
@@ -606,31 +615,58 @@
     const inProgress = working.filter((item) => item.progress && item.progress.t >= 3).length;
     const newSince = working.filter((i) => !i.viewedAt).length;
 
-    // Editorial hero
+    // Editorial hero — one statement, four numbers, a way back in.
     const hero = document.createElement("header");
     hero.className = "hero hero--archive";
     const totalCaptures = bookmarks.length;
     const heroLine = newSince
       ? (newSince === working.length ? "Everything is waiting — start with Top picks." : newSince + " things are waiting for you.")
       : "Nothing is waiting — explore something forgotten.";
-    // Also show last opened item as continue memory
-    const lastId = prefs.lastItemId;
-    const lastItem = lastId ? working.find((i) => i.id === lastId) : null;
-    const continueMem = lastItem && lastItem.progress
-      ? `<div class="hero__continue">Continue from ${Math.round((lastItem.progress.t / (lastItem.progress.d || 60)) * 100)}% · <a href="#" data-act="continue">${escapeHtml(lastItem.author || "your last view")}</a></div>`
+    const totalVideoMs = working.reduce((sum, i) => sum + ((i.type === "video" || i.type === "animated_gif") ? (i.duration || 0) : 0), 0);
+    const unseenCount = working.filter((i) => i.unseen).length;
+    const heroStat = (label, value, warn) =>
+      '<div class="hero-stat' + (warn ? " is-warn" : "") + '"><b>' + value + "</b><span>" + label + "</span></div>";
+    const warnChip = unavailable
+      ? ' <span class="hero__warn">' + unavailable.toLocaleString() + " unavailable</span>"
       : "";
     hero.innerHTML =
       "<p class=\"m3e-label-large hero__kicker\">Private visual archive</p>" +
       "<h1 class=\"m3e-display-small m3e-display-small--emphasized\">" + escapeHtml(heroLine) + "</h1>" +
-      "<p class=\"m3e-body-large hero__sub\">" + working.length.toLocaleString() + " media saved across " + totalCaptures.toLocaleString() + " posts</p>" +
-      continueMem +
-      '<div class="library-health" aria-label="Library health">' +
-      '<span><b>' + recentCount.toLocaleString() + '</b> new</span>' +
-      '<span><b>' + unseenVideos.toLocaleString() + '</b> unwatched</span>' +
-      '<span><b>' + inProgress.toLocaleString() + '</b> in progress</span>' +
-      '<span class="' + (unavailable ? "has-warning" : "") + '"><b>' + unavailable.toLocaleString() + '</b> unavailable</span>' +
+      "<p class=\"m3e-body-large hero__sub\">" + working.length.toLocaleString() + " media across " + totalCaptures.toLocaleString() + " posts · everything stays on this device" + warnChip + "</p>" +
+      '<div class="hero__stats" aria-label="Library summary">' +
+      heroStat("Media items", working.length.toLocaleString()) +
+      heroStat("Posts", totalCaptures.toLocaleString()) +
+      heroStat("Unseen", unseenCount.toLocaleString()) +
+      heroStat("Video time", fmtWatchTime(totalVideoMs)) +
       "</div>";
     main.appendChild(hero);
+    // Spotlight: jump straight back into the thing you were watching.
+    const lastId = prefs.lastItemId;
+    const lastItem = lastId ? working.find((i) => i.id === lastId) : null;
+    const contCol = cols.find((c) => c.id === "continue");
+    const spot = (lastItem && lastItem.progress ? lastItem : (contCol && contCol.items[0])) || null;
+    if (spot && spot.progress) {
+      const pct = Math.min(100, Math.round((spot.progress.t / (spot.progress.d || spot.duration || 1)) * 100));
+      const spotEl = document.createElement("button");
+      spotEl.type = "button";
+      spotEl.className = "spotlight m3e-state";
+      spotEl.setAttribute("aria-label", "Resume " + (spot.author ? "@" + spot.author : "your last view") + " at " + pct + "%");
+      const img = document.createElement("img");
+      img.src = M3EMedia.sizedImage(spot.media.poster || spot.media.url, "medium");
+      img.alt = "";
+      spotEl.appendChild(img);
+      spotEl.innerHTML +=
+        '<span class="spotlight__scrim" aria-hidden="true"></span>' +
+        '<span class="spotlight__progress" style="--p:' + pct + '%" aria-hidden="true"></span>' +
+        '<span class="spotlight__body">' +
+        '<span class="spotlight__kicker">Resume watching</span>' +
+        "<strong>@" + escapeHtml(spot.author || "unknown") + "</strong>" +
+        '<span class="spotlight__meta">' + pct + "% watched · " + (spot.duration ? escapeHtml(M3EMedia.formatDuration(spot.duration)) : "") + (spot.capturedAt ? " · saved " + relative(spot.capturedAt) : "") + "</span>" +
+        "</span>" +
+        '<span class="spotlight__play" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M8 5.14v14l11-7z"/></svg></span>';
+      spotEl.addEventListener("click", () => openViewer(spot.id, working));
+      main.appendChild(spotEl);
+    }
     // Timeline map — optional navigation tool for large archives
     if (working.length > 24) {
       const buckets = new Map();
@@ -660,8 +696,7 @@
         hero.appendChild(mapEl);
       }
     }
-    const cont = hero.querySelector("[data-act=continue]");
-    if (cont) cont.addEventListener("click", (e) => { e.preventDefault(); if (lastItem) openViewer(lastItem.id, working); });
+
 
     visibleCols.forEach((col) => {
       const section = document.createElement("section");

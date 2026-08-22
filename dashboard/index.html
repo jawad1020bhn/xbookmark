@@ -6,12 +6,12 @@
   <meta name="theme-color" content="#1D1B20" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%235B4CF5'/%3E%3Cpath d='M6 7.5h12v2H6v-2Zm0 4h12v5.5a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-5.5Z' fill='white'/%3E%3C/svg%3E" />
   <title>Library · X Bookmarks</title>
-  <link rel="stylesheet" href="../shared/m3e/fonts.css" />
-  <link rel="stylesheet" href="../shared/m3e/tokens.css" />
-  <link rel="stylesheet" href="../shared/m3e/components.css" />
-  <link rel="stylesheet" href="styles.css" />
-  <link rel="stylesheet" href="ui-enhancements.css" />
-  <link rel="stylesheet" href="product-redesign.css" />
+  <!-- ?v= busts the browser cache when assets change (extension reloads and
+       local previews otherwise serve stale CSS/JS from cache). -->
+  <link rel="stylesheet" href="../shared/m3e/fonts.css?v=4" />
+  <link rel="stylesheet" href="../shared/m3e/tokens.css?v=4" />
+  <link rel="stylesheet" href="../shared/m3e/components.css?v=4" />
+  <link rel="stylesheet" href="dashboard.css?v=4" />
 </head>
 <body data-view="rails">
   <a class="skip" href="#stage">Skip to media</a>
@@ -221,14 +221,14 @@
 
   <input type="file" id="importFile" accept=".json,.jsonl,application/json" hidden />
 
-  <script src="../shared/m3e/color.js"></script>
-  <script src="../shared/m3e/theme.js"></script>
-  <script src="../shared/m3e/interactions.js"></script>
-  <script src="../shared/m3e/media.js"></script>
-  <script src="../shared/m3e/video-controls.js"></script>
-  <script src="js/demo.js"></script>
-  <script src="js/store.js"></script>
-  <script src="js/library.js"></script>
-  <script src="js/app.js"></script>
+  <script src="../shared/m3e/color.js?v=4"></script>
+  <script src="../shared/m3e/theme.js?v=4"></script>
+  <script src="../shared/m3e/interactions.js?v=4"></script>
+  <script src="../shared/m3e/media.js?v=4"></script>
+  <script src="../shared/m3e/video-controls.js?v=4"></script>
+  <script src="js/demo.js?v=4"></script>
+  <script src="js/store.js?v=4"></script>
+  <script src="js/library.js?v=4"></script>
+  <script src="js/app.js?v=4"></script>
 </body>
 </html>
