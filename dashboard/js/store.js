@@ -46,11 +46,15 @@
     markViewedOnOpen: true,
     restoreSession: true,
     shuffleSeed: 1,
+    shuffleStrategy: "smart",
+    shuffleScope: "results",
     lastItemId: null,
     lastScroll: 0,
     scrollPositions: {},
     railScrolls: {},
     recentSearches: [],
+    discoveryCycle: 1,
+    discoverySeed: 1,
     watchFilter: "all",
     savedViews: [],
     workspace: "discover",
@@ -58,6 +62,7 @@
     landing: "discover",
     viewerFilmstrip: false,
     viewerState: "standard",
+    viewerPaneWidth: 372,
     cinemaMode: false,
     focusMode: false,
     customSeed: "",
@@ -68,6 +73,7 @@
     archived: {},
     progress: {},
     lastOpened: {},
+    surfaced: {},
   };
 
   function hasChrome() {
@@ -128,6 +134,7 @@
     library.archived = library.archived || {};
     library.progress = library.progress || {};
     library.lastOpened = library.lastOpened || {};
+    library.surfaced = library.surfaced || {};
     const prefs = Object.assign({}, PREF_DEFAULTS, data[KEYS.prefs] || {});
     // backfill for upgrades
     if (!Array.isArray(prefs.recentSearches)) prefs.recentSearches = [];

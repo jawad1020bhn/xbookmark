@@ -18,13 +18,25 @@
     { id: "newest_posted", label: "Newest posted", group: "Time" },
     { id: "oldest_posted", label: "Oldest posted", group: "Time" },
     { id: "capture_order", label: "Capture order", group: "Time" },
+    { id: "forgotten", label: "Longest untouched", group: "Activity" },
     { id: "most_liked", label: "Most liked", group: "Engagement" },
     { id: "most_reposted", label: "Most reposted", group: "Engagement" },
     { id: "most_replied", label: "Most replied", group: "Engagement" },
     { id: "most_viewed", label: "Most viewed", group: "Engagement" },
     { id: "engagement", label: "Engagement rate", group: "Engagement" },
-    { id: "forgotten", label: "Longest untouched", group: "Rediscover" },
-    { id: "shuffle", label: "Shuffle", group: "Rediscover" },
+  ];
+
+  /* Random is the DEFAULT Library ordering — a stable, session-scoped random
+     sequence rather than a deterministic sort. Two modes: Balanced (the smart
+     mode — varied creators, posts and media types) and Pure random. Distinct
+     from the deterministic Sort options, which live in the overflow menu. */
+  const SHUFFLE_STRATEGIES = [
+    { id: "balanced", label: "Balanced", hint: "Varied creators, posts and media types" },
+    { id: "random", label: "Pure random", hint: "No logic, just chance" },
+  ];
+  const SHUFFLE_SCOPES = [
+    { id: "results", label: "Current results", hint: "Shuffle within your filtered set" },
+    { id: "library", label: "Entire library", hint: "Shuffle across everything you've saved" },
   ];
 
   const SIZES = ["compact", "comfortable", "large"];
@@ -43,7 +55,9 @@
 
     workspace: "discover",
     search: "",
-    sort: "newest_posted",
+    sort: "shuffle",
+    shuffleStrategy: "balanced",
+    shuffleScope: "results",
     filters: {},
     layout: "natural",
     size: "comfortable",
@@ -60,6 +74,7 @@
 
   let rev = 0;                 // bumped whenever the item universe changes
   let cache = { rev: -1 };
+  let discoveryCache = { cycle: -1, rev: -1, result: null };  // per-cycle recommendation memo
   const listeners = new Set();
   let saveTimer = null;
 
@@ -73,7 +88,14 @@
     state.prefs = data.prefs;
 
     state.search = data.prefs.search || "";
-    state.sort = SORTS.some((s) => s.id === data.prefs.sort) ? data.prefs.sort : "newest_posted";
+    /* Random is the default Library ordering: a stable, session-scoped random
+       order rather than a deterministic sort. Existing choices (including the
+       deterministic sorts) are preserved; only a missing/invalid preference
+       falls back to Random. */
+    const validSort = data.prefs.sort === "shuffle" || SORTS.some((s) => s.id === data.prefs.sort);
+    state.sort = validSort ? data.prefs.sort : "shuffle";
+    state.shuffleStrategy = SHUFFLE_STRATEGIES.some((s) => s.id === data.prefs.shuffleStrategy) ? data.prefs.shuffleStrategy : "balanced";
+    state.shuffleScope = SHUFFLE_SCOPES.some((s) => s.id === data.prefs.shuffleScope) ? data.prefs.shuffleScope : "results";
     state.filters = data.prefs.filters && typeof data.prefs.filters === "object" ? data.prefs.filters : {};
     state.layout = LAYOUT_MIGRATION[data.prefs.layoutMode] || "natural";
     state.size = SIZE_MIGRATION[data.prefs.tileSize] || "comfortable";
@@ -107,9 +129,11 @@
 
   /* -------------------------------------------------------------- derived -- */
   function compute() {
+    const seed = state.prefs ? state.prefs.shuffleSeed : 1;
     if (cache.rev === rev &&
         cache.search === state.search &&
         cache.sort === state.sort &&
+        cache.shuffleSeed === seed &&
         cache.filterKey === JSON.stringify(state.filters)) {
       return cache;
     }
@@ -117,12 +141,13 @@
     const L = root.XBLibrary;
     const all = (cache.rev === rev && cache.all) ? cache.all : L.flatten(state.bookmarks, state.library);
     const filtered = L.applyFilters(all, state.filters, state.search);
-    const sorted = L.sortItems(filtered, state.sort, state.prefs ? state.prefs.shuffleSeed : 1);
+    const sorted = L.sortItems(filtered, state.sort, seed, state.shuffleStrategy);
 
     cache = {
       rev,
       search: state.search,
       sort: state.sort,
+      shuffleSeed: seed,
       filterKey: JSON.stringify(state.filters),
       all,
       filtered: sorted,
@@ -133,12 +158,46 @@
     return cache;
   }
 
+  /* The recommendation result is memoised per discovery CYCLE, not per render.
+     A cycle changes only on a fresh dashboard open or an explicit "Refresh
+     discoveries" — so opening the viewer, toggling filters elsewhere, or any
+     ordinary re-render leaves Discover stable, while every load surfaces new
+     things. Exposure is recorded once per cycle (idempotently). */
+  function computeDiscovery() {
+    const cycle = Number(state.prefs.discoveryCycle) || 1;
+    const seed = Number(state.prefs.discoverySeed) || 1;
+    if (discoveryCache.cycle === cycle && discoveryCache.rev === rev && discoveryCache.result) {
+      return discoveryCache.result;
+    }
+    const all = compute().all;
+    if (state.library && typeof state.library.surfaced !== "object") state.library.surfaced = {};
+    const surfaced = state.library.surfaced || (state.library.surfaced = {});
+    const result = root.XBLibrary.discover(all, { surfaced, cycle, seed, now: Date.now() });
+    recordExposure(result.surfacedIds || [], cycle, surfaced);
+    discoveryCache = { cycle, rev, result };
+    return result;
+  }
+
+  /* Mark what Discover surfaced this cycle, idempotently (a re-compute within
+     the same cycle never double-counts). Persists so the memory survives a
+     reload — this is the rotation's long-term memory. */
+  function recordExposure(ids, cycle, surfaced) {
+    let changed = false;
+    for (const id of ids) {
+      const rec = surfaced[id] || { count: 0, last: 0, engaged: false };
+      if (rec.last !== cycle) { rec.count = (rec.count || 0) + 1; rec.last = cycle; changed = true; }
+      surfaced[id] = rec;
+    }
+    if (changed) persistLibraryNow();
+  }
+
   const derived = {
     get all() { return compute().all; },
     get items() { return compute().filtered; },
     get stats() { return compute().stats; },
     get collections() { return compute().collections; },
     get authors() { return compute().authors; },
+    get discovery() { return computeDiscovery(); },
     collection(id) { return compute().collections.find((c) => c.id === id) || null; },
   };
 
@@ -150,6 +209,8 @@
         workspace: state.workspace,
         search: state.search,
         sort: state.sort,
+        shuffleStrategy: state.shuffleStrategy,
+        shuffleScope: state.shuffleScope,
         filters: state.filters,
         layoutMode: state.layout,
         tileSize: state.size,
@@ -190,6 +251,30 @@
     notify("filters");
   }
 
+  /* Multi-value filter: OR within a group, AND across groups. Toggling a value
+     adds or removes it from that key's array without touching other keys, so
+     "Photo OR Video" composes naturally with "AND unseen AND @abc". */
+  function toggleFilter(key, value) {
+    if (value == null || value === "") return;
+    const next = Object.assign({}, state.filters);
+    const cur = Array.isArray(next[key]) ? next[key].slice()
+      : (next[key] != null && next[key] !== "" ? [next[key]] : []);
+    const at = cur.indexOf(value);
+    if (at >= 0) cur.splice(at, 1); else cur.push(value);
+    if (!cur.length) delete next[key]; else next[key] = cur.length === 1 ? cur[0] : cur;
+    state.filters = next;
+    state.selection.clear();
+    schedulePersist();
+    notify("filters");
+  }
+
+  /* Whether a filter value is active — accepts both single and array storage. */
+  function filterHas(key, value) {
+    const v = state.filters[key];
+    if (v == null) return false;
+    return Array.isArray(v) ? v.indexOf(value) >= 0 : v === value;
+  }
+
   function clearFilters() {
     state.filters = {};
     state.selection.clear();
@@ -197,11 +282,62 @@
     notify("filters");
   }
 
+  /* Shuffle is an action, not a sort. Each call rolls a new random seed so
+     "Shuffle now" and "Reshuffle" always produce a fresh order, while the
+     strategy and scope persist as preferences. Scope "library" widens the pool
+     to everything by clearing the active filters and search. */
+  /* Reshuffle: roll a new stable random order for the Library's default
+     ordering. The mode (strategy) can be set at the same time. Filters are
+     ALWAYS preserved — Random browses within whatever you've filtered to. */
+  function shuffle(opts) {
+    const o = opts || {};
+    if (o.strategy) state.shuffleStrategy = o.strategy;
+    state.prefs.shuffleSeed = (Number(state.prefs.shuffleSeed) || 0) + 1;
+    root.XBStore.savePrefs(state.prefs);
+    state.sort = "shuffle";
+    state.selection.clear();
+    notify("shuffle");
+  }
+
+  /* A discovery cycle is the unit of "fresh content". It advances on a genuine
+     new dashboard session and on an explicit Refresh — never on an ordinary
+     re-render. Each cycle rolls a new recommendation seed, which reorders the
+     dynamic sections (Fresh discoveries, Rediscover) while the stable ones
+     barely move. */
+  function newDiscoveryCycle() {
+    state.prefs.discoveryCycle = (Number(state.prefs.discoveryCycle) || 0) + 1;
+    state.prefs.discoverySeed = Math.floor(Math.random() * 1e9) + 1;
+    discoveryCache = { cycle: -1, rev: -1, result: null };
+    root.XBStore.savePrefs(state.prefs);
+    notify("discovery");
+  }
+
+  /* "Shown" vs "engaged": opening something Discover surfaced marks it engaged,
+     so it gets a normal cooldown and a small quality signal, instead of being
+     treated as ignored. A no-op for items never surfaced. */
+  function markEngaged(id) {
+    const rec = state.library && state.library.surfaced && state.library.surfaced[id];
+    if (rec && !rec.engaged) {
+      rec.engaged = true;
+      persistLibraryNow();
+    }
+  }
+
+  /* Roll a fresh random seed for the Library's default ordering. Called once
+     per session on boot, so every fresh dashboard load shows a new random
+     order — but the order stays stable while you browse, and never reshuffles
+     on an ordinary re-render. (Reshuffle is the explicit, in-session version.) */
+  function rollSessionRandom() {
+    state.prefs.shuffleSeed = Math.floor(Math.random() * 1e9) + 1;
+    root.XBStore.savePrefs(state.prefs);
+  }
+
   function activeFilterCount() {
-    return Object.keys(state.filters).filter((k) => {
+    return Object.keys(state.filters).reduce((n, k) => {
       const v = state.filters[k];
-      return v != null && v !== "" && v !== false;
-    }).length;
+      if (v == null || v === "" || v === false) return n;
+      return n + (Array.isArray(v) ? v.length : 1);
+    }, 0);
   }
 
   /* ------------------------------------------------- library state writes -- */
@@ -359,11 +495,12 @@
 
   root.S = state;
   root.XBState = {
-    WORKSPACES, SORTS, SIZES,
+    WORKSPACES, SORTS, SIZES, SHUFFLE_STRATEGIES, SHUFFLE_SCOPES,
     state, derived,
-    load, subscribe, notify, set, setPrefs, setFilter, clearFilters, activeFilterCount,
+    load, subscribe, notify, set, setPrefs, setFilter, toggleFilter, filterHas, clearFilters, activeFilterCount, shuffle,
     markViewed, setSeen, setArchived, progress, removeItems, restore, replaceBookmarks,
     reloadFromStorage, pushRecentSearch, toggleSelection, clearSelection, selectAll,
+    newDiscoveryCycle, markEngaged, rollSessionRandom,
     writeUrl, readUrl,
     bump() { rev++; },
   };

@@ -174,6 +174,35 @@
 .grid[data-size="compact"] .card__caption { display: none; }
 .grid[data-size="compact"] .card__info { padding: 20px 9px 8px; }
 
+/* --- touch caption (explicit interaction contract) --------------------------
+   Pointer: hover reveals the full layer. Keyboard: focus reveals the same.
+   Touch: there is no hover, so a compact one-line caption is ALWAYS shown —
+   the creator — so a tap is an informed choice, never a guess. Hidden on any
+   device that can hover, shown on touch surfaces. */
+.card__touch {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  z-index: 2;
+  display: none;
+  align-items: center;
+  padding: 18px 11px 9px;
+  background: linear-gradient(to top, rgb(0 0 0 / 0.74), transparent);
+  color: #fff;
+  pointer-events: none;
+}
+.card__touch .card__author { font-size: 12px; font-weight: 600; }
+@media (hover: none) {
+  .card__touch { display: flex; }
+  /* No hover on touch, so the duration mark and dot stay put instead of
+     vanishing on a non-existent hover. */
+  .card:hover .card__state,
+  .card:hover .card__dur { opacity: 0.95; }
+}
+/* The contract is also queryable via the root attribute for components that
+   need to branch in script. */
+:root[data-pointer="touch"] .card__touch { display: flex; }
+
 /* --- contextual "why this is here" ---------------------------------------- */
 .card__why {
   position: absolute;
@@ -322,6 +351,32 @@
    ========================================================================== */
 .discover { display: grid; gap: 44px; }
 
+/* Greeting + global Refresh. Refresh rolls a new discovery cycle (new
+   recommendations), distinct from a page reload — it's the "give me different
+   ideas" action. */
+.discover__head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.discover__refresh {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding-inline: 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background-color var(--t-micro) var(--ease), color var(--t-micro) var(--ease), border-color var(--t-micro) var(--ease);
+}
+.discover__refresh:hover { background: var(--surface-2); color: var(--text); border-color: var(--line-strong); }
+.discover__refresh > svg { width: 16px; height: 16px; }
+.discover__refresh.is-spinning > svg { animation: spin 700ms linear infinite; }
+@media (max-width: 599px) { .discover__refresh span { display: none; } .discover__refresh { padding-inline: 9px; } }
+@keyframes spin { to { rotate: 1turn; } }
+
 /* --- greeting + one typographic line of stats ------------------------------ */
 .greet { padding-block: 30px 4px; max-width: 780px; }
 .greet h1 {
@@ -355,7 +410,7 @@
 }
 .hero__media {
   position: relative;
-  min-height: 340px;
+  min-height: 300px;
   background: var(--media-bg);
   overflow: hidden;
 }
@@ -372,8 +427,8 @@
 .hero__play > span {
   display: grid;
   place-items: center;
-  width: 60px;
-  height: 60px;
+  width: 54px;
+  height: 54px;
   border-radius: 50%;
   background: rgb(255 255 255 / 0.16);
   backdrop-filter: blur(10px);
@@ -394,8 +449,8 @@
 .hero__body {
   display: grid;
   align-content: center;
-  gap: 12px;
-  padding: 34px 36px;
+  gap: 11px;
+  padding: 28px 32px;
 }
 .hero__eyebrow {
   display: inline-flex;
@@ -479,6 +534,76 @@
 .section__nav { display: flex; gap: 4px; }
 @media (hover: none) { .section__nav { display: none; } }
 
+/* Per-section Refresh (Fresh discoveries): rolls a new cycle, animating only
+   the dynamic sections. Same control shape as "See all", kept compact. */
+.section__head-right { display: flex; align-items: center; gap: 6px; }
+.section__refresh {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding-inline: 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background-color var(--t-micro) var(--ease), color var(--t-micro) var(--ease), border-color var(--t-micro) var(--ease);
+}
+.section__refresh:hover { background: var(--surface-2); color: var(--text); border-color: var(--line-strong); }
+.section__refresh > svg { width: 15px; height: 15px; }
+.section__refresh.is-spinning > svg { animation: spin 700ms linear infinite; }
+@media (max-width: 599px) { .section__refresh span { display: none; } .section__refresh { padding-inline: 8px; } }
+[data-motion="reduced"] .section__refresh.is-spinning > svg,
+[data-motion="reduced"] .discover__refresh.is-spinning > svg { animation-duration: 1200ms; }
+
+/* --- asymmetric editorial grid ---------------------------------------------
+   A bento layout that breaks the rail rhythm. One feature anchors the left;
+   supporting picks fill the right and a second tier beneath. Fixed row units
+   (not fluid 1fr tracks) guarantee the lead and its neighbours line up. */
+.editorial {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  grid-auto-rows: 150px;
+  gap: 14px;
+}
+.editorial__lead { grid-column: span 4; grid-row: span 2; }
+.editorial__cell { grid-column: span 2; grid-row: span 1; }
+.editorial .card { height: 100%; }
+.editorial .card__media { height: 100%; aspect-ratio: auto; }
+.editorial .card__img { position: absolute; inset: 0; height: 100%; }
+
+@media (max-width: 1199px) {
+  .editorial { grid-template-columns: repeat(4, 1fr); grid-auto-rows: 140px; }
+  .editorial__lead { grid-column: span 4; grid-row: span 2; }
+  .editorial__cell { grid-column: span 2; grid-row: span 1; }
+}
+@media (max-width: 719px) {
+  .editorial { grid-template-columns: repeat(2, 1fr); grid-auto-rows: auto; }
+  .editorial__lead,
+  .editorial__cell { grid-column: span 2; grid-row: auto; }
+  .editorial__lead .card__media { aspect-ratio: 16 / 10; height: auto; }
+  .editorial__cell .card__media { aspect-ratio: 4 / 3; height: auto; }
+}
+
+/* --- masonry block ----------------------------------------------------------
+   A dense magazine wall. CSS columns preserve every source aspect ratio with
+   zero JS, so portraits and landscapes sit together without cropping. */
+.masonry {
+  columns: 5 224px;
+  column-gap: 14px;
+}
+.masonry__item {
+  break-inside: avoid;
+  margin-block-end: 14px;
+}
+@media (max-width: 1199px) { .masonry { columns: 4 196px; } }
+@media (max-width: 899px)  { .masonry { columns: 3 160px; } }
+@media (max-width: 719px)  { .masonry { columns: 2 calc((100% - 14px) / 2); } }
+
 /* ==========================================================================
    4 · Library controls
    --------------------------------------------------------------------------
@@ -550,6 +675,56 @@
 .filters__foot .spacer { flex: 1; }
 
 /* ==========================================================================
+   4b · Sheets & action menus (View / Shuffle / Filter on compact windows)
+   The shared M3 sheet primitive, re-voiced in the product palette so the
+   product's pills and controls sit on a matching surface.
+   ========================================================================== */
+.m3e-sheet--bottom {
+  background: var(--elevated);
+  color: var(--text);
+  border-block-start: 1px solid var(--line);
+  max-height: 88dvh;
+}
+.m3e-sheet__handle { background: var(--line-strong); }
+.m3e-sheet__header { padding-block: 14px 6px; gap: 12px; }
+.m3e-sheet__title { font-size: 18px; font-weight: 600; letter-spacing: -0.012em; }
+.m3e-sheet__content { padding-block: 4px 28px; padding-inline: 20px; }
+
+.sheet__body { display: grid; gap: 18px; }
+.sheet__block { display: grid; gap: 9px; align-content: start; }
+.sheet__label {
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.sheet__hint {
+  color: var(--text-3);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.sheet__opts { display: flex; flex-wrap: wrap; gap: 8px; }
+.sheet__opts .pill { height: 38px; padding-inline: 16px; font-size: 13.5px; }
+.sheet__primary {
+  justify-content: center;
+  height: 44px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.sheet__block .field > span,
+.sheet__block .filters__pair { margin: 0; }
+
+/* A menu item that is a verb (Shuffle now, Reshuffle): bold, leading icon, no
+   checkmark column. Reads as an action, not a selectable preference. */
+.m3e-menu__item--action {
+  font-weight: 600;
+  color: var(--accent);
+}
+.m3e-menu__item--action:hover { background: var(--accent-soft); }
+.m3e-menu__item--action > svg { color: var(--accent); }
+
+/* ==========================================================================
    5 · Watch — immersive vertical feed
    ========================================================================== */
 body.is-watching { background: #000; }
@@ -567,8 +742,17 @@ body.is-watching .stage { padding: 0; }
   overscroll-behavior: contain;
   background: #000;
   scrollbar-width: none;
+  cursor: auto;
 }
 .watch::-webkit-scrollbar { display: none; }
+/* Chrome fade: every overlay except playback/navigation vanishes when the
+   pointer has been still. A tap or any motion brings it back. The cursor is
+   hidden along with the chrome so the media reads as the whole surface. */
+.watch__chrome { transition: opacity var(--t-ui) var(--ease); }
+body.is-watch-idle .watch__chrome { opacity: 0; pointer-events: none; }
+body.is-watch-idle .watch__chrome:focus-within { opacity: 1; pointer-events: auto; }
+body.is-watch-idle .watch { cursor: none; }
+[data-motion="reduced"] .watch__chrome { transition-duration: 1ms; }
 
 .watch__slide {
   position: relative;
@@ -655,13 +839,12 @@ body.is-watching .stage { padding: 0; }
   height: 38px;
   padding-inline: 14px;
   border: none;
-  border-radius: var(--r-pill);
+  border-radius: var(--r-control);
   background: rgb(255 255 255 / 0.12);
   backdrop-filter: blur(12px);
   color: #fff;
   font-size: 13px;
   font-weight: 500;
-  opacity: 0.55;
   transition: opacity var(--t-ui) var(--ease), background-color var(--t-ui) var(--ease);
 }
 .watch__exit:hover { opacity: 1; background: rgb(255 255 255 / 0.22); }
@@ -680,3 +863,17 @@ body.is-watching .stage { padding: 0; }
 }
 .watch__tick { width: 3px; height: 14px; border-radius: 2px; background: rgb(255 255 255 / 0.2); }
 .watch__tick.is-on { background: #fff; }
+
+/* Idle progress hint — the one mark that survives the chrome fade, because a
+   sense of position is navigation, not chrome. Tracks the centred video. */
+.watch__progress {
+  position: fixed;
+  inset-inline: 0;
+  inset-block-end: 0;
+  z-index: 9;
+  height: 3px;
+  background: rgb(255 255 255 / 0.14);
+  pointer-events: none;
+}
+.watch__progress > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 200ms linear; }
+.watch__progress[hidden] { display: none; }

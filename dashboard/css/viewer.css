@@ -117,7 +117,7 @@
   height: 36px;
   padding-inline: 12px;
   border: none;
-  border-radius: var(--r-pill);
+  border-radius: var(--r-control);
   background: rgb(255 255 255 / 0.1);
   backdrop-filter: blur(12px);
   color: #f2f2f6;
@@ -239,7 +239,8 @@
 /* ==========================================================================
    Context pane (list-detail adaptive pattern)
    ========================================================================== */
-.viewer[data-state="context"] { grid-template-columns: minmax(0, 1fr) 372px; }
+.viewer { --viewer-pane-width: 372px; }
+.viewer[data-state="context"] { grid-template-columns: minmax(0, 1fr) var(--viewer-pane-width); }
 .viewer__pane {
   display: none;
   min-height: 0;
@@ -248,6 +249,44 @@
   background: #111116;
 }
 .viewer[data-state="context"] .viewer__pane { display: block; }
+
+/* Drag handle between media and details. Keyboard-adjustable with the arrows. */
+.viewer__divider {
+  display: none;
+  position: relative;
+  z-index: 6;
+  width: 1px;
+  margin-inline-start: -1px;
+  background: rgb(255 255 255 / 0.08);
+  cursor: col-resize;
+  touch-action: none;
+}
+.viewer[data-state="context"] .viewer__divider { display: block; }
+.viewer__divider::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: -5px;
+  inset-inline-end: -5px;
+}
+.viewer__divider::after {
+  content: "";
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: 50%;
+  translate: -50% -50%;
+  width: 3px;
+  height: 32px;
+  border-radius: var(--r-pill);
+  background: rgb(255 255 255 / 0.22);
+  opacity: 0;
+  transition: opacity var(--t-ui) var(--ease), background-color var(--t-ui) var(--ease);
+}
+.viewer__divider:hover::after,
+.viewer__divider:focus-visible::after,
+.viewer.is-resizing .viewer__divider::after { opacity: 1; }
+.viewer.is-resizing { cursor: col-resize; user-select: none; }
+.viewer.is-resizing .viewer__pane { overflow: hidden; }
 
 .pane__section { padding: 18px 20px; border-block-end: 1px solid rgb(255 255 255 / 0.07); }
 .pane__section:last-child { border-block-end: none; }
@@ -301,7 +340,7 @@
 .pane__actions .vbtn { justify-content: center; background: rgb(255 255 255 / 0.07); }
 .pane__actions .vbtn:hover { background: rgb(255 255 255 / 0.16); }
 .pane__actions .vbtn--wide { grid-column: 1 / -1; }
-.pane__actions .vbtn--danger { color: #ff8a80; }
+.pane__actions .vbtn--danger { color: color-mix(in srgb, var(--danger) 60%, #fff); }
 
 .pane__alt { margin: 0; font-size: 12.5px; line-height: 1.6; color: rgb(255 255 255 / 0.7); }
 
@@ -429,6 +468,7 @@
     border-inline-start: none;
     border-block-start: 1px solid rgb(255 255 255 / 0.08);
   }
+  .viewer__divider { display: none !important; }
 }
 
 @media (max-width: 719px) {

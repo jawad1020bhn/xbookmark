@@ -37,13 +37,28 @@
   --shadow-2: 0 8px 24px -8px rgb(18 16 40 / 0.16), 0 2px 6px -3px rgb(18 16 40 / 0.08);
   --shadow-3: 0 24px 60px -16px rgb(18 16 40 / 0.28), 0 8px 20px -12px rgb(18 16 40 / 0.16);
 
-  /* Accent — the only dynamic colour. Reserved for: selected navigation,
-     the primary action of a surface, progress, active filters, focus. */
+  /* --- Semantic roles -------------------------------------------------------
+     primary / accent / error / focus are the four colours that must read as a
+     single family across both the product palette and any native Material
+     component. They are therefore sourced ENTIRELY from the dynamic M3 scheme
+     — never redefined locally — so a seed or contrast change repaints both
+     systems in lockstep and they can never visually disagree. The product's
+     fixed neutrals (below) never participate in these four roles. */
   --accent: var(--md-sys-color-primary, #5b4cf5);
   --on-accent: var(--md-sys-color-on-primary, #ffffff);
+  --accent-container: var(--md-sys-color-primary-container, #e5e0ff);
+  --on-accent-container: var(--md-sys-color-on-primary-container, #15005c);
   --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
   --accent-line: color-mix(in srgb, var(--accent) 40%, transparent);
+
   --danger: var(--md-sys-color-error, #b3261e);
+  --on-danger: var(--md-sys-color-on-error, #ffffff);
+  --danger-container: var(--md-sys-color-error-container, #f9dedc);
+  --on-danger-container: var(--md-sys-color-on-error-container, #410e0b);
+
+  /* Focus is always the accent. A single alias keeps every focus ring in the
+     same family by construction, with no opportunity for drift. */
+  --focus: var(--accent);
 
   /* Shape — three radii, no more. Media / surfaces / controls. */
   --r-media: 18px;
@@ -122,7 +137,7 @@ a { color: inherit; }
 
 ::selection { background: color-mix(in srgb, var(--accent) 26%, transparent); }
 
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
 
 /* Scrollbars: present, but not part of the composition. */
 * { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }

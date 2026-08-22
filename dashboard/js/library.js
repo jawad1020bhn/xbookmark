@@ -98,17 +98,32 @@
     return hay.includes(q);
   }
 
+  /* A filter value may be a single string or an array. Within one key the
+     values are OR'd (Photo OR Video); across keys they are AND'd. This keeps
+     the common multi-select case natural without exposing boolean controls. */
+  function valueList(v) {
+    if (Array.isArray(v)) return v;
+    return v == null || v === "" || v === false ? [] : [v];
+  }
+
+  function shapeOf(item) {
+    if (item.aspect > 0 && item.aspect < 0.85) return "portrait";
+    if (item.aspect < 1.2) return "square";
+    return "wide";
+  }
+
   function applyFilters(items, filters, search) {
     const f = filters || {};
     const q = (search || "").trim().toLowerCase();
+    const kinds = valueList(f.kind);
+    const shapes = valueList(f.shape);
     return items.filter((item) => {
       if (!matchesSearch(item, q)) return false;
-      if (f.kind === "photo" && item.type !== "photo") return false;
-      if (f.kind === "video" && item.type !== "video") return false;
-      if (f.kind === "gif" && item.type !== "animated_gif") return false;
-      if (f.shape === "portrait" && !(item.aspect > 0 && item.aspect < 0.85)) return false;
-      if (f.shape === "square" && !(item.aspect >= 0.85 && item.aspect < 1.2)) return false;
-      if (f.shape === "wide" && !(item.aspect >= 1.2)) return false;
+      if (kinds.length) {
+        const t = item.type === "animated_gif" ? "gif" : item.type;
+        if (!kinds.includes(t)) return false;
+      }
+      if (shapes.length && !shapes.includes(shapeOf(item))) return false;
       if (f.author && item.author.toLowerCase() !== String(f.author).toLowerCase().replace(/^@/, "")) return false;
       if (f.postedFrom && item.postedAt && item.postedAt < parseDate(f.postedFrom)) return false;
       if (f.postedTo && item.postedAt && item.postedAt > parseDate(f.postedTo) + DAY) return false;
@@ -148,7 +163,7 @@
     return h >>> 0;
   }
 
-  function sortItems(items, sort, seed) {
+  function sortItems(items, sort, seed, shuffleStrategy) {
     const list = items.slice();
     const cmpNum = (a, b) => (a === b ? 0 : a < b ? 1 : -1);
     switch (sort) {
@@ -173,27 +188,72 @@
       case "engagement":
         list.sort((a, b) => cmpNum(a.eng.rate, b.eng.rate) || cmpNum(a.eng.reactions, b.eng.reactions));
         break;
-      case "shuffle": {
-        const s = Number(seed) || 1;
-        list.sort((a, b) => (hashId(a.id) ^ s) - (hashId(b.id) ^ s));
+      case "shuffle":
+        return shuffleByStrategy(list, seed, shuffleStrategy);
+      case "forgotten":
+        /* Deterministic: longest untouched first. No jitter — randomness
+           belongs to Shuffle, which is its own intentional control. */
+        list.sort((a, b) => (a.lastOpened || a.capturedAt) - (b.lastOpened || b.capturedAt));
         break;
-      }
-      case "forgotten": {
-        const rng = mulberry32((Number(seed) || 1) ^ 0x9e3779b9);
-        list.sort((a, b) => {
-          const ageA = a.lastOpened || a.capturedAt;
-          const ageB = b.lastOpened || b.capturedAt;
-          const jitter = (rng() - 0.5) * DAY * 3;
-          return ageA - ageB + jitter;
-        });
-        break;
-      }
       case "newest_posted":
       default:
         list.sort((a, b) => b.postedAt - a.postedAt || b.captureOrder - a.captureOrder);
         break;
     }
     return list;
+  }
+
+  /* Shuffle strategies. Each is deterministic given the seed (so a re-render
+     stays stable) but yields a fresh order every time the seed rolls. */
+  function shuffleByStrategy(list, seed, strategy) {
+    const s = Number(seed) || 1;
+    const rng = mulberry32(s ^ 0x9e3779b9);
+    const jitter = () => rng() - 0.5;
+
+    if (strategy === "unseen") {
+      const unseen = list.filter((i) => i.unseen);
+      const seen = list.filter((i) => !i.unseen);
+      return hashShuffle(unseen, s).concat(hashShuffle(seen, s + 7));
+    }
+    if (strategy === "rediscover") {
+      const now = Date.now();
+      const scored = list.map((i) => ({
+        i, w: Math.log1p((now - (i.capturedAt || now)) / DAY) + jitter(),
+      }));
+      scored.sort((a, b) => b.w - a.w);
+      return scored.map((e) => e.i);
+    }
+    /* Random — balanced: a stable random order with light diversity protection.
+       Hash-shuffle by the seed, then spread so the same creator, the same post,
+       and the same media type don't cluster. No second shuffle — that would
+       undo the spreading. */
+    if (strategy === "balanced") {
+      return diversify(hashShuffle(list, s), false);
+    }
+    if (strategy === "smart") {
+      const now = Date.now();
+      const scored = list.map((i) => {
+        const eng = i.eng || {};
+        return {
+          i,
+          w: jitter() * 2.6
+            + (i.unseen ? 0.5 : 0)
+            + Math.log1p((eng.likes || 0) + (eng.rts || 0) * 2.5) * 0.08
+            + Math.log1p(Math.max(1, (now - (i.capturedAt || now)) / DAY)) * 0.05,
+        };
+      });
+      scored.sort((a, b) => b.w - a.w);
+      return scored.map((e) => e.i);
+    }
+    return hashShuffle(list, s);
+  }
+
+  /* Stable hash shuffle keyed on the seed. The seed is folded into the hashed
+     material (not XOR'd onto the result) so rolling the seed reorders the whole
+     list rather than nudging only the low bits of each hash. */
+  function hashShuffle(list, seed) {
+    const s = Number(seed) || 1;
+    return list.slice().sort((a, b) => hashId(a.id + "@" + s) - hashId(b.id + "@" + s));
   }
 
   function clamp01(value) {
@@ -232,24 +292,30 @@
     return scores;
   }
 
-  /* Keep a rail from turning into four attachments from one post, or twenty
-     consecutive saves from one creator. We only reorder within a small
-     look-ahead window, preserving the ranking while adding useful variety. */
+  /* Spread a ranked list so a rail doesn't turn into four attachments from
+     one post, a run from one creator, or a block of the same media type. We
+     reorder within a small look-ahead window, preserving the ranking while
+     adding useful variety — the same routine that powers "Random — balanced". */
   function diversify(list, groupPostMedia) {
     if (groupPostMedia) return list;
     const pending = list.slice();
     const result = [];
     while (pending.length) {
       const recent = result.slice(-3);
-      let pick = 0;
-      const lookAhead = Math.min(10, pending.length);
+      const last = result.length ? result[result.length - 1] : null;
+      let pick = -1;
+      let fallback = 0;
+      const lookAhead = Math.min(12, pending.length);
       for (let i = 0; i < lookAhead; i++) {
         const candidate = pending[i];
         const samePost = recent.some((x) => x.post.tweet_id === candidate.post.tweet_id);
         const sameAuthor = recent.some((x) => x.author && x.author === candidate.author);
-        if (!samePost && !sameAuthor) { pick = i; break; }
-        if (!samePost && pick === 0) pick = i;
+        const sameType = last && candidate.type === last.type;
+        if (!samePost && !sameAuthor && !sameType) { pick = i; break; }   // ideal: nothing repeated
+        if (pick < 0 && !samePost && !sameAuthor) pick = i;               // relax type, keep post/author
+        if (fallback === 0 && !samePost) fallback = i;                    // last resort: only avoid post
       }
+      if (pick < 0) pick = fallback;
       result.push(pending.splice(pick, 1)[0]);
     }
     return result;
@@ -527,11 +593,229 @@
     return [{ key: "all", label: "", items }];
   }
 
+  /* ===========================================================================
+     Discovery engine — a recommendation system with memory.
+
+     Distinct from the flat `collections()` rails (which Library uses for
+     focused browsing). Discovery ranks with a SHARED score, then remembers what
+     it surfaced so the page rotates instead of repeating.
+
+       exposure  ≠  viewed
+         Opening a card marks it viewed; merely surfacing it on Discover marks
+         it "surfaced" instead. An item shown recently is suppressed (novelty
+         penalty) and recovers over a few cycles — never permanently excluded.
+
+       score = quality + freshness + unseen + rediscovery + novelty
+               − recent exposure − repetition
+         Each section re-weights these, plus a per-cycle seed so the dynamic
+         sections change every load while the stable ones barely move.
+     =========================================================================== */
+  function discover(items, ctx) {
+    const surfaced = (ctx && ctx.surfaced) || {};
+    const cycle = (ctx && ctx.cycle) || 1;
+    const seed = Number((ctx && ctx.seed) || 1) || 1;
+    const n = (ctx && ctx.now) || Date.now();
+    const empty = { continue: null, freshDiscoveries: null, topPicks: null, newInArchive: null, rediscover: null, quickWatch: null, favoriteCreators: null, surfacedIds: [] };
+    if (!items.length) return empty;
+
+    const qualityMap = engagementSignals(items);
+    const q = (it) => qualityMap.get(it.id) || 0;
+    const fresh = (it) => ageScore(it.capturedAt, n, 14);
+    const unseen = (it) => (it.unseen ? 1 : 0);
+    const rediscovery = (it) => clamp01((n - (it.lastOpened || it.capturedAt || n)) / (180 * DAY));
+    const playable = (it) => (it.playable ? 1 : 0);
+    const alt = (it) => (it.alt ? 1 : 0);
+
+    /* Exposure: an item shown N cycles ago is suppressed, then recovers. */
+    const exposure = (it) => {
+      const rec = surfaced[it.id];
+      if (!rec) return { penalty: 0, novelty: 1, ignored: 0, seen: false };
+      const ago = cycle - (rec.last || 0);
+      const decay = ago <= 0 ? 0
+        : ago === 1 ? 0.70
+        : ago === 2 ? 0.45
+        : ago === 3 ? 0.25
+        : ago <= 6 ? 0.12 : 0;
+      /* Surfaced repeatedly but never opened → gradually deprioritised; a
+         single pass-by only shortens its cooldown (it stays a rediscovery
+         candidate), per "shown + ignored → more interesting, then less". */
+      const ignored = (!rec.engaged && rec.count >= 2) ? Math.min(0.3, rec.count * 0.07) : 0;
+      return { penalty: decay, novelty: 1 - decay, ignored, seen: true };
+    };
+
+    /* Deterministic per-(item,seed) jitter so a cycle's order is stable across
+       re-renders but changes when the seed rolls. */
+    const jitterOf = (it, weight) => ((hashId(it.id + "#" + seed) % 1000) / 1000 - 0.5) * (weight || 0);
+
+    const complete = (it) => !!(it.progress && it.duration && it.progress.t * 1000 >= it.duration * 0.92);
+
+    /* --- Continue watching: deterministic, highest intent, never randomised -- */
+    const continueItems = items
+      .filter((it) => it.type === "video" && it.progress && it.progress.t >= 3 && !complete(it) && !it.archived)
+      .sort((a, b) => (b.lastOpened || b.viewedAt || 0) - (a.lastOpened || a.viewedAt || 0));
+
+    /* Continue occupies the hero; never repeat its lead elsewhere. */
+    const continueIds = new Set(continueItems.map((i) => i.id));
+
+    /* --- New in your archive: deterministic, chronological ------------------ */
+    const newItems = items
+      .filter((it) => it.capturedAt && n - it.capturedAt <= RECENT_MS && !it.archived)
+      .sort((a, b) => b.capturedAt - a.capturedAt);
+
+    /* --- Shared scoring with per-section weights ---------------------------- */
+    const scoreFor = (w, jitter) => (it) => {
+      const ex = exposure(it);
+      return q(it) * (w.q || 0) + fresh(it) * (w.fresh || 0) + unseen(it) * (w.unseen || 0)
+        + rediscovery(it) * (w.rediscovery || 0) + playable(it) * (w.playable || 0) + alt(it) * (w.alt || 0)
+        + ex.novelty * (w.novelty || 0) - ex.penalty * (w.exposure || 1) - ex.ignored
+        + jitterOf(it, jitter || 0);
+    };
+
+    /* --- Top picks: personalised, slower-moving (less freshness) ----------- */
+    const topPicks = selectDiverse(
+      items.filter((it) => !it.archived && it.playable && !continueIds.has(it.id)),
+      scoreFor({ q: 0.40, fresh: 0.08, unseen: 0.16, rediscovery: 0.10, playable: 0.06, alt: 0.04, novelty: 0.08, exposure: 0.5 }, 0.25),
+      { limit: 40, firstN: 8, maxCreatorFirst: 2 }
+    );
+
+    /* --- Fresh discoveries: the signature, highly dynamic ------------------- */
+    const freshCands = items.filter((it) =>
+      !it.archived && !continueIds.has(it.id)
+      && (rediscovery(it) > 0.25 || it.unseen || !surfaced[it.id])
+    );
+    const freshDiscoveries = selectDiverse(
+      freshCands.filter((it) => q(it) > 0.03 || rediscovery(it) > 0.4 || it.unseen), // quality floor (near-zero only)
+      scoreFor({ q: 0.20, fresh: 0.04, unseen: 0.14, rediscovery: 0.38, playable: 0.03, novelty: 0.22, exposure: 1.4 }, 0.5),
+      { limit: 16, firstN: 8, maxCreatorFirst: 2 }
+    );
+
+    /* --- Rediscover: forgotten favourites + forgotten saves + deep archive -- */
+    const tierA = (it) => !it.unseen && it.lastOpened && n - it.lastOpened > FORGOTTEN_MS;
+    const tierB = (it) => it.unseen && it.capturedAt && n - it.capturedAt > 14 * DAY;
+    const tierC = (it) => rediscovery(it) > 0.8;
+    const redisCands = items.filter((it) =>
+      !it.archived && !continueIds.has(it.id) && (tierA(it) || tierB(it) || tierC(it))
+      && (q(it) > 0.05 || rediscovery(it) > 0.6) // quality floor: forgotten ≠ good
+    );
+    const rediscover = selectDiverse(
+      redisCands,
+      scoreFor({ q: 0.28, fresh: 0.02, unseen: 0.07, rediscovery: 0.42, playable: 0.03, novelty: 0.16, exposure: 1.1 }, 0.45),
+      { limit: 16, firstN: 8, maxCreatorFirst: 2 }
+    );
+
+    /* --- Quick watches: conditional on enough good short-form --------------- */
+    const quickCands = items.filter((it) => isMotion(it.type) && it.playable && it.duration > 0 && it.duration <= 60000 && !it.archived);
+    const quickWatch = quickCands.length >= 4
+      ? selectDiverse(quickCands, scoreFor({ q: 0.45, fresh: 0.30, unseen: 0.20, exposure: 0.3 }, 0.4), { limit: 40, firstN: 8, maxCreatorFirst: 2 })
+      : [];
+
+    /* --- Favorite creators: creator-driven, one creator can't dominate ----- */
+    const authorPosts = new Map();
+    items.forEach((it) => {
+      if (!it.author) return;
+      if (!authorPosts.has(it.author)) authorPosts.set(it.author, new Set());
+      authorPosts.get(it.author).add(it.post.tweet_id);
+    });
+    const creatorFloor = Math.max(2, Math.ceil(new Set(items.map((i) => i.post.tweet_id)).size * 0.03));
+    const creatorCands = items.filter((it) => !it.archived && (authorPosts.get(it.author) || { size: 0 }).size >= creatorFloor);
+    const favoriteCreators = creatorCands.length
+      ? selectDiverse(creatorCands, (it) =>
+          (authorPosts.get(it.author) || { size: 0 }).size * 0.04 + q(it) * 0.4 + fresh(it) * 0.3 + unseen(it) * 0.1 - exposure(it).penalty * 0.3 + jitterOf(it, 0.3),
+        { limit: 40, firstN: 8, maxCreatorFirst: 2 })
+      : [];
+
+    const section = (id, title, subtitle, list, total, reason) => list && list.length
+      ? { id, title, subtitle: subtitle || "", items: list, total: total == null ? list.length : total, reasons: list.map(reason || (() => "")) }
+      : null;
+
+    return {
+      continue: section("continue", "Continue watching", "Pick up where you left off", continueItems.slice(0, 40), continueItems.length,
+        (it) => "Resume · " + (root.M3EMedia ? root.M3EMedia.formatDuration(it.progress.t * 1000) : Math.round(it.progress.t) + "s")),
+      freshDiscoveries: section("fresh-discoveries", "Fresh discoveries", "Things you probably forgot existed", freshDiscoveries, freshCands.length,
+        (it) => exposure(it).seen ? "Back in rotation" : (it.unseen ? "Saved, never opened" : "Worth another look")),
+      topPicks: section("top-picks", "Top picks", "Probably worth your attention", topPicks, items.filter((i) => !i.archived && i.playable).length,
+        (it) => it.unseen ? "Pick · unseen" : "Top pick"),
+      newInArchive: section("new-in-archive", "New in your archive", "Added in the last week", newItems.slice(0, 40), newItems.length,
+        (it) => {
+          const days = Math.max(0, Math.floor((n - it.capturedAt) / DAY));
+          return days < 1 ? "Saved today" : days === 1 ? "Saved yesterday" : "Saved " + days + " days ago";
+        }),
+      rediscover: section("rediscover", "Rediscover", "Things you haven't looked at in a while", rediscover, redisCands.length,
+        (it) => tierA(it) ? "Forgotten favorite" : tierB(it) ? "Never opened" : "From deep in the archive"),
+      quickWatch: section("quick-watch", "Quick watches", "A minute or less", quickWatch, quickCands.length,
+        (it) => durationLabel(it) + " · quick watch"),
+      favoriteCreators: section("favorite-creators", "Favorite creators", "People who keep showing up", favoriteCreators, creatorCands.length,
+        (it) => (authorPosts.get(it.author) || { size: 0 }).size + " posts · @" + it.author),
+      /* Exposure is recorded only for the DYNAMIC sections — Fresh discoveries
+         and Rediscover — because those are the ones meant to rotate. The stable
+         sections (Continue, New, Top picks, Quick watches, Favorite creators)
+         surface similar items by design, so marking them "shown" would penalise
+         almost the whole archive and leave nothing to rotate to. */
+      surfacedIds: collect([freshDiscoveries, rediscover]),
+    };
+  }
+
+  /* Greedy diversity-aware selection. Within the first `firstN` cards: at most
+     `maxCreatorFirst` per creator, at most one media per post, no three
+     consecutive of the same type. Whole rail: no two consecutive from one
+     creator. Falls back to the raw ranking when rules can't be satisfied. */
+  function selectDiverse(candidates, scoreOf, opts) {
+    const o = opts || {};
+    const limit = o.limit || 40;
+    const firstN = o.firstN || 8;
+    const maxCreatorFirst = o.maxCreatorFirst || 2;
+    if (!candidates.length) return [];
+    const pool = candidates.slice().sort((a, b) => (scoreOf(b) - scoreOf(a)) || (hashId(a.id) - hashId(b.id)));
+
+    const out = [];
+    const creatorCount = new Map();
+    const usedPosts = new Set();
+    let prevType = "";
+    let prevPrevType = "";
+
+    const lastAuthor = () => (out.length ? out[out.length - 1].author : null);
+    const take = (it) => {
+      out.push(it);
+      creatorCount.set(it.author, (creatorCount.get(it.author) || 0) + 1);
+      usedPosts.add(it.post.tweet_id);
+      prevPrevType = prevType;
+      prevType = it.type;
+    };
+
+    for (const it of pool) {
+      if (out.length >= limit) break;
+      const inFirst = out.length < firstN;
+      if (it.author && it.author === lastAuthor()) continue;            // no consecutive author
+      if (inFirst && (creatorCount.get(it.author) || 0) >= maxCreatorFirst) continue;
+      if (inFirst && usedPosts.has(it.post.tweet_id)) continue;         // max one media per post
+      if (it.type === prevType && it.type === prevPrevType) continue;   // no triple same type
+      take(it);
+    }
+    /* Relaxation: top up if diversity starved the rail (still no consecutive
+       same author), so a small library fills its rail. */
+    if (out.length < Math.min(limit, pool.length)) {
+      for (const it of pool) {
+        if (out.length >= limit) break;
+        if (out.indexOf(it) >= 0) continue;
+        if (it.author && it.author === lastAuthor()) continue;
+        take(it);
+      }
+    }
+    return out;
+  }
+
+  function collect(listOfLists) {
+    const ids = new Set();
+    listOfLists.forEach((list) => (list || []).forEach((it) => it && ids.add(it.id)));
+    return Array.from(ids);
+  }
+
   root.XBLibrary = {
     flatten,
     applyFilters,
     sortItems,
     collections,
+    discover,
     authors,
     stats,
     mediaId,
