@@ -28,7 +28,7 @@
     variant: "vibrant",
     tileSize: "medium",
     density: "comfortable",
-    layoutMode: "uniform",
+    layoutMode: "natural",
     groupBy: "none",
     showMetadata: true,
     fullCaptions: false,
@@ -53,7 +53,11 @@
     recentSearches: [],
     watchFilter: "all",
     savedViews: [],
+    workspace: "discover",
+    lastWorkspace: "discover",
+    landing: "discover",
     viewerFilmstrip: false,
+    viewerState: "standard",
     cinemaMode: false,
     focusMode: false,
     customSeed: "",
@@ -129,7 +133,7 @@
     if (!Array.isArray(prefs.recentSearches)) prefs.recentSearches = [];
     if (!prefs.railScrolls || typeof prefs.railScrolls !== "object") prefs.railScrolls = {};
     if (!Array.isArray(prefs.savedViews)) prefs.savedViews = [];
-    if (!prefs.layoutMode) prefs.layoutMode = "uniform";
+    if (!prefs.layoutMode) prefs.layoutMode = "natural";
     if (!prefs.groupBy) prefs.groupBy = "none";
     if (!prefs.watchFilter) prefs.watchFilter = "all";
     return {
